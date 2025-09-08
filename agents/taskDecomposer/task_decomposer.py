@@ -26,9 +26,9 @@
 from agents.taskDecomposer.task_decomposer import task_decomposer_app
 graph_input = {'user_input': 'I want a personall fitness coach.'}
 
-refined = task_decomposer_app.invoke(graph_input)
+response = task_decomposer_app.invoke(graph_input)
 
-# refined = {
+# response = {
 #     'user_input': 'User input: I want a personal fitness coach.\n\n \
 #                    Refined input: I am looking to hire a personal fitness trainer for customized workout guidance. \
 #                    \n\n---\n\n \

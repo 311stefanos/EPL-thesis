@@ -40,9 +40,9 @@ agent_file_text = f"""\"\"\"
 from agents.userInputRefiner.{agent_name} import {agent_name}_app
 graph_input = {{ # TODO: add }}
 
-refined = {agent_name}_app.invoke(graph_input)
+response = {agent_name}_app.invoke(graph_input)
 
-# refined = {{ # TODO: add }}
+# response = {{ # TODO: add }}
 ```
 \"\"\"
 
@@ -72,10 +72,10 @@ load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 DEBUG = os.getenv('DEBUG')
 
-BLUE = '\033[94m' # INFO
-RED = '\033[91m' # ERR
-GREEN = '\033[92m' # REST
-RESET = '\033[0m'
+BLUE = '\\033[94m' # INFO
+RED = '\\033[91m' # ERR
+GREEN = '\\033[92m' # REST
+RESET = '\\033[0m'
 
 
 print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {' '.join(x.title() for x in agent_name.split('_'))}') if DEBUG else None
@@ -101,7 +101,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {' '.join(x.title() for x i
 llm = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'deepseek/deepseek-chat-v3-0324:free', 
+    model= 'moonshotai/kimi-k2:free', 
     temperature= 0
 )
 
@@ -154,7 +154,7 @@ if __name__ == '__main__':
         }}
     }}
 
-    user = ''' # TODO: add
+    user = '' # TODO: add
     response = {agent_name}_app.invoke(user, config= config)
 
     import json

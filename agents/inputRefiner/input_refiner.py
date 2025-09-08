@@ -17,9 +17,9 @@
 from agents.userInputRefiner.user_input_refiner import user_input_refiner_app
 graph_input = {'user_input': 'I want a personall fitness coach.'}
 
-refined = user_input_refiner_app.invoke(graph_input)
+response = user_input_refiner_app.invoke(graph_input)
 
-# refined = {
+# response = {
 #     'corrected_original': 'I want a personal fitness coach.', 
 #     'refined_text': 'I am looking to hire a personal fitness trainer for customized workout guidance and coaching.'
 # }
@@ -355,7 +355,7 @@ def refinement_okay(state: IntermediateSchema) -> Literal['parse_output', 'refin
     answer = input(f'{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ')
 
     # If the answer is yes, parse the output and end
-    if answer.lower() in ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k']:
+    if answer.lower() in ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '']:
         return 'parse_output'
 
     # If the answer is no, ask for a new request, and keep refining
