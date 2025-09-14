@@ -80,6 +80,8 @@ The following agents are used in the system:
 }
 ```
 
+---
+
 ## User Input Refiner
 ***Purpose:*** Improves and standardizes the input so other agents or search tools can interpret it better.
 
@@ -97,6 +99,45 @@ The following agents are used in the system:
 }
 ```
 
+---
+
+## Researcher
+***Purpose:*** Uses tools to do research on a given topic. 
+
+***Input:*** 
+```json
+{
+    "research_topic": "..."
+}
+```
+***Output:*** 
+```json
+{
+    "research_topic": "...",
+    "summary": "..."
+}
+```
+
+---
+
+## Deep Researcher
+***Purpose:*** Does deep research on a given topic, using the researcher agent.
+
+***Input:*** 
+```json
+{
+    "research_topic": "..."
+}
+```
+***Output:*** 
+```json
+{
+    "answer": "...",
+}
+```
+
+---
+
 ## Agent
 ***Purpose:*** 
 
@@ -108,3 +149,5 @@ The following agents are used in the system:
 ```json
 
 ```
+
+---
