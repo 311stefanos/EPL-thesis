@@ -4,7 +4,7 @@
 - `description:` A research agent that gets a simple input and provides relevant information from the internet or knowledge base.
 
 ## How to use
-1. Import the app. (`from agents.userInputRefiner.researcher import researcher_app`)
+1. Import the app. (`from agents.researcher.researcher import researcher_app`)
 2. Input a dict with the following keys:
     - `research_topic: str`: The topic to research.
     - `research_queries: Optional[List[str]]`: The agent's queries made to find the appropriate results, so far. (Leave Empty [] or None)
@@ -16,14 +16,28 @@
 
 ## Usage
 ```python
-from agents.userInputRefiner.researcher import researcher_app
-graph_input = InputSchema(research_topic= 'Tell me the admission deadlines for cs in keio to start my masters in fall 2026')
+from agents.researcher.researcher import researcher_app
+graph_input = InputSchema(research_topic= 'Visa and residency requirements for international students pursuing master's CS in Tokyo 
+#                                          (student visa, work permits, post-study work visa, application process, duration, restrictions)')
 
 response = researcher_app.invoke(graph_input)
 
 # response = {
-#     research_topic: 'Tell me the admission deadlines for cs in keio to start my masters in fall 2026',
-#     summary: '' TODO: Add summary
+#     research_topic: 'Visa and residency requirements for international students pursuing master's CS in Tokyo 
+#                      (student visa, work permits, post-study work visa, application process, duration, restrictions)',
+#     summary: 'International students admitted to a two-year master's in Computer Science in Tokyo first secure a “Student” 
+#               visa from their home country, then apply for a “Designated Activities” visa through a Certificate of Eligibility 
+#               that their university—not the student—files with Japan's Immigration Services Agency; once the COE is issued they 
+#               complete the visa at a Japanese embassy abroad, normally receiving permission to stay for up to 4 years 3 months.
+#               After arrival they must register their address within 14 days, carry the resulting Residence Card at all times, 
+#               and, if they wish to work part-time, obtain an extra “permission to engage in other activities” stamp that caps 
+#               employment at 28 h per week during term and 40 h per week in long university breaks, with adult-entertainment jobs 
+#               strictly forbidden; breaching these limits risks deportation and a five-year entry ban.  Near graduation they have 
+#               three main onward routes: a Designated Activities visa (6 months, one renewal possible with a university recommendation) 
+#               to continue job-hunting, an immediate work visa (1, 3 or 5 years, employer-sponsored) if they secure a relevant position, 
+#               or—if they meet business-setup criteria—up to two years under Designated Activities for entrepreneurship. Visa extensions 
+#               must be requested three months before expiry, and the student status (and its work permission) terminates the moment 
+#               the studies end or the holder leaves the country.'
 # }
 ```
 """
@@ -31,7 +45,7 @@ response = researcher_app.invoke(graph_input)
 
 
 ''' Imports '''
-from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import WikipediaAPIWrapper
 from langchain_community.tools import WikipediaQueryRun
@@ -47,10 +61,12 @@ from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
 import traceback
+import json
 import os
 
-from typing import Literal, Optional, List
+from typing import Literal, Optional, List, Annotated
 from pydantic import BaseModel, Field
+from operator import add
 
 from agents.researcher import prompts
 
@@ -86,13 +102,23 @@ class ResearchResult(BaseModel):
     author: List[Optional[str]] = Field(description= 'The author of the document.')
     relevant_information: str = Field(description= 'The relevant information extracted from the document(s).')
 
+    def __str__(self):
+        return (
+            f'Query: {self.research_query}\n'
+            f'URLs: {self.url}\n'
+            f'Titles: {self.title}\n'
+            f'Dates Created: {self.date_created}\n'
+            f'Authors: {self.author}\n\n'
+            f'Extracted Relevant Information: {self.relevant_information}\n'
+        )
+
 ''' Input Schema '''
 # The input schema
 class InputSchema(MessagesState):
     research_topic: str = Field(
         description='The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).'
     )
-    research_queries: Optional[List[str]] = Field(description= 'The queries made to find the appropriate results, so far.')
+    research_queries: Optional[Annotated[List[str], add]] = Field(description= 'The queries made to find the appropriate results, so far.')
     results: Optional[List[ResearchResult]] = Field(description= 'The results of the research.')
 
 
@@ -157,12 +183,13 @@ def duckduckgo_search(query: str) -> str:
     return search.run(query)
 
 # Research Result as a tool, in order to be filled from the agent
-reseach_result = tool(ResearchResult, description= 'Represent the results of a research query. Always use this after using web search tools.')
+research_result = tool(ResearchResult, description= 'Represent the results of a research query. Always use this after using web search tools.')
 
 # List of tools
-tools = [think_tool, tavily_search, wikipedia_search, duckduckgo_search, reseach_result]
+tools = [think_tool, tavily_search, wikipedia_search, duckduckgo_search, research_result]
 # Dictionary of tools: tool name -> tool
 tools_by_name = {tool.name: tool for tool in tools}
+
 
 
 ''' LLM '''
@@ -198,11 +225,14 @@ def get_today_str() -> str:
 ''' Nodes'''
 # The do_research node, where the agent does the actual research by calling the tools
 def do_research(state: InputSchema) -> InputSchema:
-    print(f'\n{BLUE}[NODE]{RESET} do_research') if DEBUG else None
+    '''
+    In this node, the agent does the actual research by calling the tools.
+    '''
+    print(f'\n{BLUE}[NODE]{RESET} researcher/do_research') if DEBUG else None
     # Initialize state
-    if state['research_queries'] == None: 
+    if state.get('research_queries') == None: 
         state['research_queries'] = []
-    if state['results'] == None: 
+    if state.get('results') == None: 
         state['results'] = []
 
     try:
@@ -226,19 +256,35 @@ def do_research(state: InputSchema) -> InputSchema:
     
 # The tool_node node, where the agent uses the tools
 def tool_node(state: InputSchema) -> InputSchema:
-    print(f'\n{BLUE}[NODE]{RESET} tool_node') if DEBUG else None
+    '''
+    This node executes the tools, which are used to gather information from the web, or structure the thought process or information.
+    '''
+    print(f'\n{BLUE}[NODE]{RESET} researcher/tool_node') if DEBUG else None
 
     try:
         # Get the last message, and extract the tool calls
         last_message = state['messages'][-1]
-        tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', [])
+        if last_message.tool_calls:
+            from_kwargs = False
+            tool_calls = last_message.tool_calls
+        else:
+            from_kwargs = True
+            tool_calls = last_message.additional_kwargs.get('tool_calls', [])
+
+        print(json.dumps(tool_calls, indent= 4))
 
         # Execute all tool calls
         observations = []
+        update = {'messages': [], 'research_queries': [], 'results': []}
         for tool_call in tool_calls:
             # Get the tool and arguments
-            tool = tools_by_name[tool_call["name"]]
-            args = tool_call["args"]
+            if from_kwargs:
+                tool_call = tool_call['function']
+            tool = tools_by_name[tool_call['name']]
+
+            args = tool_call.get('args', {}) or tool_call.get('arguments', {})
+            if isinstance(args, str): # TODO: ERRORS -> parse it alone
+                args = json.loads(args)
 
             print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {tool_call["name"]} with {args}') if DEBUG else None
 
@@ -259,23 +305,23 @@ def tool_node(state: InputSchema) -> InputSchema:
 
             # If the tool is a web search, add the query to the list
             if tool in [tavily_search, wikipedia_search, duckduckgo_search]:
-                state['research_queries'].append(args['query'])
+                update['research_queries'].append(args['query'])
 
             # If the tool is a research result, add the result to the list
             elif tool in [ResearchResult]:
-                state['results'].append(observation)
+                update['results'].append(observation)
 
-        # Create a list of tool outputs, as ToolMessage
-        tool_outputs = [
-            ToolMessage(
-                content= observation,
-                name= tool_call['name'],
-                tool_call_id= tool_call['id']
-            ) for observation, tool_call in zip(observations, tool_calls)
-        ]
+            # Create a list of tool outputs, as ToolMessage
+            update['messages'].append(
+                ToolMessage(
+                    content= observation,
+                    name= tool_call['name'],
+                    tool_call_id= tool_call['id']
+                )
+            )
         
         # Add them to the state
-        return {'messages': tool_outputs}
+        return update
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -285,22 +331,14 @@ def tool_node(state: InputSchema) -> InputSchema:
     
 # The summarise node, where the LLM summarises the results of the research
 def summarise(state: InputSchema) -> OutputSchema:
-    print(f'\n{BLUE}[NODE]{RESET} summarise') if DEBUG else None
+    '''
+    This node summarises the results of the research, in order to return a strutured paragraph containing all the relevant information.
+    '''
+    print(f'\n{BLUE}[NODE]{RESET} researcher/summarise') if DEBUG else None
 
     try:
         # prompt
-        results = []
-        # format the results
-        for result in state['results']:
-            formated_result = (
-                f'Query: {result.research_query}\n'
-                f'URLs: {result.url}\n'
-                f'Titles: {result.title}\n'
-                f'Dates Created: {result.date_created}\n'
-                f'Authors: {result.author}\n\n'
-                f'Extracted Relevant Information: {result.relevant_information}\n'
-            )
-            results.append(formated_result)
+        results = '\n---\n\n'.join([str(r) for r in state['results']])
 
         prompt = prompts.SUMMARY_PROMPT.format(
             date= get_today_str(),
@@ -326,12 +364,21 @@ def summarise(state: InputSchema) -> OutputSchema:
 
 ''' Conditional Functions '''
 # The should_continue function that checks if the agent should continue
-def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise']:
-    print(f'\n{BLUE}[NODE]{RESET} should_continue') if DEBUG else None
+def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do_research']:
+    '''
+    Decides if the agent should continue or not (if there are tool calls)
+    '''
+    print(f'\n{BLUE}[NODE]{RESET} researcher/should_continue') if DEBUG else None
 
     try:
         # Get the last message and extract the tool calls
         last_message = state['messages'][-1]
+
+        # If last message has error code 429, sleep for 5 seconds
+        if hasattr(last_message, 'error') and str(last_message.error.code) == '429': 
+            import time
+            time.sleep(2)
+
         tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', [])
 
         # If there are tool calls, go to the tool node
@@ -346,7 +393,7 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise']:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
-        return False
+        return 'do_research'
 
 
 
@@ -363,7 +410,8 @@ researcher_graph.add_conditional_edges(
     should_continue,
     {   # Not needed, just for clarity
         'tool_node': 'tool_node',
-        'summarise': 'summarise'
+        'summarise': 'summarise',
+        'do_research': 'do_research'
     }
 )
 researcher_graph.add_edge('tool_node', 'do_research')
@@ -393,11 +441,11 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
+        'recursion_limit': 100,
         'configurable': {
             'user_id': 'researcher',
             'run_name': 'researcher',
-            'thread_id': 'researcher', 
-            'recursion_limit': 50
+            'thread_id': 'researcher'
         }
     }
 
