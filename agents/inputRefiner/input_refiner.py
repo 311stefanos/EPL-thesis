@@ -184,7 +184,23 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
     '''
     This node accepts a user input and provides a corrected version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} correct_user_input') if DEBUG else None
+
+    # TODO: Try `Gramformer` or `pyaspeller`
+    # pip install pyaspeller
+    #
+    # from pyaspeller import YandexSpeller
+    # def error_correct_pyspeller(sample_text):
+    #     speller = YandexSpeller()
+    #     fixed = speller.spelled(sample_text)
+    #     return fixed
+    #
+    # mytext = """I is testng grammar tool using python. It does not costt anythng."""
+    # output_text = error_correct_pyspeller(mytext)
+    # print(output_text)
+
+
+
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/correct_user_input') if DEBUG else None
     try:
         # prompt
         user_input = state['user_input']
@@ -218,7 +234,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
     '''
     This node accepts a corrected version of a user input and provides clarifying context
     '''
-    print(f'\n{BLUE}[NODE]{RESET} clarify') if DEBUG else None
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/clarify') if DEBUG else None
     if DEBUG and isinstance(state['messages'][-1], ToolMessage): # The ToolNode added a message.
         print(f'{GREEN}[NODE] [TAVILY RESULT]{RESET} {state["messages"][-1].content}')
     try:
@@ -258,7 +274,7 @@ def refine_user_input(state: IntermediateSchema) -> IntermediateSchema:
     '''
     This node accepts a corrected version of a user input and a conversation history, and provides a refined version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} refine_user_input') if DEBUG else None
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/refine_user_input') if DEBUG else None
     try:
         
         history: list[str] = []
@@ -300,7 +316,7 @@ def parse_output(state: IntermediateSchema) -> OutputSchema:
     '''
     This node accepts a corrected version of a user input and provides a refined version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} parse_output') if DEBUG else None
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/parse_output') if DEBUG else None
     return OutputSchema(corrected_original= state['corrected_original'], refined_text= state['refinements'][-1].content)
 
 
@@ -317,7 +333,7 @@ def keep_clarifying(state: IntermediateSchema) -> Literal['clarify', 'tools', 'r
     Returns:
         Literal['clarify', 'tools', 'refine']
     '''
-    print(f'\n{BLUE}[NODE]{RESET} keep_clarifying') if DEBUG else None
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/keep_clarifying') if DEBUG else None
 
     # If no further clarifications are needed
     if 'no clarification needed' in state['messages'][-1].content.lower():
@@ -348,7 +364,7 @@ def refinement_okay(state: IntermediateSchema) -> Literal['parse_output', 'refin
     '''
     This node asks the user if the refined version of the user input is okay.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} refinement_okay') if DEBUG else None
+    print(f'\n{BLUE}[NODE]{RESET} input_refiner/refinement_okay') if DEBUG else None
 
     # Ask the user if the refined version of the user input is okay
     print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {state["refinements"][-1].content}')
