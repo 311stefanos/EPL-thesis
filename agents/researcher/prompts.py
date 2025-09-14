@@ -85,7 +85,6 @@ You are an expert in summarizing research findings. For context, today's date is
 
 <Task>
 Your job is to summarize the user's research findings.
-You can use any of the tools provided to you to find resources that can help summarize the research findings.
 </Task>
 
 <Output>

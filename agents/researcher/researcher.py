@@ -45,7 +45,7 @@ response = researcher_app.invoke(graph_input)
 
 
 ''' Imports '''
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage, RemoveMessage
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import WikipediaAPIWrapper
 from langchain_community.tools import WikipediaQueryRun
@@ -53,7 +53,7 @@ from langchain_tavily import TavilySearch
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
-from langgraph.graph import StateGraph, MessagesState
+from langgraph.graph import StateGraph, MessagesState, add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
@@ -63,6 +63,7 @@ from pathlib import Path
 import traceback
 import json
 import os
+import re
 
 from typing import Literal, Optional, List, Annotated
 from pydantic import BaseModel, Field
@@ -132,7 +133,7 @@ class OutputSchema(BaseModel):
 
 
 ''' Tools '''
-# The think tool, is for strategic reflection pf the agent
+# The think tool, is for strategic reflection of the agent
 @tool(description= 'Strategic reflection tool for research planning')
 def think_tool(reflection: str) -> str:
     """Tool for strategic reflection on research progress and decision-making.
@@ -210,6 +211,31 @@ summariser = ChatOpenAI(
 
 
 ''' Helpful Functions '''
+# Function to parse tool arguments (when they come in additional_kwargs)
+def parse_tool_arguments(args):
+    # If the SDK already gave you a dict, use it
+    if isinstance(args, dict):
+        return args
+
+    s = str(args).strip()
+
+    # Normalize line endings
+    s = s.replace('\r\n', '\n')
+    # Replace any unescaped newlines with a space (JSON doesn't allow raw newlines)
+    #    (?<!\\)\n  = a newline not preceded by a backslash
+    s = re.sub(r'(?<!\\)\n', ' ', s)
+    # Remove other control characters that are illegal in JSON
+    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', s)
+    # Remove trailing commas before } or ]
+    s = re.sub(r',\s*([}\]])', r'\1', s)
+
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        # Optional: last-resort escape of remaining bare backslashes before quote/newline
+        s2 = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', s)
+        return json.loads(s2)  # will raise again if truly broken
+
 # Get today's date in a human-readable format
 def get_today_str() -> str:
     """Get current date formatted for display in prompts and outputs.
@@ -283,8 +309,8 @@ def tool_node(state: InputSchema) -> InputSchema:
             tool = tools_by_name[tool_call['name']]
 
             args = tool_call.get('args', {}) or tool_call.get('arguments', {})
-            if isinstance(args, str): # TODO: ERRORS -> parse it alone
-                args = json.loads(args)
+            if isinstance(args, str):
+                args = parse_tool_arguments(args)
 
             print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {tool_call["name"]} with {args}') if DEBUG else None
 
@@ -378,6 +404,11 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do
         if hasattr(last_message, 'error') and str(last_message.error.code) == '429': 
             import time
             time.sleep(2)
+
+        # If last message has error code 400 because the context is too long, remove the first message
+        if hasattr(last_message, 'error') and str(last_message.error.code) == '400': 
+            if 'maximum context length is' in last_message.error['message']:
+                add_messages(state, RemoveMessage(state['messages'][0].id))
 
         tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', [])
 
