@@ -28,7 +28,7 @@ agent_file_text = f"""\"\"\"
 - `description:` # TODO: add
 
 ## How to use
-1. Import the app. (`from agents.userInputRefiner.{agent_name} import {agent_name}_app`)
+1. Import the app. (`from agents.{directory_name}.{directory_name} import {agent_name}_app`)
 2. Input a dict with the following keys:
     - # TODO: add
 3. Invoke the app.
@@ -37,7 +37,7 @@ agent_file_text = f"""\"\"\"
 
 ## Usage
 ```python
-from agents.userInputRefiner.{agent_name} import {agent_name}_app
+from agents.{directory_name}.{agent_name} import {agent_name}_app
 graph_input = {{ # TODO: add }}
 
 response = {agent_name}_app.invoke(graph_input)
@@ -49,17 +49,20 @@ response = {agent_name}_app.invoke(graph_input)
 
 
 ''' Imports '''
+from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
 
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, MessagesState
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
-import os
-import traceback
-from pathlib import Path
 from dotenv import load_dotenv
+from pathlib import Path
+import traceback
+import os
 
-from typing import Literal
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
 
 from agents.{directory_name} import prompts
@@ -150,7 +153,7 @@ if __name__ == '__main__':
         'configurable': {{
             'user_id': '{directory_name}',
             'run_name': '{directory_name}',
-            'tags': ['{directory_name}', 'deepseek'] # TODO: add
+            'thread_id': '{directory_name}', 
         }}
     }}
 
