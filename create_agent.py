@@ -62,8 +62,9 @@ from pathlib import Path
 import traceback
 import os
 
-from typing import Literal, Optional, List
+from typing import TypedDict, Literal, List, Optional, Annotated
 from pydantic import BaseModel, Field
+from operator import add
 
 from agents.{directory_name} import prompts
 
