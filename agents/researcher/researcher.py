@@ -7,7 +7,6 @@
 1. Import the app. (`from agents.researcher.researcher import researcher_app`)
 2. Input a dict with the following keys:
     - `research_topic: str`: The topic to research.
-    - `research_queries: Optional[List[str]]`: The agent's queries made to find the appropriate results, so far. (Leave Empty [] or None)
     - `results: Optional[List[ResearchResult]]`: The agent's results of the research. (Leave Empty [] or None)
 3. Invoke the app.
 4. Get the output dict with the following keys:
@@ -65,9 +64,8 @@ import json
 import os
 import re
 
-from typing import Literal, Optional, List, Annotated
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
-from operator import add
 
 from agents.researcher import prompts
 
@@ -119,7 +117,6 @@ class InputSchema(MessagesState):
     research_topic: str = Field(
         description='The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).'
     )
-    research_queries: Optional[Annotated[List[str], add]] = Field(description= 'The queries made to find the appropriate results, so far.')
     results: Optional[List[ResearchResult]] = Field(description= 'The results of the research.')
 
 
@@ -205,7 +202,7 @@ summariser = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
     model= 'moonshotai/kimi-k2:free', 
-    temperature= 0.5
+    temperature= 0.3
 )
 
 
@@ -256,8 +253,6 @@ def do_research(state: InputSchema) -> InputSchema:
     '''
     print(f'\n{BLUE}[NODE]{RESET} researcher/do_research') if DEBUG else None
     # Initialize state
-    if state.get('research_queries') == None: 
-        state['research_queries'] = []
     if state.get('results') == None: 
         state['results'] = []
 
@@ -301,7 +296,7 @@ def tool_node(state: InputSchema) -> InputSchema:
 
         # Execute all tool calls
         observations = []
-        update = {'messages': [], 'research_queries': [], 'results': []}
+        update = {'messages': [], 'results': []}
         for tool_call in tool_calls:
             # Get the tool and arguments
             if from_kwargs:
@@ -329,12 +324,8 @@ def tool_node(state: InputSchema) -> InputSchema:
 
             print(f'{BLUE}[NODE] [INFO] [LAST OBSERVATION]{RESET} {observation}') if DEBUG else None
 
-            # If the tool is a web search, add the query to the list
-            if tool in [tavily_search, wikipedia_search, duckduckgo_search]:
-                update['research_queries'].append(args['query'])
-
             # If the tool is a research result, add the result to the list
-            elif tool in [ResearchResult]:
+            if tool in [ResearchResult]:
                 update['results'].append(observation)
 
             # Create a list of tool outputs, as ToolMessage
@@ -365,6 +356,8 @@ def summarise(state: InputSchema) -> OutputSchema:
     try:
         # prompt
         results = '\n---\n\n'.join([str(r) for r in state['results']])
+
+        print(f'{BLUE}[NODE] [INFO] [ALL RESULTS]{RESET} {results}') if DEBUG else None
 
         prompt = prompts.SUMMARY_PROMPT.format(
             date= get_today_str(),
