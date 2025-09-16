@@ -4,7 +4,7 @@
 - `description:` Accepts a user input and provides a corrected and refined version of it.
 
 ## How to use
-1. Import the app. (`from agents.userInputRefiner.user_input_refiner import user_input_refiner_app`)
+1. Import the app. (`from agents.inputRefiner.input_refiner import input_refiner_app`)
 2. Input a dict with the following keys:
     - `user_input: str`: The user input to be refined.
 3. Invoke the app.
@@ -14,10 +14,10 @@
 
 ## Usage
 ```python
-from agents.userInputRefiner.user_input_refiner import user_input_refiner_app
+from agents.userInputRefiner.input_refiner import input_refiner_app
 graph_input = {'user_input': 'I want a personall fitness coach.'}
 
-response = user_input_refiner_app.invoke(graph_input)
+response = input_refiner_app.invoke(graph_input)
 
 # response = {
 #     'corrected_original': 'I want a personal fitness coach.', 
@@ -91,7 +91,7 @@ class IntermediateSchema(MessagesState): # A lit of the messages
         description= 'The LLM refinements, if any.'
     )
     # The user's requests to the LLM's refinements
-    user_requests: List[HumanMessage] = Field(
+    user_requests: Annotated[List[HumanMessage], add_messages] = Field(
         description= 'The user requests, if any.'
     )
 
@@ -124,7 +124,7 @@ tavily_search = TavilySearch(
 correcter =  ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1',
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free',
+    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free', 
     temperature= 0
 )
 
@@ -132,7 +132,7 @@ correcter =  ChatOpenAI(
 clarifier = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1',
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free',
+    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free', 
     temperature= 0.8
 ).bind_tools([tavily_search])
 
@@ -140,7 +140,7 @@ clarifier = ChatOpenAI(
 refiner = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
+    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free',  
     temperature= 0.7
 )
 
@@ -262,7 +262,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
         print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
         user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ')
 
-        return {'messages': [AIMessage(content = clarification.content), HumanMessage(user_input)]}
+        return {'messages': [AIMessage(content = clarification.content), HumanMessage(content= user_input)]}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -308,7 +308,11 @@ def refine_user_input(state: IntermediateSchema) -> IntermediateSchema:
 
         print(f'{BLUE}[NODE] [INFO]{RESET} Refined: {refined}') if DEBUG else None
 
-        return {'refinements': [AIMessage(content= refined)]}
+        # Ask the user if the refined version of the user input is okay
+        print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {refined}')
+        answer = input(f'{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ')
+
+        return {'refinements': [AIMessage(content= refined)], 'user_requests': [HumanMessage(content= answer)]}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -372,17 +376,14 @@ def refinement_okay(state: IntermediateSchema) -> Literal['parse_output', 'refin
     '''
     print(f'\n{BLUE}[NODE]{RESET} input_refiner/refinement_okay') if DEBUG else None
 
-    # Ask the user if the refined version of the user input is okay
-    print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {state["refinements"][-1].content}')
-    answer = input(f'{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ')
+    answer = state['user_requests'][-1].content
 
     # If the answer is yes, parse the output and end
     if answer.lower() in ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '']:
         return 'parse_output'
 
-    # If the answer is no, ask for a new request, and keep refining
+    # If the answer is no, keep refining
     else:
-        state['user_requests'] += [HumanMessage(answer)]
         return 'refine'
 
 
