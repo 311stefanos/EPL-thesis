@@ -44,6 +44,7 @@ response = researcher_app.invoke(graph_input)
 
 
 ''' Imports '''
+# Langchain imports
 from langchain_core.messages import SystemMessage, ToolMessage, RemoveMessage
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_community.utilities import WikipediaAPIWrapper
@@ -52,21 +53,26 @@ from langchain_tavily import TavilySearch
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
+# Langgraph imports
 from langgraph.graph import StateGraph, MessagesState, add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
+# Schema imports
+from typing import Literal, Optional, List
+from pydantic import BaseModel, Field
+
+# General imports
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
+from time import sleep
 import traceback
 import json
 import os
 import re
 
-from typing import Literal, Optional, List
-from pydantic import BaseModel, Field
-
+# My imports
 from agents.researcher import prompts
 
 
@@ -194,14 +200,14 @@ tools_by_name = {tool.name: tool for tool in tools}
 researcher = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
+    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
     temperature= 0.7
 ).bind_tools(tools)
 
 summariser = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
+    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
     temperature= 0.3
 )
 
@@ -252,9 +258,6 @@ def do_research(state: InputSchema) -> InputSchema:
     In this node, the agent does the actual research by calling the tools.
     '''
     print(f'\n{BLUE}[NODE]{RESET} researcher/do_research') if DEBUG else None
-    # Initialize state
-    if state.get('results') == None: 
-        state['results'] = []
 
     try:
         # prompt
@@ -395,8 +398,7 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do
 
         # If last message has error code 429, sleep for 5 seconds
         if hasattr(last_message, 'error') and str(last_message.error.code) == '429': 
-            import time
-            time.sleep(2)
+            sleep(2)
 
         # If last message has error code 400 because the context is too long, remove the first message
         if hasattr(last_message, 'error') and str(last_message.error.code) == '400': 

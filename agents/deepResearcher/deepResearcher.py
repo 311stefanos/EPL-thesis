@@ -47,27 +47,34 @@ response = deep_researcher_app.invoke(graph_input)
 
 
 ''' Imports '''
+# Langchain imports
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 
+# Langgraph imports
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
-from concurrent.futures import ThreadPoolExecutor
-import concurrent.futures
-
-from dotenv import load_dotenv
-from pathlib import Path
-import traceback
-import os
-
+# Schema imports
 from typing import TypedDict, Literal, List, Optional, Annotated
 from pydantic import BaseModel, Field
 from operator import add
 
+# General imports
+from dotenv import load_dotenv
+from pathlib import Path
+from time import sleep
+import traceback
+import os
+    # Thread imports
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+
+# My imports
 from agents.researcher.researcher import researcher_app
 from agents.deepResearcher import prompts
+
 
 
 ''' Constants '''
@@ -88,6 +95,7 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Deep Researcher') if DEBUG else 
 
 """ Schemas """
 ''' General Schemas '''
+# A Schema for the results of a research query
 class QnA(BaseModel):
     question: str = Field(description= 'The question.')
     answer: str = Field(description= 'The answer.')
@@ -96,49 +104,53 @@ class QnA(BaseModel):
         return f'Question: {self.question}\nAnswer: {self.answer}'
 
 ''' Input Schema '''
+# The input schema
 class InputSchema(TypedDict):
     research_topic: str = Field(description= 'The topic to be researched.')
     not_yet_researched_questions: Optional[List[str]] = Field(description= 'The question to be researched.')
     researched_questions_answers: Optional[Annotated[List[QnA], add]] = Field(
         description= 'A list of questions and answers.'
     )
+    # If there was an error during the breakdown logic
+    error_occurred: bool = Field(description= 'If there was an error during the breakdown logic.')
 
 ''' Output Schema '''
+# The output schema, just the final summary
 class OutputSchema(BaseModel):
     answer: str = Field(description= 'The answer after researching.')
 
 
 
 ''' LLM '''
+# The LLM that breaks down the topic
 deep_researcher = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
-    temperature= 0.3
+    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
+    temperature= 0.6
 )
 
+# The LLM that summarises the results
 summariser = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
+    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
     temperature= 0.5
 )
 
 
 
 ''' Nodes'''
+# The node that breaks down the topic
 def breakdown_research_topic(state: InputSchema) -> InputSchema:
+    '''
+    This node breaks down the topic into questions for the researcher team to answer.
+    '''
     print(f'\n{BLUE}[NODE]{RESET} deep_researcher/breakdown_research_topic') if DEBUG else None
-
-    # Preprocessing
-    if state.get('not_yet_researched_questions') == None: 
-        state['not_yet_researched_questions'] = []
-    if state.get('researched_questions_answers') == None: 
-        state['researched_questions_answers'] = []
 
     try:
         # prompt
-        qna = '\n---\n\n'.join([str(qna) for qna in state['researched_questions_answers']])
+        qna = '\n---\n\n'.join([str(qna) for qna in state['researched_questions_answers']]) if state.get('researched_questions_answers') else ''
 
         prompt = prompts.BREAKDOWN_PROMPT.format(
             topic= state['research_topic'], 
@@ -147,13 +159,16 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
         
         # call the LLM
         results = deep_researcher.invoke([SystemMessage(content= prompt)])
+        res_content = results.content
+
         # Fallback if the LLM does a mistake
-        if results.content in ['~~~', 'empty', '<empty>']:
-            results.content = ''
+        if res_content in ['~~~', 'empty', '<empty>', '`empty`', '`<empty>`']:
+            res_content = ''
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
-        questions = results.content.split('~~~') if results.content != '' else []
+        # Get the questions from the LLM response
+        questions = res_content.split('~~~') if res_content != '' else []
         state['not_yet_researched_questions'] = [question.strip() for question in questions]
 
         return state
@@ -162,23 +177,33 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
+        state['error_occurred'] = True
         return state
     
+# The node that researches all the questions
 def research_questions(state: InputSchema) -> InputSchema:
+    '''
+    This node researches all the questions in parallel, using the researcher team.
+    '''
     print(f'\n{BLUE}[NODE]{RESET} deep_researcher/research_questions') if DEBUG else None
 
     try:
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        # Start a multi threaded call to each researcher. Let the max workers be 5, even tho the LLM is instructed to output <= 3 sub topics.
+        with ThreadPoolExecutor(max_workers= 5) as executor:
+            # Just a different thread_id for each agent
             config = lambda i: {'recursion_limit': 100, 'configurable': {'thread_id': f'researcher_{i}'}}
             futures = {
                 executor.submit(
+                    # Call the researcher with the topic as input, and the configuration
                     researcher_app.invoke, {'research_topic': research_topic}, config(i)
-                ): research_topic 
+                ): research_topic # With the value being the topic
                 for i, research_topic in enumerate(state['not_yet_researched_questions'])
             }
 
             results: list[QnA] = []
+            # For each of the researcher's outputs, as they complete
             for future in concurrent.futures.as_completed(futures):
+                # Get the result, parse it and add it to the results
                 response = future.result()
                 result = QnA(question= response['research_topic'], answer= response['summary'])
                 results.append(result)
@@ -187,7 +212,9 @@ def research_questions(state: InputSchema) -> InputSchema:
 
         print(f'{BLUE}[NODE] [INFO] [FINISHED]{RESET}') if DEBUG else None
 
+        # Clear the not yet researched questions
         state['not_yet_researched_questions'] = None
+        # Add the results
         state['researched_questions_answers'] = (state['researched_questions_answers'] or []) + results
         return state
     
@@ -197,6 +224,7 @@ def research_questions(state: InputSchema) -> InputSchema:
 
         return state
     
+# The node that summarises the results
 def summarise(state: InputSchema) -> OutputSchema:
     '''
     This node summarises the results of the research, in order to return a strutured paragraph containing all the relevant information.
@@ -228,14 +256,22 @@ def summarise(state: InputSchema) -> OutputSchema:
 
 
 ''' Conditional Functions '''
-def should_summarise(state: InputSchema) -> Literal['summarise', 'research_questions']:
+def should_summarise(state: InputSchema) -> Literal['breakdown_research_topic', 'summarise', 'research_questions']:
+    '''
+    The conditional logic that determines what to do after breaking down the topic: research the topics or summarise them.
+    '''
     print(f'\n{BLUE}[NODE]{RESET} deep_researcher/should_summarise') if DEBUG else None
+
+    if state.get('error_occurred', False):
+        state['error_occurred'] = False
+        sleep(5)
+        return 'breakdown_research_topic'
 
     if not state['not_yet_researched_questions']:
         return 'summarise'
     
     # Limit imposed
-    if len(state['researched_questions_answers']) >= 5:
+    if len(state.get('researched_questions_answers', [])) >= 5:
         return 'summarise'
     
     return 'research_questions'
@@ -253,7 +289,8 @@ deep_researcher_graph.add_edge('research_questions', 'breakdown_research_topic')
 deep_researcher_graph.add_conditional_edges(
     'breakdown_research_topic', 
     should_summarise, 
-    {
+    {   # Not needed, just for clarity
+        'breakdown_research_topic': 'research_questions',
         'summarise': 'summarise',
         'research_questions': 'research_questions'
     }
@@ -292,7 +329,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(research_topic= 'what is the best place to live in Cyprus?')
+    user = InputSchema(research_topic= 'how to use the google maps API, so i retrieve the reviews made by a user in google maps')
     response = deep_researcher_app.invoke(user, config= config)
 
     import json

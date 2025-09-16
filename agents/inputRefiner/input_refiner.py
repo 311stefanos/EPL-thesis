@@ -47,6 +47,7 @@ from pydantic import BaseModel, Field
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
+from time import sleep
 import traceback
 import os
 
@@ -267,6 +268,11 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
+        # If an error code 429 is returned
+        if 'Error code: 429' in str(e):
+            print(f'{RED}[NODE] [ERR]{RESET} Too many requests. Waiting 5 seconds.') if DEBUG else None
+            sleep(5)
+
         return state
 
 # This node accepts a corrected version of a user input and a conversation history, and provides a refined version of it
@@ -443,7 +449,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = {'user_input': 'make assumptions only-no clarifications will be answered. i want an agent to help me with automating online orders. The order are of food.'}
+    user = {'user_input': 'i want to create a system that recognises when i make google maps reviews, then stores them in a DB. Then i want to be able to converse with the system asking questions and maybe reccomendations.'}
     response = input_refiner_app.invoke(user, config= config)
 
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
