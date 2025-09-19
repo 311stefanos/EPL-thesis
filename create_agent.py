@@ -50,7 +50,7 @@ response = {agent_name}_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
