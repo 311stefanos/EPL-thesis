@@ -21,7 +21,7 @@ response = input_refiner_app.invoke(graph_input)
 
 # response = {
 #     'corrected_original': 'I want a personal fitness coach.', 
-#     'refined_text': 'I am looking to hire a personal fitness trainer for customized workout guidance and coaching.'
+#     'refined_text': '# TODO: ADD'
 # }
 ```
 """
@@ -174,7 +174,7 @@ def _will_tool_call(messages: list[BaseMessage], actually_called: bool= False) -
         'will use tavily web search to gather context' in last_message.content.lower() and not actually_called or 
         hasattr(last_message, 'tool_calls') and last_message.tool_calls or
         hasattr(last_message, 'additional_kwargs') and last_message.additional_kwargs.get('tool_calls', False) or
-        tools_condition(messages) == 'tools'
+        tools_condition({'messages': messages}) == 'tools'
     )
 
 
@@ -241,7 +241,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
     try:
         # prompt
         prompt = prompts.CLARIFICATION_PROMPT.format(
-            user_input= state['messages'][0].content,
+            user_input= state['corrected_original'],
             clarifications= '\n---\n'.join([mess.content for mess in state['messages'][1:]])
         )
         # call the LLM
@@ -353,15 +353,15 @@ def keep_clarifying(state: IntermediateSchema) -> Literal['clarify', 'tools', 'r
     # If a tool call is needed
     if isinstance(state['messages'][-1], AIMessage) and _will_tool_call(state['messages']):
         print(f'{BLUE}[NODE] [INFO]{RESET} Will use tavily web search to gather context') if DEBUG else None
-        # But no actually tool call happened
-        while not _will_tool_call(state['messages'], actually_called= True):
-            sys_msg = prompts.FORCE_TOOL_CALL
-            # Call the llm again to make it call the tool
-            state['messages'] += [ # Append the LLM's response
-                clarifier.invoke([state['messages'][-1], SystemMessage(content= sys_msg)])
-            ]
-            print(f'{BLUE}[NODE] [INFO]{RESET} Trying to call the tool.') if DEBUG else None
-            input('\n> press to continue') if DEBUG else None
+        # # But no actually tool call happened
+        # while not _will_tool_call(state['messages'], actually_called= True):
+        #     sys_msg = prompts.FORCE_TOOL_CALL
+        #     # Call the llm again to make it call the tool
+        #     state['messages'] += [ # Append the LLM's response
+        #         clarifier.invoke([state['messages'][-1], SystemMessage(content= sys_msg)])
+        #     ]
+        #     print(f'{BLUE}[NODE] [INFO]{RESET} Trying to call the tool.') if DEBUG else None
+        #     input('\n> press to continue') if DEBUG else None
 
         return 'tools'
 

@@ -479,6 +479,8 @@ if __name__ == '__main__':
         research_topic= 'Tell me the admission deadlines for cs in keio to start my masters in fall 2026'
     )
     response = researcher_app.invoke(user, config= config)
-
-    import json
-    print(f'{BLUE}[MAIN] [INFO]{RESET}', json.dumps(response, indent= 4)) if DEBUG else None
+    
+    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
+    if DEBUG:
+        for key, value in response.items():
+            print(f'    {key}: {value}')

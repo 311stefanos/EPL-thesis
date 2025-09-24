@@ -331,6 +331,8 @@ if __name__ == '__main__':
 
     user = InputSchema(research_topic= 'how to use the google maps API, so i retrieve the reviews made by a user in google maps')
     response = deep_researcher_app.invoke(user, config= config)
-
-    import json
-    print(f'{BLUE}[MAIN] [INFO]{RESET}', json.dumps(response, indent= 4)) if DEBUG else None
+    
+    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
+    if DEBUG:
+        for key, value in response.items():
+            print(f'    {key}: {value}')

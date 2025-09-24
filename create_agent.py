@@ -167,8 +167,10 @@ if __name__ == '__main__':
     user = '' # TODO: add
     response = {agent_name}_app.invoke(user, config= config)
 
-    import json
-    print(f'{{BLUE}}[MAIN] [INFO]{{RESET}}', json.dumps(response, indent= 4)) if DEBUG else None
+    print(f'{{BLUE}}[MAIN] [INFO]{{RESET}} Response') if DEBUG else None
+    if DEBUG:
+        for key, value in response.items():
+            print(f'    {{key}}: {{value}}')
 """
 # Create each file in the new directory
 for file in FILE_NAMES:
