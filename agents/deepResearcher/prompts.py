@@ -1,3 +1,4 @@
+# The Lead Research Planner
 BREAKDOWN_PROMPT = """
 You are the Lead Research Planner.
 Break the topic into at most 3 **useful, distinct, non-overlapping** subtopics for parallel research.
@@ -20,7 +21,7 @@ Do not try to break it down more that you need to. A limit of 5 total subtopic i
 - Distinctness: No trivial variants, no slicing by arbitrary containers. Avoid wording that merely rephrases the same thing.
 - Coverage: If decomposition is needed, cover **different angles** (e.g., historical context vs. current data vs. verification), not the same angle in different wrappers.
 - Non-overlap with <ALREADY_RESEARCHED>: Do not repeat covered items; only add what increases information gain.
-- Subtopics must be **actionable for research** — something a team could meaningfully investigate in parallel.
+- Subtopics must be **actionable for research** - something a team could meaningfully investigate in parallel.
 
 # Self-Check (internal scoring, do not output)
 For each candidate subtopic, mentally score:
@@ -31,24 +32,26 @@ For each candidate subtopic, mentally score:
 Keep only candidates with total >= 16/20 and Relevance >= 4. If fewer than 1 pass, keep the **main topic** as the single subtopic.
 
 # Output Format
-- Output **only** the final subtopics as plain text, separated by "~~~".
+- Output **only** the final subtopics as a list of strings.
 - Output at most 3 subtopics.
-- If nothing more is needed (topic fully specific or covered), output exactly **`<empty>`** (no delimiters).
+- If nothing more is needed (topic fully specific or covered), just output an empty list.
 
 # Examples of behavior (do not copy text; follow behavior)
 - If the topic is a specific fact query, return it as a single subtopic.
 - If broad, return up to 3 distinct angles needed to answer comprehensively.
 """
 
+# The prompt to summarize the deep research findings
 SUMMARY_PROMPT = """
 You are an expert in summarizing deep research findings.
 A team of analysts has conducted a deep research on the topic:
+
 <Topic>
 {topic}
 </Topic>
 
 <Task>
-Your job is to summarize the deep research findings.
+Your job is to summarize the deep research findings, answering comprehensively the topic, as well as any subtopics resulting from the deep research.
 </Task>
 
 <Output>

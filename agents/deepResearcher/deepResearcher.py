@@ -82,6 +82,7 @@ load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 DEBUG = os.getenv('DEBUG')
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
@@ -102,6 +103,10 @@ class QnA(BaseModel):
 
     def __str__(self):
         return f'Question: {self.question}\nAnswer: {self.answer}'
+    
+# Schema for the LLM to structure its output
+class StructuredOutput(BaseModel):
+    questions_to_research: List[str] = Field(description= 'The questions to be researched.')
 
 ''' Input Schema '''
 # The input schema
@@ -126,15 +131,15 @@ class OutputSchema(BaseModel):
 deep_researcher = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0.6
-)
+).with_structured_output(StructuredOutput)
 
 # The LLM that summarises the results
 summariser = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0.5
 )
 
@@ -159,17 +164,11 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
         
         # call the LLM
         results = deep_researcher.invoke([SystemMessage(content= prompt)])
-        res_content = results.content
-
-        # Fallback if the LLM does a mistake
-        if res_content in ['~~~', 'empty', '<empty>', '`empty`', '`<empty>`']:
-            res_content = ''
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
-        # Get the questions from the LLM response
-        questions = res_content.split('~~~') if res_content != '' else []
-        state['not_yet_researched_questions'] = [question.strip() for question in questions]
+        # Get the questions from the LLM response                              # TODO: check
+        state['not_yet_researched_questions'] = [question.strip() for question in results.questions_to_research]
 
         return state
     

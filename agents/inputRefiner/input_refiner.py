@@ -62,6 +62,7 @@ load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 DEBUG = os.getenv('DEBUG')
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
@@ -124,7 +125,7 @@ tavily_search = TavilySearch(
 correcter =  ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1',
     api_key= OPENROUTER_API_KEY,
-    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0
 )
 
@@ -132,7 +133,7 @@ correcter =  ChatOpenAI(
 clarifier = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1',
     api_key= OPENROUTER_API_KEY,
-    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0.8
 ).bind_tools([tavily_search])
 
@@ -140,7 +141,7 @@ clarifier = ChatOpenAI(
 refiner = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'deepseek/deepseek-chat-v3.1:free',#'moonshotai/kimi-k2:free',  
+    model= MODEL_NAME,
     temperature= 0.7
 )
 

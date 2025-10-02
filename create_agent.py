@@ -81,6 +81,7 @@ load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 DEBUG = os.getenv('DEBUG')
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\\033[94m' # INFO
 RED = '\\033[91m' # ERR
@@ -111,7 +112,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {' '.join(x.title() for x i
 llm = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME, 
     temperature= 0
 )
 

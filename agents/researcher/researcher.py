@@ -83,6 +83,7 @@ load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 DEBUG = os.getenv('DEBUG')
+MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
@@ -200,14 +201,14 @@ tools_by_name = {tool.name: tool for tool in tools}
 researcher = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0.7
 ).bind_tools(tools)
 
 summariser = ChatOpenAI(
     base_url= 'https://openrouter.ai/api/v1', 
     api_key= OPENROUTER_API_KEY,
-    model= 'meta-llama/llama-3.3-70b-instruct:free',#'moonshotai/kimi-k2:free', 
+    model= MODEL_NAME,
     temperature= 0.3
 )
 
