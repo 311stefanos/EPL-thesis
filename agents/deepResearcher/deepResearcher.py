@@ -49,7 +49,6 @@ response = deep_researcher_app.invoke(graph_input)
 ''' Imports '''
 # Langchain imports
 from langchain_core.messages import SystemMessage
-from langchain_openai import ChatOpenAI
 
 # Langgraph imports
 from langgraph.checkpoint.memory import MemorySaver
@@ -74,20 +73,20 @@ import concurrent.futures
 # My imports
 from agents.researcher.researcher import researcher_app
 from agents.deepResearcher import prompts
+from utils.utils import myChatOpenAI, safe_invoke
 
 
 
 ''' Constants '''
 load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 DEBUG = os.getenv('DEBUG')
-MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
+
 
 
 print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Deep Researcher') if DEBUG else None
@@ -128,19 +127,13 @@ class OutputSchema(BaseModel):
 
 ''' LLM '''
 # The LLM that breaks down the topic
-deep_researcher = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+deep_researcher = myChatOpenAI(
     temperature= 0.6
 ).with_structured_output(StructuredOutput)
 
 # The LLM that summarises the results
-summariser = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
-    temperature= 0.5
+summariser = myChatOpenAI(
+    temperature= 0.3
 )
 
 
@@ -152,6 +145,7 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
     This node breaks down the topic into questions for the researcher team to answer.
     '''
     print(f'\n{BLUE}[NODE]{RESET} deep_researcher/breakdown_research_topic') if DEBUG else None
+    state['error_occurred'] = False
 
     try:
         # prompt
@@ -163,13 +157,13 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
         )
         
         # call the LLM
-        results = deep_researcher.invoke([SystemMessage(content= prompt)])
+        results = safe_invoke(deep_researcher, [SystemMessage(content= prompt)])
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
-        # Get the questions from the LLM response                              # TODO: check
+        # Get the questions from the LLM response
         state['not_yet_researched_questions'] = [question.strip() for question in results.questions_to_research]
-
+        
         return state
     
     except Exception as e:
@@ -204,17 +198,17 @@ def research_questions(state: InputSchema) -> InputSchema:
             for future in concurrent.futures.as_completed(futures):
                 # Get the result, parse it and add it to the results
                 response = future.result()
-                result = QnA(question= response['research_topic'], answer= response['summary'])
-                results.append(result)
+                result_qna = QnA(question= response['research_topic'], answer= response['summary'])
+                results.append(result_qna)
 
-                print(f'{BLUE}[NODE] [INFO] [QNA]{RESET} {result}') if DEBUG else None
+                print(f'{BLUE}[NODE] [INFO] [QNA]{RESET} {result_qna}') if DEBUG else None
 
         print(f'{BLUE}[NODE] [INFO] [FINISHED]{RESET}') if DEBUG else None
 
         # Clear the not yet researched questions
-        state['not_yet_researched_questions'] = None
+        state['not_yet_researched_questions'] = []
         # Add the results
-        state['researched_questions_answers'] = (state['researched_questions_answers'] or []) + results
+        state['researched_questions_answers'] = state.get('researched_questions_answers', []) + results
         return state
     
     except Exception as e:
@@ -223,6 +217,42 @@ def research_questions(state: InputSchema) -> InputSchema:
 
         return state
     
+# Serial
+# The node that researches all the questions
+def research_questions_serial(state: InputSchema) -> InputSchema:
+    '''
+    This node researches all the questions in parallel, using the researcher team.
+    '''
+    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/research_questions') if DEBUG else None
+
+    try:
+        # Just a different thread_id for each agent
+        researched_questions_answers = []
+        config = lambda i: {'recursion_limit': 100, 'configurable': {'thread_id': f'researcher_{i}'}}
+        for i, research_topic in enumerate(state['not_yet_researched_questions']):
+            # Call the researcher with the topic as input, and the configuration
+            response = researcher_app.invoke({'research_topic': research_topic}, config(i))
+
+            # Get the result, parse it and add it to the results
+            result_qna = QnA(question= response['research_topic'], answer= response['summary'])
+            researched_questions_answers.append(result_qna)
+
+            print(f'{BLUE}[NODE] [INFO] [QNA]{RESET} {result_qna}') if DEBUG else None
+
+        print(f'{BLUE}[NODE] [INFO] [FINISHED]{RESET}') if DEBUG else None
+
+        # Clear the not yet researched questions
+        state['not_yet_researched_questions'] = []
+        state['researched_questions_answers'] = state.get('researched_questions_answers', []) + researched_questions_answers
+        
+        return state
+    
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return state
+
 # The node that summarises the results
 def summarise(state: InputSchema) -> OutputSchema:
     '''
@@ -240,7 +270,7 @@ def summarise(state: InputSchema) -> OutputSchema:
         )
 
         # call the LLM
-        summary = summariser.invoke(prompt).content
+        summary = safe_invoke(summariser, [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO] [SUMMARY]{RESET} {summary}') if DEBUG else None
 
@@ -261,11 +291,11 @@ def should_summarise(state: InputSchema) -> Literal['breakdown_research_topic', 
     '''
     print(f'\n{BLUE}[NODE]{RESET} deep_researcher/should_summarise') if DEBUG else None
 
+    # Error occured, go back
     if state.get('error_occurred', False):
-        state['error_occurred'] = False
-        sleep(5)
         return 'breakdown_research_topic'
 
+    # No more questions to research, summarise
     if not state['not_yet_researched_questions']:
         return 'summarise'
     
@@ -276,11 +306,13 @@ def should_summarise(state: InputSchema) -> Literal['breakdown_research_topic', 
     return 'research_questions'
 
 
+
 ''' Graph '''
 deep_researcher_graph = StateGraph(InputSchema, output_schema= OutputSchema)
 
 deep_researcher_graph.add_node('breakdown_research_topic', breakdown_research_topic)
 deep_researcher_graph.add_node('research_questions', research_questions)
+# deep_researcher_graph.add_node('research_questions', research_questions_serial)
 deep_researcher_graph.add_node('summarise', summarise)
 
 deep_researcher_graph.add_edge(START, 'breakdown_research_topic')
@@ -289,7 +321,7 @@ deep_researcher_graph.add_conditional_edges(
     'breakdown_research_topic', 
     should_summarise, 
     {   # Not needed, just for clarity
-        'breakdown_research_topic': 'research_questions',
+        'breakdown_research_topic': 'breakdown_research_topic',
         'summarise': 'summarise',
         'research_questions': 'research_questions'
     }
@@ -328,7 +360,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(research_topic= 'how to use the google maps API, so i retrieve the reviews made by a user in google maps')
+    user = InputSchema(research_topic= 'Give me details about all events and parties in Cyprus for the netx 3 months.')
     response = deep_researcher_app.invoke(user, config= config)
     
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

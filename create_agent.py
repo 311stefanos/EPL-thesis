@@ -51,7 +51,6 @@ response = {agent_name}_app.invoke(graph_input)
 ''' Imports '''
 # Langchain imports
 from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
 # Langgraph imports
@@ -72,6 +71,7 @@ import traceback
 import os
 
 # My imports
+from utils.utils import myChatOpenAI, safe_invoke
 from agents.{directory_name} import prompts
 
 
@@ -79,14 +79,13 @@ from agents.{directory_name} import prompts
 ''' Constants '''
 load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 DEBUG = os.getenv('DEBUG')
-MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\\033[94m' # INFO
 RED = '\\033[91m' # ERR
 GREEN = '\\033[92m' # REST
 RESET = '\\033[0m'
+
 
 
 print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {' '.join(x.title() for x in agent_name.split('_'))}') if DEBUG else None
@@ -109,10 +108,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {' '.join(x.title() for x i
 
 
 ''' LLM '''
-llm = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME, 
+llm = myChatOpenAI(
     temperature= 0
 )
 
@@ -158,6 +154,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {{
+        'recursion_limit': 25, # TODO: change
         'configurable': {{
             'user_id': '{directory_name}',
             'run_name': '{directory_name}',
