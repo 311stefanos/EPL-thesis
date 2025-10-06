@@ -59,7 +59,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import Literal, Optional, List
+from typing import Literal, Optional, List, Union
 from pydantic import BaseModel, Field
 
 # General imports
@@ -73,6 +73,7 @@ import os
 import re
 
 # My imports
+from utils.utils import myChatOpenAI, safe_invoke
 from agents.researcher import prompts
 
 
@@ -101,7 +102,7 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Researcher') if DEBUG else None
 # A Schema for the results of a research query
 class ResearchResult(BaseModel):
     ''' You should use this schema to represent the results of a research query. Should be used after each search. '''
-    research_query: str = Field(description= 'The query made to find the appropriate results.')
+    research_query: Union[str, List[str]] = Field(description= 'The query(s) made to find the appropriate results.')
     url: List[Optional[str]] = Field(description= 'The url of the document(s) used in the information extraction.')
     title: List[Optional[str]] = Field(description= 'The title of the document(s) used in the information extraction.')
     date_created: List[Optional[str]] = Field(description= 'The date of the document.')
@@ -125,6 +126,8 @@ class InputSchema(MessagesState):
         description='The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).'
     )
     results: Optional[List[ResearchResult]] = Field(description= 'The results of the research.')
+    # If there was an error during the research
+    error_occurred: bool = Field(description= 'If there was an error during the research.')
 
 
 ''' Output Schema '''
@@ -134,6 +137,7 @@ class OutputSchema(BaseModel):
         description='The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).'
     )
     summary: str = Field(description= 'The results of the research in a beautifully written summary.')
+
 
 
 ''' Tools '''
@@ -198,17 +202,11 @@ tools_by_name = {tool.name: tool for tool in tools}
 
 
 ''' LLM '''
-researcher = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+researcher = myChatOpenAI(
     temperature= 0.7
 ).bind_tools(tools)
 
-summariser = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+summariser = myChatOpenAI(
     temperature= 0.3
 )
 
@@ -259,6 +257,7 @@ def do_research(state: InputSchema) -> InputSchema:
     In this node, the agent does the actual research by calling the tools.
     '''
     print(f'\n{BLUE}[NODE]{RESET} researcher/do_research') if DEBUG else None
+    state['error_occurred'] = False
 
     try:
         # prompt
@@ -267,16 +266,17 @@ def do_research(state: InputSchema) -> InputSchema:
             topic= state['research_topic']
         )
         # call the LLM
-        results = researcher.invoke([SystemMessage(content= prompt)] + state['messages'])
+        results = safe_invoke(researcher, [SystemMessage(content= prompt)] + state['messages'])
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
-        return {'messages': [results]}
+        return {'messages': [results], 'error_occurred': False}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
+        state['error_occurred'] = True
         return state
     
 # The tool_node node, where the agent uses the tools
@@ -300,7 +300,7 @@ def tool_node(state: InputSchema) -> InputSchema:
 
         # Execute all tool calls
         observations = []
-        update = {'messages': [], 'results': []}
+        update: dict[str, list] = {'messages': [], 'results': state.get('results', [])}
         for tool_call in tool_calls:
             # Get the tool and arguments
             if from_kwargs:
@@ -308,13 +308,38 @@ def tool_node(state: InputSchema) -> InputSchema:
             tool = tools_by_name[tool_call['name']]
 
             args = tool_call.get('args', {}) or tool_call.get('arguments', {})
+            # Parse the tool arguments if needed.
             if isinstance(args, str):
-                args = parse_tool_arguments(args)
+                args = parse_tool_arguments(args)                
 
             print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {tool_call["name"]} with {args}') if DEBUG else None
 
             try:
                 observation = None
+
+                # Sometimes the query is a list of queries, because of wrong tool arguments by the LLM
+                if hasattr(args, 'query') and isinstance(args, list):
+                    # Get a copy of the arguments
+                    arg = args.copy()
+                    for query in args['query']:
+                        # Run it with the query
+                        arg['query'] = query
+                        observation = tool.invoke(arg)
+                        if observation:
+                            observations.append(observation)
+                            
+                        print(f'{BLUE}[NODE] [INFO] [LAST OBSERVATION]{RESET} {observation}') if DEBUG else None
+                        # Create a list of tool outputs, as ToolMessage
+                        update['messages'].append(
+                            ToolMessage(
+                                content= observation,
+                                name= tool_call['name'],
+                                tool_call_id= tool_call['id']
+                            )
+                        )
+                    # This tool is finished
+                    continue
+
                 # Execute the tool
                 observation = tool.invoke(args)
                 # Add the observation to the list
@@ -359,7 +384,7 @@ def summarise(state: InputSchema) -> OutputSchema:
 
     try:
         # prompt
-        results = '\n---\n\n'.join([str(r) for r in state['results']])
+        results = '\n---\n\n'.join([str(r) for r in state.get('results', [])])
 
         print(f'{BLUE}[NODE] [INFO] [ALL RESULTS]{RESET} {results}') if DEBUG else None
 
@@ -371,7 +396,7 @@ def summarise(state: InputSchema) -> OutputSchema:
         )
 
         # call the LLM
-        summary = summariser.invoke(prompt)
+        summary = safe_invoke(summariser, SystemMessage(content= prompt))
 
         print(f'{BLUE}[NODE] [INFO] [SUMMARY]{RESET} {summary}') if DEBUG else None
 
@@ -394,23 +419,25 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do
     print(f'\n{BLUE}[NODE]{RESET} researcher/should_continue') if DEBUG else None
 
     try:
+        # If an error occured go back
+        if state.get('error_occurred', False):
+            return 'do_research'
+
         # Get the last message and extract the tool calls
         last_message = state['messages'][-1]
-
-        # If last message has error code 429, sleep for 5 seconds
-        if hasattr(last_message, 'error') and str(last_message.error.code) == '429': 
-            sleep(2)
 
         # If last message has error code 400 because the context is too long, remove the first message
         if hasattr(last_message, 'error') and str(last_message.error.code) == '400': 
             if 'maximum context length is' in last_message.error['message']:
+                print(f'{RED}[NODE] [INFO] [CONTEXT TOO LONG]{RESET} Removed first message') if DEBUG else None
                 add_messages(state, RemoveMessage(state['messages'][0].id))
 
-        tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', [])
+        tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', None)
 
         # If there are tool calls, go to the tool node
         if tool_calls:
             return 'tool_node'
+        
         # Else, go to the summarise node
         else:
             print(f'{BLUE}[NODE] [INFO] [NO TOOL CALLS]{RESET} Go to summarise') if DEBUG else None

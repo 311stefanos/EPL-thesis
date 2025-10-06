@@ -16,6 +16,8 @@ You have access to two main groups of tools:
     1. **duckduckgo_search**: For conducting web searches to gather information
     2. **wikipedia_search**: For conducting web searches to gather information
     3. **tavily_search**: For conducting web searches to gather information
+**Note**: All web search tools take a query as input. The query **MUST** be a string - do not use lists. If you
+want to research multiple topics, make multiple tool calls with different queries.
 2. Knowledge and Strategy Tools
     1. **ResearchResult**: For representing the results of a research query (Always use this after using web search tools)
     2. **think_tool**: For reflection and strategic planning during research (Always use it after or at the same time as ResearchResult)
@@ -58,7 +60,7 @@ Think like a human researcher with limited time. Follow these steps:
 
 <Extract Information>
 Extract information from the results of each tool call using the ResearchResult tool:
-- research_query: str = The query used.
+- research_query: Union[str, List[str]] = The query or queries used.
 - url: List[Optional[str]] = A list of URLs used in the information extraction.
 - title: List[Optional[str]] = A list of titles used in the information extraction.
 - date_created: List[Optional[str]] = A list of the creation dates used in the information extraction.
