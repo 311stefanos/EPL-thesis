@@ -1,6 +1,7 @@
 
 from openai import (OpenAIError, APIConnectionError, InternalServerError,
                     RateLimitError, BadRequestError, AuthenticationError)
+from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 from typing import Protocol, Any
 from dotenv import load_dotenv
@@ -48,7 +49,7 @@ class Invokable(Protocol):
     def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
 
 # A function that invokes an LLM and handles errors
-def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int = 5):
+def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int = 5) -> BaseMessage:
     '''
     `safe_invoke` is a function that invokes an LLM and handles errors
 
@@ -59,7 +60,7 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int
         max_retries (int) = 5: The maximum number of retries
     
     `Returns:`
-        The result of the LLM invocation
+        (BaseMessage) The result of the LLM invocation
 
     `Raises:` The errors raised by the LLM
         AuthenticationError: If the API key is invalid
