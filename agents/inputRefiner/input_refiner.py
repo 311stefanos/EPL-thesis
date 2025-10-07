@@ -52,6 +52,7 @@ import traceback
 import os
 
 # My imports
+from utils.utils import myChatOpenAI, safe_invoke
 from agents.inputRefiner import prompts
 
 
@@ -122,26 +123,17 @@ tavily_search = TavilySearch(
 
 ''' LLM '''
 # The LLM used to correct the user's input
-correcter =  ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1',
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+correcter =  myChatOpenAI(
     temperature= 0
 )
 
 # The LLM used to clarify the user's input with questions and assumptions
-clarifier = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1',
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+clarifier = myChatOpenAI(
     temperature= 0.8
 ).bind_tools([tavily_search])
 
 # The LLM used to refine the user's input
-refiner = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+refiner = myChatOpenAI(
     temperature= 0.7
 )
 

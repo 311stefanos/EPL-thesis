@@ -56,14 +56,12 @@ from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated
+from typing import TypedDict, Literal, List, Optional
 from pydantic import BaseModel, Field
-from operator import add
 
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
-from time import sleep
 import traceback
 import os
     # Thread imports
@@ -72,8 +70,8 @@ import concurrent.futures
 
 # My imports
 from agents.researcher.researcher import researcher_app
-from agents.deepResearcher import prompts
 from utils.utils import myChatOpenAI, safe_invoke
+from agents.deepResearcher import prompts
 
 
 
@@ -111,9 +109,10 @@ class StructuredOutput(BaseModel):
 # The input schema
 class InputSchema(TypedDict):
     research_topic: str = Field(description= 'The topic to be researched.')
-    not_yet_researched_questions: Optional[List[str]] = Field(description= 'The question to be researched.')
-    researched_questions_answers: Optional[Annotated[List[QnA], add]] = Field(
-        description= 'A list of questions and answers.'
+    not_yet_researched_questions: Optional[List[str]] = Field(description= 'The question to be researched.', default_factory= List)
+    researched_questions_answers: Optional[List[QnA]] = Field(
+        description= 'A list of questions and answers.',
+        default_factory= List
     )
     # If there was an error during the breakdown logic
     error_occurred: bool = Field(description= 'If there was an error during the breakdown logic.')
