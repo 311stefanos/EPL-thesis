@@ -28,8 +28,7 @@ response = workflow_refiner_app.invoke(graph_input)
 # Langchain imports
 from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
 from langgraph.prebuilt import ToolNode, tools_condition
-from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
+from langchain_tavily import TavilySearch
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState
@@ -37,18 +36,17 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated, Union
+from typing import Literal, List, Optional, Dict
 from pydantic import BaseModel, Field
-from operator import add
 
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
-from time import sleep
 import traceback
 import os
 
 # My imports
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, print_function_name
 from agents.workflowRefiner import prompts
 
 
@@ -56,14 +54,14 @@ from agents.workflowRefiner import prompts
 ''' Constants '''
 load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
 DEBUG = os.getenv('DEBUG')
-MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
+
 
 
 print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Workflow Refiner') if DEBUG else None
@@ -73,11 +71,16 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Workflow Refiner') if DEBUG else
 """ Schemas """
 ''' General Schemas '''
 class WorkflowNode(BaseModel):
-    name: str = Field(description= 'The name of the node.')
+    name: str = Field(description= 'The name of the node in snake_case.')
     description: str = Field(description= 'The description of the node.')
+    subgraph_id: Optional[str] = Field(
+        description= 'If set, this node references a subgraph by its ID in WorkflowBundle.subgraphs.',
+        default= None
+    )
 
     def __str__(self) -> str:
-        return f'{self.name}: {self.description}'
+        subgraph = f'(subgraph: {self.subgraph_id})' if self.subgraph_id else ''
+        return f'• {self.name} {subgraph}\n│   ⤷ {self.description}'
 
 class WorkflowEdge(BaseModel):
     source_name: str = Field(description= 'The name of the source node.')
@@ -85,20 +88,45 @@ class WorkflowEdge(BaseModel):
     description: str = Field(description= 'The description of the edge, and the why.')
 
     def __str__(self) -> str:
-        return f'{self.source_name} -> {self.target_name}: {self.description}'
+        # return f'{self.source_name} -> {self.target_name}: {self.description}'
+        return f'• {self.source_name} ➜  {self.target_name}\n│   ⤷ {self.description}'
 
 class WorkflowGraph(BaseModel):
     type: Literal['reactive_conversational', 'linear_pipeline', 'planner_executor', 'hybrid'] = Field(
         description= 'The type of the workflow.'
     )
-    Nodes: List[Union[WorkflowNode, 'WorkflowGraph']] = Field(description= 'The nodes of the workflow.')
-    Edges: List[WorkflowEdge] = Field(description= 'The edges of the workflow.')
+    name: str = Field(description= 'The name of the workflow.')
+    nodes: List[WorkflowNode] = Field(description= 'The nodes of the workflow.')
+    edges: List[WorkflowEdge] = Field(description= 'The edges of the workflow.')
     description: str = Field(description= 'The description of the workflow; and the why.')
 
     def __str__(self) -> str:
-        nodes = 'Nodes:\n' + '\n'.join([str(node) for node in self.Nodes])
-        edges = 'Edges:\n' + '\n'.join([str(edge) for edge in self.Edges])
-        return f'{self.type}: {self.description}\n\n---\n\n{nodes}\n\n{edges}\n'
+        title_bar = f'╭─ {self.name} [{self.type}] ─────'
+        desc_block = f'│ {self.description}'
+        nodes_block = '│\n│ Nodes:\n' + '\n'.join(f'│   {str(node)}' for node in self.nodes) if self.nodes else '│ Nodes: (none)'
+        edges_block = '│\n│ Edges:\n' + '\n'.join(f'│   {str(edge)}' for edge in self.edges) if self.edges else '│ Edges: (none)'
+        bottom_bar = '╰' + '─' * (len(title_bar))
+        return f'{title_bar}\n{desc_block}\n{nodes_block}\n{edges_block}\n{bottom_bar}'
+    
+class WorkflowBundle(BaseModel):
+    comments: str = Field(
+        description= 'Use this field to add any comments regarding to the users request.'
+    )
+    root: WorkflowGraph
+    subgraphs: Dict[str, WorkflowGraph] = Field(default_factory= dict)
+
+    def __str__(self) -> str:
+        # Comments first
+        bundle_output = [f'\n📝 COMMENTS: {self.comments}'] if self.comments else []
+        # Root right after
+        bundle_output.append([f'\n🌐 ROOT WORKFLOW\n{str(self.root)}'])
+        # Append subgraphs (sorted for deterministic order)
+        for node in self.root.nodes:
+            if node.subgraph_id and node.subgraph_id in self.subgraphs:
+                sub_id = node.subgraph_id
+                subgraph = self.subgraphs[sub_id]
+                bundle_output.append(f'\n🧩 SUBGRAPH: {sub_id}\n{str(subgraph)}')
+        return '\n'.join(bundle_output)
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
@@ -111,67 +139,33 @@ class InputSchema(MessagesState):
 
 ''' Output Schema '''
 class OutputSchema(BaseModel):
-    workflow: WorkflowGraph = Field(
+    workflow: WorkflowBundle = Field(
         description= 'The workflow created from the user input.'
     )
 
 
 
 ''' Tools '''
-# The think tool, is for strategic reflection of the agent
-@tool(description= 'Strategic reflection tool for workflow planning')
-def think_tool(reflection: str) -> str:
-    """Tool for strategic reflection on workflow planning and decision-making.
-
-    Use this tool after some messages of the conversation to analyze results and plan next steps systematically.
-    This creates a deliberate pause in the workflow planning for quality decision-making.
-
-    When to use:
-    - After receiving vital information: What key information did I find?
-    - Before deciding next steps: Do I have enough to answer confidently?
-    - When assessing gaps: What specific information am I still missing?
-    - Before concluding: Can I provide a complete and accurate answer now?
-
-    Reflection should address:
-    1. Analysis of current findings - What concrete information have I gathered?
-    2. Gap assessment - What crucial information is still missing?
-    3. Quality evaluation - Do I have sufficient evidence for a good answer?
-    4. Strategic decision - Should I continue asking or provide my answer?
-
-    Args:
-        reflection: Your detailed reflection on progress, findings, gaps, and next steps
-
-    Returns:
-        Confirmation that reflection was recorded for decision-making
-    """
-    return f'Reflection recorded: {reflection}'
-
 # Tavily, to search and gather information from the web
-# tavily_search = TavilySearch(
-#     tavily_api_key= TAVILY_API_KEY,
-#     search_depth= "advanced",
-#     max_results= 5,
-#     include_answer= True
-# ).as_tool() # TODO: add the tool
+tavily_search = TavilySearch(
+    tavily_api_key= TAVILY_API_KEY,
+    search_depth= "advanced",
+    max_results= 5,
+    include_answer= True
+).as_tool()
 
 # TODO: can add a rag tool with tutorials and descriptions on each workflow type
 
 
 
 ''' LLM '''
-clarifier = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+clarifier = myChatOpenAI(
     temperature= 0.7
-).bind_tools([think_tool]) # TODO: add the tavily tool and maybe remove the think tool
+).bind_tools([tavily_search])
 
-workflow_engineer = ChatOpenAI(
-    base_url= 'https://openrouter.ai/api/v1', 
-    api_key= OPENROUTER_API_KEY,
-    model= MODEL_NAME,
+workflow_engineer = myChatOpenAI(
     temperature= 0.7
-).with_structured_output(WorkflowGraph)
+).with_structured_output(WorkflowBundle)
 
 
 
@@ -191,7 +185,7 @@ def _will_tool_call(messages: list[BaseMessage], actually_called: bool= False) -
     - True if the last message will call a tool
 
     ### Tool Calls:
-    - 'Will use think_tool to reflect on progress'
+    - 'Will use tavily_search to gather context'
         - Skipped if actually_call is True
     - last_message.tool_calls exists and not empty
     - last_message.additional_kwargs.tool_calls exists and not empty
@@ -200,7 +194,7 @@ def _will_tool_call(messages: list[BaseMessage], actually_called: bool= False) -
     last_message = messages[-1]
     return (
         # If actually_called is set, we should check wheather the last message is a tool call, not the content
-        'Will use think_tool to reflect on progress' in last_message.content.lower() and not actually_called or 
+        'will use tavily_search to gather context' in last_message.content.lower() and not actually_called or 
         hasattr(last_message, 'tool_calls') and last_message.tool_calls or
         hasattr(last_message, 'additional_kwargs') and last_message.additional_kwargs.get('tool_calls', False) or
         tools_condition({'messages': messages}) == 'tools'
@@ -214,7 +208,8 @@ def clarify(state: InputSchema) -> InputSchema:
     '''
     This node accepts a  user input and provides clarifying context
     '''
-    print(f'\n{BLUE}[NODE]{RESET} workflow_refiner/clarify') if DEBUG else None
+    print_function_name() if DEBUG else None
+    
     if DEBUG and state['messages'] and isinstance(state['messages'][-1], ToolMessage): # The ToolNode added a message.
         print(f'{GREEN}[NODE] [TOOL RESULT]{RESET} {state["messages"][-1].content}')
     try:
@@ -222,10 +217,11 @@ def clarify(state: InputSchema) -> InputSchema:
         prompt = prompts.CLARIFICATION_PROMPT.format(
             user_input= state['user_input'],
             clarified_user_input= state.get('clarified_user_input') or '',
-            clarifications= '\n---\n'.join([mess.content for mess in state['messages']])
+            clarifications= '\n\n---\n'.join([mess.content for mess in state['messages']])
         )
+        
         # call the LLM
-        clarification = clarifier.invoke([SystemMessage(content= prompt)])
+        clarification = safe_invoke(clarifier, [SystemMessage(content= prompt)])
         print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
 
         # If no further clarifications are needed, wrap it in an AIMessage
@@ -248,11 +244,6 @@ def clarify(state: InputSchema) -> InputSchema:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
-        # If an error code 429 is returned
-        if 'Error code: 429' in str(e):
-            print(f'{RED}[NODE] [ERR]{RESET} Too many requests. Waiting 5 seconds.') if DEBUG else None
-            sleep(5)
-
         return state
 
 
@@ -262,38 +253,33 @@ def create_workflow(state: InputSchema) -> OutputSchema:
     '''
     This node accepts a the conversation history, and provides a refined version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/refine_user_input') if DEBUG else None
+    print_function_name() if DEBUG else None
+    
     try:
         # prompt
         history: list[str] = []
         for mess in state['messages']:
             # Append all messages from the conversation.
             history.append(mess.pretty_repr() if isinstance(mess, BaseMessage) else str(mess))
-            
-        prompt_with_history = prompts.CREATE_WORKFLOW_PROMPT.format(
-            history= '\n---\n\n'.join(history)
-        )
 
         # call the LLM to refine
         workflow_tries_user_requests: list[str] = []
         should_continue = True
         while should_continue:
             # parse the prompt with the user requests
-            prompt = prompt_with_history.format(
-                workflow_tries_user_requests = '\n---\n\n'.join(workflow_tries_user_requests)
+            prompt = prompts.CREATE_WORKFLOW_PROMPT.format(
+                history= '\n---\n\n'.join(history),
+                workflow_tries_user_requests= '\n---\n\n'.join(workflow_tries_user_requests)
             )
+            
             try:
-                workflow = workflow_engineer.invoke([SystemMessage(content= prompt)])
-            except Exception as e:
-                if 'error' in e and '429' in str(e['error']['code']):
-                    print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
-                    print(f'{RED}[NODE] [ERR]{RESET} Too many requests. Waiting 5 seconds.') if DEBUG else None
-                    sleep(5)
-                    continue
-                else:
-                    raise e
+                workflow = safe_invoke(workflow_engineer, [SystemMessage(content= prompt)])
+            except ValueError as e: 
+                print(e)
+                input('Press enter to continue')
+                continue
 
-            print(f'{BLUE}[NODE] [INFO]{RESET} suggested workflow: {workflow}') if DEBUG else None
+            # print(f'{BLUE}[NODE] [INFO]{RESET} suggested workflow: {workflow}') if DEBUG else None
 
             # Ask the user if the refined version of the user input is okay
             print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {workflow}')
@@ -306,7 +292,6 @@ def create_workflow(state: InputSchema) -> OutputSchema:
             else:
                 messages = AIMessage(content= str(workflow)).pretty_repr() + HumanMessage(content= answer).pretty_repr()
                 workflow_tries_user_requests.append(messages)
-                # print(f'{BLUE}[NODE] [INFO]{RESET} User request: {answer}') if DEBUG else None
 
         print(f'{BLUE}[NODE] [INFO]{RESET} Final workflow: {workflow}') if DEBUG else None
         return OutputSchema(workflow= workflow)
@@ -332,7 +317,7 @@ def keep_clarifying(state: InputSchema) -> Literal['clarify', 'tools', 'create_w
     Returns:
         Literal['clarify', 'tools', 'refine']
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/keep_clarifying') if DEBUG else None
+    print_function_name() if DEBUG else None
 
     # If no further clarifications are needed
     if 'no clarification needed' in state['messages'][-1].content.lower():
@@ -342,16 +327,6 @@ def keep_clarifying(state: InputSchema) -> Literal['clarify', 'tools', 'create_w
     # If a tool call is needed
     if isinstance(state['messages'][-1], AIMessage) and _will_tool_call(state['messages']):
         print(f'{BLUE}[NODE] [INFO]{RESET} Will use a tool') if DEBUG else None
-        # # But no actually tool call happened
-        # while not _will_tool_call(state['messages'], actually_called= True):
-        #     sys_msg = prompts.FORCE_TOOL_CALL
-        #     # Call the llm again to make it call the tool
-        #     state['messages'] += [ # Append the LLM's response
-        #         clarifier.invoke([state['messages'][-1], SystemMessage(content= sys_msg)])
-        #     ]
-        #     print(f'{BLUE}[NODE] [INFO]{RESET} Trying to call the tool.') if DEBUG else None
-        #     input('\n> press to continue') if DEBUG else None
-
         return 'tools'
 
     # Otherwise, keep asking for clarifications
@@ -364,7 +339,7 @@ def keep_clarifying(state: InputSchema) -> Literal['clarify', 'tools', 'create_w
 workflow_refiner_graph = StateGraph(InputSchema, output_schema= OutputSchema)
 
 workflow_refiner_graph.add_node('clarify', clarify)
-workflow_refiner_graph.add_node('tools', ToolNode([think_tool]))
+workflow_refiner_graph.add_node('tools', ToolNode([tavily_search]))
 workflow_refiner_graph.add_node('create_workflow', create_workflow)
 
 workflow_refiner_graph.add_edge(START, 'clarify')
@@ -389,12 +364,12 @@ if __name__ == '__main__':
     from IPython.display import Image
 
     # Visualize the graph
-    # Image(workflow_refiner_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
-    # parent_dir = Path(__file__).resolve().parent
-    # if not os.path.exists(parent_dir / 'graphs'):
-    #     os.makedirs(parent_dir / 'graphs')
-    # with open(parent_dir / 'graphs/workflow_refiner_app.png', 'wb') as f:
-    #     f.write(workflow_refiner_app.get_graph().draw_mermaid_png())
+    Image(workflow_refiner_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+    parent_dir = Path(__file__).resolve().parent
+    if not os.path.exists(parent_dir / 'graphs'):
+        os.makedirs(parent_dir / 'graphs')
+    with open(parent_dir / 'graphs/workflow_refiner_app.png', 'wb') as f:
+        f.write(workflow_refiner_app.get_graph().draw_mermaid_png())
 
     
     # Connect to langsmith
@@ -412,16 +387,57 @@ if __name__ == '__main__':
     }
 
     user = InputSchema(
-        user_input= 'I want an agent to help me with designing a holiday.', 
-        clarified_user_input= 'Create an interactive, English-only vacation-planning chat agent that acts as a comprehensive travel-research assistant for worldwide destinations. The agent starts every interaction with a friendly, neutral-professional greeting and then conducts a natural dialogue to gather: (1) departure location—city or IATA airport code; (2) destination(s) or criteria for destination discovery; (3) exact or flexible travel dates (e.g., “two weeks in September”); (4) total trip budget expressed in EUR plus the user’s home currency (automatically converted for comparison); (5) group size and any special requirements; (6) accommodation style (backpacker to luxury) and activity mix preferences. It immediately searches major booking APIs—flights, lodging, activities—returning 3-5 fully-priced, bookable options in real time, ranked by price–convenience balance unless the user explicitly prioritises other factors. Each option lists specific flight times, named hotels with live availability and total all-inclusive cost (taxes & mandatory fees noted). It then builds a balanced itinerary of relaxation and adventure, appending visa requirements, vaccination advice, travel-insurance suggestions, weather forecasts, and direct booking links. Transportation costs that exceed ~70 % of the stated budget are automatically hidden unless < 5 viable options exist, in which case they are shown with a clear budget-warning label. The agent maintains an automatic, continuously updated user-profile system that remembers general preferences (but never assumes they are permanent) and always re-confirms at the start of each new trip request. It works for any budget, any travel period, any global destination, but focuses on mainstream tourist cities and common routes. Responses are unlimited in length; no bookings are processed—users complete reservations externally.\n\n- role: Interactive vacation-planning research assistant\n- scope/boundaries: Worldwide travel research (flights, hotels, activities) for mainstream destinations; no payment or booking processing; English interface only\n- inputs/data sources: Real-time flight, hotel, activity, weather, visa, and health data from major booking platforms and public APIs; user-provided budget, dates, preferences, group details\n- outputs/format: 3-5 destination options with specific, bookable items, ranked by price-convenience balance, plus full itineraries, warnings, and direct booking links; unlimited conversational detail\n- constraints (cost/latency/safety/style/language): English only; filter out transport-heavy options unless < 5 choices; friendly-neutral tone; no response length cap; no minimum budget\n- key preferences: Auto-profile with preference memory (re-confirmed each session); EUR + home-currency pricing; flexible-date cost optimisation; budget-warning labels; focus on common tourist destinations'
+        # user_input= 'I want an agent to help me with designing a holiday.', 
+        # clarified_user_input= 'Create an interactive, English-only vacation-planning chat agent that acts as a comprehensive travel-research assistant for worldwide destinations. The agent starts every interaction with a friendly, neutral-professional greeting and then conducts a natural dialogue to gather: (1) departure location—city or IATA airport code; (2) destination(s) or criteria for destination discovery; (3) exact or flexible travel dates (e.g., “two weeks in September”); (4) total trip budget expressed in EUR plus the user’s home currency (automatically converted for comparison); (5) group size and any special requirements; (6) accommodation style (backpacker to luxury) and activity mix preferences. It immediately searches major booking APIs—flights, lodging, activities—returning 3-5 fully-priced, bookable options in real time, ranked by price–convenience balance unless the user explicitly prioritises other factors. Each option lists specific flight times, named hotels with live availability and total all-inclusive cost (taxes & mandatory fees noted). It then builds a balanced itinerary of relaxation and adventure, appending visa requirements, vaccination advice, travel-insurance suggestions, weather forecasts, and direct booking links. Transportation costs that exceed ~70 % of the stated budget are automatically hidden unless < 5 viable options exist, in which case they are shown with a clear budget-warning label. The agent maintains an automatic, continuously updated user-profile system that remembers general preferences (but never assumes they are permanent) and always re-confirms at the start of each new trip request. It works for any budget, any travel period, any global destination, but focuses on mainstream tourist cities and common routes. Responses are unlimited in length; no bookings are processed—users complete reservations externally.\n\n- role: Interactive vacation-planning research assistant\n- scope/boundaries: Worldwide travel research (flights, hotels, activities) for mainstream destinations; no payment or booking processing; English interface only\n- inputs/data sources: Real-time flight, hotel, activity, weather, visa, and health data from major booking platforms and public APIs; user-provided budget, dates, preferences, group details\n- outputs/format: 3-5 destination options with specific, bookable items, ranked by price-convenience balance, plus full itineraries, warnings, and direct booking links; unlimited conversational detail\n- constraints (cost/latency/safety/style/language): English only; filter out transport-heavy options unless < 5 choices; friendly-neutral tone; no response length cap; no minimum budget\n- key preferences: Auto-profile with preference memory (re-confirmed each session); EUR + home-currency pricing; flexible-date cost optimisation; budget-warning labels; focus on common tourist destinations'
+        user_input= 'i want to create a system that recognises when i make google maps reviews, then stores them in a DB. Then i want to be able to converse with the system asking questions and maybe reccomendations.',
+        clarified_user_input= '''<refined paragraph>
+Develop a Unix-based agent that periodically fetches your Google Maps reviews using third-party APIs (with your provided credentials and place IDs), stores review details (text content, rating 1-5, location metadata, and timestamp) in a structured SQLite database, and provides a WhatsApp-based conversational interface 
+for natural language queries about your review history and personalized recommendations based on your stored data.
+
+<bullet list of agent-creation essentials:
+- `role`: Review collection and analysis agent
+- `scope/boundaries`:
+  - Collects Google Maps reviews via third-party API
+  - Stores data in local SQLite database
+  - Provides conversational interface via WhatsApp for queries/recommendations
+  - Excludes direct Google API access or web scraping
+- `inputs/data sources`:
+  - Third-party API credentials (SerpApi/Outscraper)
+  - List of place IDs for frequented locations
+  - User conversational queries/questions (sent via WhatsApp)
+- `outputs/format`:
+  - Structured SQLite database (reviews table with text, rating, location, timestamp, place_id)
+  - Natural language responses to WhatsApp queries
+  - Recommendations based on stored review patterns
+- `constraints`:
+  - Cost (third-party API usage fees)
+  - Rate limits (API provider constraints)
+  - Privacy (secure handling of API credentials)
+  - Legal compliance (third-party ToS adherence)
+  - No direct Google Maps API access or web scraping
+  - WhatsApp integration limitations (message length, availability)
+- `key preferences/deadlines`:
+  - Prefer third-party API approach over scraping/detection
+  - SQLite database storage
+  - WhatsApp-based conversational interface
+  - Recommendations based solely on user's stored history
+- `additional technical requirements`:
+  - Scheduled execution (cron jobs for periodic checks)
+  - Natural language processing capabilities
+  - Database schema design
+  - API integration layer
+  - WhatsApp integration (using Twilio/WhatsApp Business API)
+  - Conversational interface implementation
+  - Message parsing for WhatsApp queries'''
     )
-    response = workflow_refiner_app.invoke(user, config= config)
+    response: OutputSchema = workflow_refiner_app.invoke(user, config= config)
     
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response', response) if DEBUG else None
     if DEBUG:
         for key, value in response.items():
             print(f'    {key}: {value}')
 
+        print(response['workflow'].model_dump_json(indent= 4))
 '''
 hybrid: Hybrid workflow for holiday planning. Triggered by user messages, with a conversational core (streaming I/O) for preference gathering and feedback, and linear pipeline steps (batch I/O) for research and generation. The workflow includes conditional branching and looping back to preference gathering for both research and feedback steps.
 
@@ -449,4 +465,70 @@ PresentDesign -> CollectFeedback: Guard: design is presented.
 CollectFeedback -> GatherPreferences: Guard: if user indicates drastic changes that require more preferences.
 CollectFeedback -> FinalizeDesign: Guard: if user approves or only minor changes.
 FinalizeDesign -> End: End the workflow after finalizing the design.
+'''
+
+'''
+    workflow: 🌐 ROOT WORKFLOW
+╭─ Travel Planning Assistant Workflow  [hybrid]
+│ Hybrid workflow for travel planning through a chat interface. Triggered by user message; streaming I/O; human gates for profile confirmation (in load_user_profile) and final option selection (in build_and_present_itinerary).
+│
+│ Nodes:
+│   • load_user_profile
+│    ⤷ Execution: TOOLS. Identify the user by asking for their name and load their travel preferences from internal memory. Human gate: Confirm profile usage.
+│   • collect_travel_details
+│    ⤷ Execution: LLM. Dialogue-based collection of travel details including departure location, destination criteria, dates, budget, group size, accommodation style, and activity preferences.
+│   • call_travel_search (subgraph: call_travel_search_subgraph)
+│    ⤷ Execution: TOOLS. Trigger the travel search subgraph to search for flights, hotels, and activities.
+│   • process_results
+│    ⤷ Execution: TOOLS. Integrate visa, vaccination, insurance, and weather data from advisory tool, and apply budget filters to hide transport costs exceeding 70% of budget.
+│   • build_and_present_itinerary
+│    ⤷ Execution: CODE. Balance relaxation and adventure activities and present the travel options to the user. Human gate: Final option selection.
+│   • handle_user_requests
+│    ⤷ Execution: CODE. Handle user input; if changes are requested, loop back to detail collection; otherwise, proceed to finalization.
+│   • end_workflow
+│    ⤷ Execution: CODE. End the workflow after the user confirms final selection or says done.
+│
+│ Edges:
+│   load_user_profile ➜  collect_travel_details
+│    ⤷ Proceed after the user provides their identity and preferences are loaded.
+│   collect_travel_details ➜  call_travel_search
+│    ⤷ Proceed when all required travel details are gathered.
+│   call_travel_search ➜  process_results
+│    ⤷ Proceed after the travel search subgraph returns results.
+│   process_results ➜  build_and_present_itinerary
+│    ⤷ Proceed after integrating advisory data and applying filters.
+│   build_and_present_itinerary ➜  handle_user_requests
+│    ⤷ Proceed after the itinerary is built and options are presented.
+│   handle_user_requests ➜  collect_travel_details
+│    ⤷ Loop back if the user requests changes to travel details.
+│   handle_user_requests ➜  end_workflow
+│    ⤷ Proceed to end if the user confirms final selection or says done.
+╰──────────────────────────────────────────────
+
+🧩 SUBGRAPH: call_travel_search_subgraph
+╭─ Travel Search Subgraph  [linear_pipeline]
+│ Linear subgraph for travel search tool integration. Processes flight, hotel, and activity data sequentially.
+│
+│ Nodes:
+│   • search_flights_hotels_activities
+│    ⤷ Execution: TOOLS. Search for flights, hotels, and activities using the travel search tool.
+│   • process_flights
+│    ⤷ Execution: CODE. Process flight data from the search results.
+│   • process_hotels
+│    ⤷ Execution: CODE. Process hotel data from the search results.
+│   • process_activities
+│    ⤷ Execution: CODE. Process activity data from the search results.
+│   • aggregate_results
+│    ⤷ Execution: CODE. Combine the processed data into a unified result set.
+│
+│ Edges:
+│   search_flights_hotels_activities ➜  process_flights
+│    ⤷ Proceed after flight data is retrieved.
+│   process_flights ➜  process_hotels
+│    ⤷ Proceed to process hotel data.
+│   process_hotels ➜  process_activities
+│    ⤷ Proceed to process activity data.
+│   process_activities ➜  aggregate_results
+│    ⤷ Proceed to combine results.
+╰───────────────────────────────────────────
 '''
