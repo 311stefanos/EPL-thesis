@@ -162,6 +162,7 @@ Use the entire conversation history and the latest user edits to finalize the wo
 ## Hard Rules
 - Use the entire conversation provided to finalize the workflow.
 - Apply the user's latest requests exactly; change nothing else unless needed for correctness/safety.
+- Always include the `start` and `end` nodes.
 - `nodes[].description`: MUST begin with "Execution: <...>." Then a concise, actionable purpose. If LLM is used, state how (e.g., "LLM for anomaly classification" or "LLM to draft alert copy").
 
 ## Output Format (STRICT)
@@ -194,18 +195,22 @@ Return ONLY a JSON object that conforms to **WorkflowBundle**:
     "name": "Website Uptime Monitor",
     "description": "Linear workflow that periodically checks availability and alerts on downtime. Triggered by schedule; uses a subgraph for multi-endpoint checks.",
     "nodes": [
+      {{"name": "start", "description": "Start: Triggered by schedule."}},
       {{"name": "initialize_monitoring", "description": "Execution: CODE. Load configuration (target URLs, frequency, alert channels)."}},
       {{"name": "check_endpoints", "description": "Execution: TOOLS. Request target URLs and record latency/status.", "subgraph_id": "endpoint_check_flow"}},
       {{"name": "evaluate_status", "description": "Execution: CODE. Analyze responses and decide if notification is required."}},
       {{"name": "send_notification", "description": "Execution: LLM+TOOLS. Draft incident summary (LLM) and send Slack/email alerts."}},
       {{"name": "log_results", "description": "Execution: CODE. Store results for trend analysis."}}
+      {{"name": "end", "description": ""}}
     ],
     "edges": [
+      {{"source_name": "start", "target_name": "initialize_monitoring", "description": "When workflow is triggered."}},
       {{"source_name": "initialize_monitoring", "target_name": "check_endpoints", "description": "After configuration is loaded."}},
       {{"source_name": "check_endpoints", "target_name": "evaluate_status", "description": "When endpoint responses are collected."}},
       {{"source_name": "evaluate_status", "target_name": "send_notification", "description": "If downtime or anomalies detected."}},
       {{"source_name": "evaluate_status", "target_name": "log_results", "description": "If all checks passed normally."}},
-      {{"source_name": "send_notification", "target_name": "log_results", "description": "After alerts are sent."}}
+      {{"source_name": "send_notification", "target_name": "log_results", "description": "After alerts are sent."}},
+      {{"source_name": "log_results", "target_name": "end", "description": "When workflow is complete."}}
     ]
   }},
   "subgraphs": {{
@@ -214,16 +219,20 @@ Return ONLY a JSON object that conforms to **WorkflowBundle**:
       "name": "Endpoint Check Flow",
       "description": "Check multiple endpoints sequentially with retries.",
       "nodes": [
+        {{"name": "start", "description": "Start: Triggered by check_endpoints."}},
         {{"name": "fetch_endpoints", "description": "Execution: CODE. Retrieve list of endpoints to monitor."}},
         {{"name": "ping_endpoints", "description": "Execution: TOOLS. Send HEAD/GET requests and capture status/latency."}},
         {{"name": "retry_failures", "description": "Execution: CODE. Retry failed pings up to N times."}},
         {{"name": "aggregate_results", "description": "Execution: CODE. Compile results into a summary object."}}
+        {{"name": "end", "description": ""}}
       ],
       "edges": [
+        {{"source_name": "start", "target_name": "fetch_endpoints", "description": "When workflow is triggered."}},
         {{"source_name": "fetch_endpoints", "target_name": "ping_endpoints", "description": "After endpoint list is loaded."}},
         {{"source_name": "ping_endpoints", "target_name": "retry_failures", "description": "If any requests failed."}},
         {{"source_name": "retry_failures", "target_name": "aggregate_results", "description": "After retries complete."}},
         {{"source_name": "ping_endpoints", "target_name": "aggregate_results", "description": "If all endpoints succeeded initially."}}
+        {{"source_name": "aggregate_results", "target_name": "end", "description": "When workflow is complete."}}
       ]
     }}
   }}

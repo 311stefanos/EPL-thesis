@@ -1,0 +1,315 @@
+    workflow: 🌐 ROOT WORKFLOW
+╭─ Travel Planning Assistant Workflow  [hybrid]
+│ Hybrid workflow for travel planning through a chat interface. Triggered by user message; streaming I/O; human gates for profile confirmation (in load_user_profile) and final option selection (in build_and_present_itinerary).
+│
+│ Nodes:
+│   • load_user_profile
+│    ⤷ Execution: TOOLS. Identify the user by asking for their name and load their travel preferences from internal memory. Human gate: Confirm profile usage.
+│   • collect_travel_details
+│    ⤷ Execution: LLM. Dialogue-based collection of travel details including departure location, destination criteria, dates, budget, group size, accommodation style, and activity preferences.
+│   • call_travel_search (subgraph: call_travel_search_subgraph)
+│    ⤷ Execution: TOOLS. Trigger the travel search subgraph to search for flights, hotels, and activities.
+│   • process_results
+│    ⤷ Execution: TOOLS. Integrate visa, vaccination, insurance, and weather data from advisory tool, and apply budget filters to hide transport costs exceeding 70% of budget.
+│   • build_and_present_itinerary
+│    ⤷ Execution: CODE. Balance relaxation and adventure activities and present the travel options to the user. Human gate: Final option selection.
+│   • handle_user_requests
+│    ⤷ Execution: CODE. Handle user input; if changes are requested, loop back to detail collection; otherwise, proceed to finalization.
+│   • end_workflow
+│    ⤷ Execution: CODE. End the workflow after the user confirms final selection or says done.
+│
+│ Edges:
+│   load_user_profile ➜  collect_travel_details
+│    ⤷ Proceed after the user provides their identity and preferences are loaded.
+│   collect_travel_details ➜  call_travel_search
+│    ⤷ Proceed when all required travel details are gathered.
+│   call_travel_search ➜  process_results
+│    ⤷ Proceed after the travel search subgraph returns results.
+│   process_results ➜  build_and_present_itinerary
+│    ⤷ Proceed after integrating advisory data and applying filters.
+│   build_and_present_itinerary ➜  handle_user_requests
+│    ⤷ Proceed after the itinerary is built and options are presented.
+│   handle_user_requests ➜  collect_travel_details
+│    ⤷ Loop back if the user requests changes to travel details.
+│   handle_user_requests ➜  end_workflow
+│    ⤷ Proceed to end if the user confirms final selection or says done.
+╰──────────────────────────────────────────────
+
+🧩 SUBGRAPH: call_travel_search_subgraph
+╭─ Travel Search Subgraph  [linear_pipeline]
+│ Linear subgraph for travel search tool integration. Processes flight, hotel, and activity data sequentially.
+│
+│ Nodes:
+│   • search_flights_hotels_activities
+│    ⤷ Execution: TOOLS. Search for flights, hotels, and activities using the travel search tool.
+│   • process_flights
+│    ⤷ Execution: CODE. Process flight data from the search results.
+│   • process_hotels
+│    ⤷ Execution: CODE. Process hotel data from the search results.
+│   • process_activities
+│    ⤷ Execution: CODE. Process activity data from the search results.
+│   • aggregate_results
+│    ⤷ Execution: CODE. Combine the processed data into a unified result set.
+│
+│ Edges:
+│   search_flights_hotels_activities ➜  process_flights
+│    ⤷ Proceed after flight data is retrieved.
+│   process_flights ➜  process_hotels
+│    ⤷ Proceed to process hotel data.
+│   process_hotels ➜  process_activities
+│    ⤷ Proceed to process activity data.
+│   process_activities ➜  aggregate_results
+│    ⤷ Proceed to combine results.
+╰───────────────────────────────────────────
+
+
+
+
+
+
+---
+
+
+    workflow:
+📝 COMMENTS: Added explicit start and end nodes to the root workflow as requested. The start node is triggered by either schedule (every day at 09:00) or incoming WhatsApp message. The end node is reached after both the periodic and conversational workflows have completed once.
+
+🌐 ROOT WORKFLOW
+╭─ WhatsApp Review Processing [hybrid] ─────
+│ Hybrid workflow with two independent flows: periodic batch task (scheduled daily at 09:00) and reactive conversational agent for incoming WhatsApp messages. The start node is triggered by either schedule or message, and the end node is reached after both workflows complete.
+│
+│ Nodes:
+│   • start
+│   ⤷ Execution: CODE. Trigger both periodic and conversational workflows. Trigger: schedule (every day at 09:00) and incoming WhatsApp message.
+│   • call_periodic_workflow (subgraph: periodic_workflow)
+│   ⤷ Execution: CODE. Execute the periodic review fetching and storing workflow.
+│   • call_conversational_workflow (subgraph: conversational_workflow)
+│   ⤷ Execution: CODE. Execute the conversational agent workflow for WhatsApp messages.
+│   • end
+│   ⤷ Execution: CODE. End of the root workflow.
+│
+│ Edges:
+│   • start ➜  call_periodic_workflow
+│   ⤷ Guard: always true. Trigger periodic workflow.
+│   • start ➜  call_conversational_workflow
+│   ⤷ Guard: always true. Trigger conversational workflow.
+│   • call_periodic_workflow ➜  end
+│   ⤷ Guard: always true. End of periodic workflow done.
+│   • call_conversational_workflow ➜  end
+│   ⤷ Guard: always true. End of conversational workflow done.
+╰────────────────────────────────────────────
+
+🧩 SUBGRAPH: periodic_workflow
+╭─ Periodic Review Workflow [linear_pipeline] ─────
+│ Automated process to fetch reviews from third-party APIs and store them in SQLite, run daily at 09:00.
+│
+│ Nodes:
+│   • start
+│   ⤷ Execution: CODE. Begin the periodic review workflow.
+│   • periodic_review_fetcher
+│   ⤷ Execution: TOOLS. Fetch reviews using third-party APIs for all place IDs.
+│   • database_updater
+│   ⤷ Execution: CODE. Store reviews in SQLite.
+│   • end
+│   ⤷ Execution: CODE. End of the periodic workflow.
+│
+│ Edges:
+│   • start ➜  periodic_review_fetcher
+│   ⤷ Guard: always true.
+│   • periodic_review_fetcher ➜  database_updater
+│   ⤷ Guard: reviews fetched successfully.
+│   • database_updater ➜  end
+│   ⤷ Guard: reviews stored successfully.
+╰───────────────────────────────────────────────────
+
+🧩 SUBGRAPH: conversational_workflow
+╭─ Conversational WhatsApp Agent [reactive_conversational] ─────
+│ Reactive conversational agent that handles incoming WhatsApp messages and provides review-based responses. Trigger: incoming WhatsApp message. I/O Mode: streaming.
+│
+│ Nodes:
+│   • start
+│   ⤷ Execution: CODE. Capture incoming WhatsApp message.
+│   • message_parser
+│   ⤷ Execution: LLM. Analyze user intent (query/recommendation request).
+│   • database_query
+│   ⤷ Execution: CODE. Retrieve relevant review data from SQLite based on parsed intent.
+│   • response_generator
+│   ⤷ Execution: LLM. Generate natural language response/recommendation.
+│   • whatsapp_response_sender
+│   ⤷ Execution: TOOLS. Send WhatsApp reply to user.
+│   • end
+│   ⤷ Execution: CODE. End of the conversational flow.
+│
+│ Edges:
+│   • start ➜  message_parser
+│   ⤷ Guard: message captured successfully. Pass message to parser.
+│   • message_parser ➜  database_query
+│   ⤷ Guard: intent requires data. Pass parsed intent to query.
+│   • database_query ➜  response_generator
+│   ⤷ Guard: data retrieved. Pass data to response generator.
+│   • response_generator ➜  whatsapp_response_sender
+│   ⤷ Guard: response generated. Pass response to sender.
+│   • whatsapp_response_sender ➜  end
+│   ⤷ Guard: response sent. End conversation flow.
+╰────────────────────────────────────────────────────────────────
+{
+    "comments": "Added explicit start and end nodes to the root workflow as requested. The start node is triggered by either schedule (every day at 09:00) or incoming WhatsApp message. The end node is reached after both the periodic and conversational workflows have completed once.",   
+    "root": {
+        "type": "hybrid",
+        "name": "WhatsApp Review Processing",
+        "nodes": [
+            {
+                "name": "start",
+                "description": "Execution: CODE. Trigger both periodic and conversational workflows. Trigger: schedule (every day at 09:00) and incoming WhatsApp message.",
+                "subgraph_id": null
+            },
+            {
+                "name": "call_periodic_workflow",
+                "description": "Execution: CODE. Execute the periodic review fetching and storing workflow.",
+                "subgraph_id": "periodic_workflow"
+            },
+            {
+                "name": "call_conversational_workflow",
+                "description": "Execution: CODE. Execute the conversational agent workflow for WhatsApp messages.",
+                "subgraph_id": "conversational_workflow"
+            },
+            {
+                "name": "end",
+                "description": "Execution: CODE. End of the root workflow.",
+                "subgraph_id": null
+            }
+        ],
+        "edges": [
+            {
+                "source_name": "start",
+                "target_name": "call_periodic_workflow",
+                "description": "Guard: always true. Trigger periodic workflow."
+            },
+            {
+                "source_name": "start",
+                "target_name": "call_conversational_workflow",
+                "description": "Guard: always true. Trigger conversational workflow."
+            },
+            {
+                "source_name": "call_periodic_workflow",
+                "target_name": "end",
+                "description": "Guard: always true. End of periodic workflow done."
+            },
+            {
+                "source_name": "call_conversational_workflow",
+                "target_name": "end",
+                "description": "Guard: always true. End of conversational workflow done."
+            }
+        ],
+        "description": "Hybrid workflow with two independent flows: periodic batch task (scheduled daily at 09:00) and reactive conversational agent for incoming WhatsApp messages. The start node is triggered by either schedule or message, and the end node is reached after both workflows complete."
+    },
+    "subgraphs": {
+        "periodic_workflow": {
+            "type": "linear_pipeline",
+            "name": "Periodic Review Workflow",
+            "nodes": [
+                {
+                    "name": "start",
+                    "description": "Execution: CODE. Begin the periodic review workflow.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "periodic_review_fetcher",
+                    "description": "Execution: TOOLS. Fetch reviews using third-party APIs for all place IDs.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "database_updater",
+                    "description": "Execution: CODE. Store reviews in SQLite.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "end",
+                    "description": "Execution: CODE. End of the periodic workflow.",
+                    "subgraph_id": null
+                }
+            ],
+            "edges": [
+                {
+                    "source_name": "start",
+                    "target_name": "periodic_review_fetcher",
+                    "description": "Guard: always true."
+                },
+                {
+                    "source_name": "periodic_review_fetcher",
+                    "target_name": "database_updater",
+                    "description": "Guard: reviews fetched successfully."
+                },
+                {
+                    "source_name": "database_updater",
+                    "target_name": "end",
+                    "description": "Guard: reviews stored successfully."
+                }
+            ],
+            "description": "Automated process to fetch reviews from third-party APIs and store them in SQLite, run daily at 09:00."
+        },
+        "conversational_workflow": {
+            "type": "reactive_conversational",
+            "name": "Conversational WhatsApp Agent",
+            "nodes": [
+                {
+                    "name": "start",
+                    "description": "Execution: CODE. Capture incoming WhatsApp message.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "message_parser",
+                    "description": "Execution: LLM. Analyze user intent (query/recommendation request).",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "database_query",
+                    "description": "Execution: CODE. Retrieve relevant review data from SQLite based on parsed intent.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "response_generator",
+                    "description": "Execution: LLM. Generate natural language response/recommendation.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "whatsapp_response_sender",
+                    "description": "Execution: TOOLS. Send WhatsApp reply to user.",
+                    "subgraph_id": null
+                },
+                {
+                    "name": "end",
+                    "description": "Execution: CODE. End of the conversational flow.",
+                    "subgraph_id": null
+                }
+            ],
+            "edges": [
+                {
+                    "source_name": "start",
+                    "target_name": "message_parser",
+                    "description": "Guard: message captured successfully. Pass message to parser."
+                },
+                {
+                    "source_name": "message_parser",
+                    "target_name": "database_query",
+                    "description": "Guard: intent requires data. Pass parsed intent to query."
+                },
+                {
+                    "source_name": "database_query",
+                    "target_name": "response_generator",
+                    "description": "Guard: data retrieved. Pass data to response generator."
+                },
+                {
+                    "source_name": "response_generator",
+                    "target_name": "whatsapp_response_sender",
+                    "description": "Guard: response generated. Pass response to sender."
+                },
+                {
+                    "source_name": "whatsapp_response_sender",
+                    "target_name": "end",
+                    "description": "Guard: response sent. End conversation flow."
+                }
+            ],
+            "description": "Reactive conversational agent that handles incoming WhatsApp messages and provides review-based responses. Trigger: incoming WhatsApp message. I/O Mode: streaming."
+        }
+    }
+}

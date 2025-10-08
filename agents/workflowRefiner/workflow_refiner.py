@@ -119,7 +119,7 @@ class WorkflowBundle(BaseModel):
         # Comments first
         bundle_output = [f'\n📝 COMMENTS: {self.comments}'] if self.comments else []
         # Root right after
-        bundle_output.append([f'\n🌐 ROOT WORKFLOW\n{str(self.root)}'])
+        bundle_output.append(f'\n🌐 ROOT WORKFLOW\n{str(self.root)}')
         # Append subgraphs (sorted for deterministic order)
         for node in self.root.nodes:
             if node.subgraph_id and node.subgraph_id in self.subgraphs:
@@ -438,97 +438,3 @@ for natural language queries about your review history and personalized recommen
             print(f'    {key}: {value}')
 
         print(response['workflow'].model_dump_json(indent= 4))
-'''
-hybrid: Hybrid workflow for holiday planning. Triggered by user messages, with a conversational core (streaming I/O) for preference gathering and feedback, and linear pipeline steps (batch I/O) for research and generation. The workflow includes conditional branching and looping back to preference gathering for both research and feedback steps.
-
----
-
-Nodes:
-Start: Triggered when the user speaks to it (activated by user message). Begins the holiday design process.
-GatherPreferences: The agent asks clarifying questions and collects user preferences, suggesting destination options if needed. (Tools: Ask user (LLM), I/O Mode: streaming). Guard: User provides preferences (budget, destination, dates, activities).
-ResearchOptions: The agent uses external tools (Web Search for flights, hotels, attractions) and other agents to find relevant travel options for the chosen destination. (Tools: 
-Web Search + other agents). Guard: Preferences are collected.
-GenerateItinerary: The agent creates a sample holiday itinerary based on user preferences and research results. (Tools: LLM). Guard: Research options are retrieved OR if skipped 
-from GatherPreferences.
-PresentDesign: The agent presents holiday design with recommendations, links, and cost estimates. (Tools: LLM). Guard: Itinerary is generated.
-CollectFeedback: The agent asks for feedback and changes on the design. (Tools: Ask user (LLM), I/O Mode: streaming). Guard: User reviews design. Also, the user can ask for drastic changes that lead back to preferences gathering.
-FinalizeDesign: The agent finalizes the holiday design automatically. (Tools: LLM). Guard: Workflow completes (user approves or no changes needed, or user says 'done').
-End: The workflow ends.
-
-Edges:
-Start -> GatherPreferences: Triggered by a user message to begin the workflow.
-GatherPreferences -> ResearchOptions: Guard: if agent decides to research.
-GatherPreferences -> GenerateItinerary: Guard: if agent decides to generate (either without research or after having done research and decided to generate).
-ResearchOptions -> GatherPreferences: Guard: if more preferences are needed after research.
-GenerateItinerary -> PresentDesign: Guard: itinerary is generated.
-PresentDesign -> CollectFeedback: Guard: design is presented.
-CollectFeedback -> GatherPreferences: Guard: if user indicates drastic changes that require more preferences.
-CollectFeedback -> FinalizeDesign: Guard: if user approves or only minor changes.
-FinalizeDesign -> End: End the workflow after finalizing the design.
-'''
-
-'''
-    workflow: 🌐 ROOT WORKFLOW
-╭─ Travel Planning Assistant Workflow  [hybrid]
-│ Hybrid workflow for travel planning through a chat interface. Triggered by user message; streaming I/O; human gates for profile confirmation (in load_user_profile) and final option selection (in build_and_present_itinerary).
-│
-│ Nodes:
-│   • load_user_profile
-│    ⤷ Execution: TOOLS. Identify the user by asking for their name and load their travel preferences from internal memory. Human gate: Confirm profile usage.
-│   • collect_travel_details
-│    ⤷ Execution: LLM. Dialogue-based collection of travel details including departure location, destination criteria, dates, budget, group size, accommodation style, and activity preferences.
-│   • call_travel_search (subgraph: call_travel_search_subgraph)
-│    ⤷ Execution: TOOLS. Trigger the travel search subgraph to search for flights, hotels, and activities.
-│   • process_results
-│    ⤷ Execution: TOOLS. Integrate visa, vaccination, insurance, and weather data from advisory tool, and apply budget filters to hide transport costs exceeding 70% of budget.
-│   • build_and_present_itinerary
-│    ⤷ Execution: CODE. Balance relaxation and adventure activities and present the travel options to the user. Human gate: Final option selection.
-│   • handle_user_requests
-│    ⤷ Execution: CODE. Handle user input; if changes are requested, loop back to detail collection; otherwise, proceed to finalization.
-│   • end_workflow
-│    ⤷ Execution: CODE. End the workflow after the user confirms final selection or says done.
-│
-│ Edges:
-│   load_user_profile ➜  collect_travel_details
-│    ⤷ Proceed after the user provides their identity and preferences are loaded.
-│   collect_travel_details ➜  call_travel_search
-│    ⤷ Proceed when all required travel details are gathered.
-│   call_travel_search ➜  process_results
-│    ⤷ Proceed after the travel search subgraph returns results.
-│   process_results ➜  build_and_present_itinerary
-│    ⤷ Proceed after integrating advisory data and applying filters.
-│   build_and_present_itinerary ➜  handle_user_requests
-│    ⤷ Proceed after the itinerary is built and options are presented.
-│   handle_user_requests ➜  collect_travel_details
-│    ⤷ Loop back if the user requests changes to travel details.
-│   handle_user_requests ➜  end_workflow
-│    ⤷ Proceed to end if the user confirms final selection or says done.
-╰──────────────────────────────────────────────
-
-🧩 SUBGRAPH: call_travel_search_subgraph
-╭─ Travel Search Subgraph  [linear_pipeline]
-│ Linear subgraph for travel search tool integration. Processes flight, hotel, and activity data sequentially.
-│
-│ Nodes:
-│   • search_flights_hotels_activities
-│    ⤷ Execution: TOOLS. Search for flights, hotels, and activities using the travel search tool.
-│   • process_flights
-│    ⤷ Execution: CODE. Process flight data from the search results.
-│   • process_hotels
-│    ⤷ Execution: CODE. Process hotel data from the search results.
-│   • process_activities
-│    ⤷ Execution: CODE. Process activity data from the search results.
-│   • aggregate_results
-│    ⤷ Execution: CODE. Combine the processed data into a unified result set.
-│
-│ Edges:
-│   search_flights_hotels_activities ➜  process_flights
-│    ⤷ Proceed after flight data is retrieved.
-│   process_flights ➜  process_hotels
-│    ⤷ Proceed to process hotel data.
-│   process_hotels ➜  process_activities
-│    ⤷ Proceed to process activity data.
-│   process_activities ➜  aggregate_results
-│    ⤷ Proceed to combine results.
-╰───────────────────────────────────────────
-'''
