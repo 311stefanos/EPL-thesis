@@ -7,6 +7,7 @@ from typing import Protocol, Any
 from dotenv import load_dotenv
 from time import sleep, time
 from pathlib import Path
+import inspect
 import os
 
 load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent / '.env')
@@ -111,5 +112,174 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int
             raise e
         
     raise TooManyTriesException('Could not get a response from the LLM after {max_retries} tries.')
+
+
+
+# Print the name of the function that is being executed
+def print_function_name():
+    '''
+    `print_function_name` is a function that prints the name of the function that is being executed
+
+    `Returns:`
+        (str) The name of the function that is being executed
+    '''
+    frame = inspect.currentframe().f_back
+    func_name = frame.f_code.co_name
+    filename = os.path.splitext(os.path.basename(frame.f_code.co_filename))[0]
+    qualified_name = f"{filename}/{func_name}"
+    print(f'\n\033[93m[NODE]\033[0m {qualified_name}')
+
+
+
+# A function that builds the workflow using langgraph
+def build_workflow(bundle) -> str:
+    '''
+    `build_workflow` is a function that builds the workflow using langgraph
+
+    `Args:`
+        bundle (WorkflowBundle): The bundle to build the workflow from
+    
+    `Returns:`
+        (str) The workflow
+    '''
+    def create_node(node) -> str:
+        '''
+        `create_node` is a function that creates a node
+
+        `Args:`
+            node (WorkflowNode): The node to create
+        
+        `Returns:`
+            (str) The node
+        '''
+        invokation = f'        safe_invoke({node["name"]}_llm, [SystemMessage(content= prompt)<, anything else>])' if not node['subgraph_id'] else f'        {node["subgraph_id"]}_app.invoke([SystemMessage(content= prompt)<, anything else>])',
+        node_function = '\n'.join([
+            f'# <comment>',
+            f'def {node["name"]}(state):',
+            f'    """ {node["description"]} """',
+             '    print_function_name()',
+             '    try:',
+             '        <preprocess>',
+            f'        prompt = prompts.{node["name"]}_PROMPT.format(<formatting>)',
+            f'        {invokation}',
+             '        <postprocess>',
+             '        return <return>',
+             'except Exception as e:',
+             '        print(f\'{RED}[NODE] [ERR]{RESET}\', e) if DEBUG else None',
+             '        traceback.print_exc() if DEBUG else None',
+             '        return state',
+             ''
+        ])
+        return node_function
+    
+    def create_edge(from_node: str, to_node: str, graph_name: str) -> str:
+        '''
+        `create_edge` is a function that creates an edge
+
+        `Args:`
+            from_node (str): The name of the source node
+            to_node (str): The name of the target node
+            graph_name (str): The name of the graph
+        
+        `Returns:`
+            (str) The edge
+        '''
+        edge_function = f'{graph_name}.add_edge("{from_node}", "{to_node}")\n'
+        return edge_function
+    
+    def create_conditional_edge(from_node: str, to_nodes: list[str], graph_name: str) -> tuple[str, str]:
+        '''
+        `create_conditional_edge` is a function that creates a conditional edge
+
+        `Args:`
+            edge (WorkflowEdge): The edge to create
+        
+        `Returns:`
+            (str) The edge
+        '''
+        # Conditional function
+        conditional_function = '\n'.join([
+            f'# <comment>'
+            f'def from_{from_node}_to(state) -> Literal[{", ".join(to_nodes)}]:'
+            f'    ...'
+             ''
+        ])
+        # Edge function
+        edge_map = '\n'.join([f'        "{to_node}": "{to_node}",' for to_node in to_nodes])
+        edge_function = '\n'.join([
+            f'{graph_name}.add_conditional_edge('
+            f'    "{from_node}",' 
+            f'    "from_{from_node}_to",'
+             '    { # Not needed just for clarity'
+            f'{edge_map}'
+             '    }'
+            f')'
+             ''
+        ])
+        return conditional_function, edge_function
+    
+    def build_graph(graph) -> dict:
+        '''
+        `build_graph` is a function that builds the graph
+
+        `Args:`
+            graph (WorkflowGraph): The graph to build
+        
+        `Returns:`
+            (str) The graph
+        '''
+        # Nodes
+        nodes = ''.join([create_node(node) for node in graph['nodes'] if node['name'].lower() not in ('start', 'end')])
+
+        # Edges
+        edge_graph = {} # {source: [targets]}
+        for edge in graph['edges']:
+            if edge['source_name'] not in edge_graph:
+                edge_graph[edge['source_name']] = []
+            edge_graph[edge['source_name']].append(edge['target_name'])
+            
+        # Non Conditional Edges
+        edges = {
+            from_node: create_edge(from_node, to_nodes[0], graph['name']) 
+            for from_node, to_nodes in edge_graph if len(to_nodes) == 1
+        }
+
+        # Conditional edges
+        conditional_edges = {
+            from_node: create_conditional_edge(from_node, to_nodes, graph['name']) 
+            for from_node, to_nodes in edge_graph if len(to_nodes) > 1
+        }
+
+        # In order to keep the order
+        all_edges = []
+        for edge in edge_graph.keys():
+            if edge in edges:
+                all_edges.append(edges[edge])
+            else:
+                all_edges.append(conditional_edges[edge])
+
+        # Return
+        return {
+            'nodes': nodes,
+            'edges': ''.join(all_edges)
+        }
+
+    # Build for all graphs
+    graphs = [bundle['root']] + list(bundle['subgraphs'].values())
+    
+    to_return = {}
+    for graph in graphs:
+        built = build_graph(graph)
+        to_return[graph['name']] = {
+            'nodes': built['nodes'],
+            'edges': '\n'.join([
+                f'{graph["name"]}_graph = StateGraph(<StateSchema>)',
+                f'{built["edges"]}',
+                f'{graph["name"]}_app = {graph["name"]}_graph.compile()'
+            ])
+        }
+
+    return to_return
+
 
 

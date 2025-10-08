@@ -72,7 +72,7 @@ import os
 import re
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name
 from agents.researcher import prompts
 
 
@@ -255,7 +255,7 @@ def do_research(state: InputSchema) -> InputSchema:
     '''
     In this node, the agent does the actual research by calling the tools.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} researcher/do_research') if DEBUG else None
+    print_function_name() if DEBUG else None
     state['error_occurred'] = False
 
     try:
@@ -283,8 +283,8 @@ def tool_node(state: InputSchema) -> InputSchema:
     '''
     This node executes the tools, which are used to gather information from the web, or structure the thought process or information.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} researcher/tool_node') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # Get the last message, and extract the tool calls
         last_message = state['messages'][-1]
@@ -379,8 +379,8 @@ def summarise(state: InputSchema) -> OutputSchema:
     '''
     This node summarises the results of the research, in order to return a strutured paragraph containing all the relevant information.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} researcher/summarise') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # prompt
         results = '\n---\n\n'.join([str(r) for r in state.get('results', [])])
@@ -415,8 +415,8 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do
     '''
     Decides if the agent should continue or not (if there are tool calls)
     '''
-    print(f'\n{BLUE}[NODE]{RESET} researcher/should_continue') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # If an error occured go back
         if state.get('error_occurred', False):

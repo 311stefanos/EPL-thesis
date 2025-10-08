@@ -70,7 +70,7 @@ import concurrent.futures
 
 # My imports
 from agents.researcher.researcher import researcher_app
-from utils.utils import myChatOpenAI, safe_invoke
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name
 from agents.deepResearcher import prompts
 
 
@@ -143,7 +143,7 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
     '''
     This node breaks down the topic into questions for the researcher team to answer.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/breakdown_research_topic') if DEBUG else None
+    print_function_name() if DEBUG else None
     state['error_occurred'] = False
 
     try:
@@ -177,8 +177,8 @@ def research_questions(state: InputSchema) -> InputSchema:
     '''
     This node researches all the questions in parallel, using the researcher team.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/research_questions') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # Start a multi threaded call to each researcher. Let the max workers be 5, even tho the LLM is instructed to output <= 3 sub topics.
         with ThreadPoolExecutor(max_workers= 5) as executor:
@@ -222,8 +222,8 @@ def research_questions_serial(state: InputSchema) -> InputSchema:
     '''
     This node researches all the questions in parallel, using the researcher team.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/research_questions') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # Just a different thread_id for each agent
         researched_questions_answers = []
@@ -257,8 +257,8 @@ def summarise(state: InputSchema) -> OutputSchema:
     '''
     This node summarises the results of the research, in order to return a strutured paragraph containing all the relevant information.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/summarise') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     try:
         # prompt
         deep_research_findings = '\n---\n\n'.join([str(r) for r in state['researched_questions_answers']])
@@ -288,7 +288,7 @@ def should_summarise(state: InputSchema) -> Literal['breakdown_research_topic', 
     '''
     The conditional logic that determines what to do after breaking down the topic: research the topics or summarise them.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} deep_researcher/should_summarise') if DEBUG else None
+    print_function_name() if DEBUG else None
 
     # Error occured, go back
     if state.get('error_occurred', False):

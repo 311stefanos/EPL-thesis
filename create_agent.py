@@ -71,7 +71,7 @@ import traceback
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name
 from agents.{directory_name} import prompts
 
 
@@ -154,7 +154,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {{
-        'recursion_limit': 25, # TODO: change
+        'recursion_limit': 100, # TODO: change
         'configurable': {{
             'user_id': '{directory_name}',
             'run_name': '{directory_name}',

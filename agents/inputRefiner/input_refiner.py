@@ -52,7 +52,7 @@ import traceback
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name
 from agents.inputRefiner import prompts
 
 
@@ -194,7 +194,8 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
 
 
 
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/correct_user_input') if DEBUG else None
+    print_function_name() if DEBUG else None
+    
     try:
         # prompt
         user_input = state['user_input']
@@ -228,7 +229,8 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
     '''
     This node accepts a corrected version of a user input and provides clarifying context
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/clarify') if DEBUG else None
+    print_function_name() if DEBUG else None
+    
     if DEBUG and isinstance(state['messages'][-1], ToolMessage): # The ToolNode added a message.
         print(f'{GREEN}[NODE] [TAVILY RESULT]{RESET} {state["messages"][-1].content}')
     try:
@@ -273,7 +275,8 @@ def refine_user_input(state: IntermediateSchema) -> IntermediateSchema:
     '''
     This node accepts a corrected version of a user input and a conversation history, and provides a refined version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/refine_user_input') if DEBUG else None
+    print_function_name() if DEBUG else None
+    
     try:
         
         history: list[str] = []
@@ -319,7 +322,7 @@ def parse_output(state: IntermediateSchema) -> OutputSchema:
     '''
     This node accepts a corrected version of a user input and provides a refined version of it.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/parse_output') if DEBUG else None
+    print_function_name() if DEBUG else None
     return OutputSchema(corrected_original= state['corrected_original'], refined_text= state['refinements'][-1].content)
 
 
@@ -336,8 +339,8 @@ def keep_clarifying(state: IntermediateSchema) -> Literal['clarify', 'tools', 'r
     Returns:
         Literal['clarify', 'tools', 'refine']
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/keep_clarifying') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     # If no further clarifications are needed
     if 'no clarification needed' in state['messages'][-1].content.lower():
         print(f'{BLUE}[NODE] [INFO]{RESET} No further clarifications needed') if DEBUG else None
@@ -346,16 +349,6 @@ def keep_clarifying(state: IntermediateSchema) -> Literal['clarify', 'tools', 'r
     # If a tool call is needed
     if isinstance(state['messages'][-1], AIMessage) and _will_tool_call(state['messages']):
         print(f'{BLUE}[NODE] [INFO]{RESET} Will use tavily web search to gather context') if DEBUG else None
-        # # But no actually tool call happened
-        # while not _will_tool_call(state['messages'], actually_called= True):
-        #     sys_msg = prompts.FORCE_TOOL_CALL
-        #     # Call the llm again to make it call the tool
-        #     state['messages'] += [ # Append the LLM's response
-        #         clarifier.invoke([state['messages'][-1], SystemMessage(content= sys_msg)])
-        #     ]
-        #     print(f'{BLUE}[NODE] [INFO]{RESET} Trying to call the tool.') if DEBUG else None
-        #     input('\n> press to continue') if DEBUG else None
-
         return 'tools'
 
     # Otherwise, keep asking for clarifications
@@ -367,8 +360,8 @@ def refinement_okay(state: IntermediateSchema) -> Literal['parse_output', 'refin
     '''
     This node asks the user if the refined version of the user input is okay.
     '''
-    print(f'\n{BLUE}[NODE]{RESET} input_refiner/refinement_okay') if DEBUG else None
-
+    print_function_name() if DEBUG else None
+    
     answer = state['user_requests'][-1].content
 
     # If the answer is yes, parse the output and end
@@ -436,6 +429,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
+        'recursion_limit': 100,
         'configurable': {
             'user_id': 'inputRefiner',
             'run_name': 'inputRefiner',
