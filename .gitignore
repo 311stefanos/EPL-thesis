@@ -76,3 +76,4 @@ env.bak/
 pyenv.cfg
 
 # Mine
+creations/*

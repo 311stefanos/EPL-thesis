@@ -45,6 +45,7 @@ from typing import TypedDict, Annotated, List, Literal
 from pydantic import BaseModel, Field
 
 # General imports
+from pyaspeller import YandexSpeller
 from dotenv import load_dotenv
 from pathlib import Path
 from time import sleep
@@ -179,21 +180,6 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
     This node accepts a user input and provides a corrected version of it.
     '''
 
-    # TODO: Try `Gramformer` or `pyaspeller`
-    # pip install pyaspeller
-    #
-    # from pyaspeller import YandexSpeller
-    # def error_correct_pyspeller(sample_text):
-    #     speller = YandexSpeller()
-    #     fixed = speller.spelled(sample_text)
-    #     return fixed
-    #
-    # mytext = """I is testng grammar tool using python. It does not costt anythng."""
-    # output_text = error_correct_pyspeller(mytext)
-    # print(output_text)
-
-
-
     print_function_name() if DEBUG else None
     
     try:
@@ -202,6 +188,11 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         prompt = prompts.CORRECTION_PROMPT.format(user_input= user_input)
         # call the LLM
         corrected = correcter.invoke(prompt).content
+
+        # TODO: More tests. The LLM corrects even the grammar and capitalises.
+        # Maybe its work is good enough to use rather that an LLM invokation
+        # speller = YandexSpeller()
+        # corrected = speller.spelled(state['user_input'])
 
         print(f'{BLUE}[NODE] [INFO] [CORRECTION]{RESET} {corrected}') if DEBUG else None
 
@@ -218,8 +209,8 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         traceback.print_exc() if DEBUG else None
 
         return {
-            'messages': [HumanMessage(content= user_input)],
-            'corrected_original': user_input,
+            'messages': [HumanMessage(content= state['user_input'])],
+            'corrected_original': state['user_input'],
             'refinements': [],
             'user_requests': []
         }
@@ -240,7 +231,8 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             clarifications= '\n---\n'.join([mess.content for mess in state['messages'][1:]])
         )
         # call the LLM
-        clarification = clarifier.invoke([SystemMessage(content= prompt)])
+        clarification = safe_invoke(clarifier, [SystemMessage(content= prompt)])
+
         print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
 
         # If no further clarifications are needed, wrap it in an AIMessage
@@ -300,7 +292,7 @@ def refine_user_input(state: IntermediateSchema) -> IntermediateSchema:
         )
 
         # call the LLM to refine
-        refined = refiner.invoke([SystemMessage(content= prompt)]).content
+        refined = safe_invoke(refiner, [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO]{RESET} Refined: {refined}') if DEBUG else None
 
@@ -437,7 +429,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = {'user_input': 'i want to create a system that recognises when i make google maps reviews, then stores them in a DB. Then i want to be able to converse with the system asking questions and maybe reccomendations.'}
+    user = {'user_input': 'heljo, i want to go play baskeball wih me freinds in th e usa. congrajulations!'}
     response = input_refiner_app.invoke(user, config= config)
 
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
