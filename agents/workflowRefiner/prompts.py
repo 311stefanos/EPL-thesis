@@ -156,7 +156,7 @@ Use the entire conversation history and the latest user edits to finalize the wo
 5) Encode triggers, I/O mode, and human gates inside the relevant node/edge descriptions. Add explicit nodes like "await_approval" if needed.
 6) Prefer minimal viable graphs-only steps essential for a working first version.
 7) Follow the user's latest edits precisely; do not reinterpret intent beyond safe wiring.
-8) Prefix every node description with tags: "Execution: <CODE|TOOLS|LLM|LLM+TOOLS>." Keep them on the first sentence of the description.
+8) Prefix every node description with tags: "Execution: <CODE|TOOLS|LLM|SUBGRAPH|LLM+TOOLS|SUBGRAPH+TOOLS>." Keep them on the first sentence of the description.
 9) Use the `comments` field to add any clarifying notes to the user's latest request. They do not influence the workflow and can be left empty.
 
 ## Hard Rules
@@ -197,7 +197,7 @@ Return ONLY a JSON object that conforms to **WorkflowBundle**:
     "nodes": [
       {{"name": "start", "description": "Start: Triggered by schedule."}},
       {{"name": "initialize_monitoring", "description": "Execution: CODE. Load configuration (target URLs, frequency, alert channels)."}},
-      {{"name": "check_endpoints", "description": "Execution: TOOLS. Request target URLs and record latency/status.", "subgraph_id": "endpoint_check_flow"}},
+      {{"name": "check_endpoints", "description": "Execution: SUBGRAPH+TOOLS. Request target URLs and record latency/status.", "subgraph_id": "endpoint_check_flow"}},
       {{"name": "evaluate_status", "description": "Execution: CODE. Analyze responses and decide if notification is required."}},
       {{"name": "send_notification", "description": "Execution: LLM+TOOLS. Draft incident summary (LLM) and send Slack/email alerts."}},
       {{"name": "log_results", "description": "Execution: CODE. Store results for trend analysis."}}
