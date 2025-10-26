@@ -117,39 +117,6 @@ If the user does not comply, use tools to gather context.
 """
 
 
-FORCE_TOOL_CALL = """
-# Call the Tavily web search tool now.
-- Return an assistant message with NO natural-language content.
-- The message MUST include exactly one tool call in additional_kwargs.tool_calls.
-- Use function.name = 'tavily_search'.
-- Set function.arguments to a JSON STRING with keys: 'query' and 'search_depth'.
-- Build a single high-recall query from the conversation so far.
-- Use 'search_depth': 'advanced'.
-- Do NOT explain what you are doing. Do NOT say you will use the tool. Just emit the tool call.
-
-## Example shape (copy this structure):
-additional_kwargs={
-  'tool_calls': [{
-    'id': 'call_auto_1',
-    'type': 'function',
-    'index': 0,
-    'function': {
-      'name': 'tavily_search',
-      'arguments': '{"query": "<PUT YOUR SEARCH QUERY HERE>", "search_depth": "advanced"}'
-    }
-  }],
-  'refusal': None
-}
-
-# Your goal:
-- Call the Tavily web search tool now.
-- Return an assistant message with NO natural-language content.
-- The message MUST include exactly one tool call in additional_kwargs.tool_calls.
-- Use function.name = 'tavily_search'.
-- Set function.arguments to a JSON STRING with keys: 'query' and 'search_depth' = 'advanced'.
-"""
-
-
 
 REFINE_INPUT_PROMPT = """
 You are the Refiner Agent. You run AFTER the Clarifier Agent has removed ambiguities.

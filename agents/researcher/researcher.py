@@ -295,7 +295,7 @@ def tool_node(state: InputSchema) -> InputSchema:
             from_kwargs = True
             tool_calls = last_message.additional_kwargs.get('tool_calls', [])
 
-        print(json.dumps(tool_calls, indent= 4))
+        print(json.dumps(tool_calls, indent= 4)) if DEBUG else None
 
         # Execute all tool calls
         observations = []

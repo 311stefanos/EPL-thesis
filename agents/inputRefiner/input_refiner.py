@@ -97,7 +97,7 @@ import os
 
 # My imports
 from agents.clarificationOrchestrator.clarification_orchestrator import clarification_orchestrator_app
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, USER_APPROVALS
 from agents.inputRefiner import prompts
 
 
@@ -194,39 +194,6 @@ refiner = myChatOpenAI(
 
 
 
-''' Helpful Functions '''
-# Check if the last message will or should call a tool
-def _will_tool_call(messages: list[BaseMessage], actually_called: bool= False) -> bool:
-    '''
-    Check if the last message will call a tool.
-
-    ### Args:
-    - `messages`: the list of messages up to now
-        - **note:** remember to add the last message if the state is not updated yet
-    - `actually_call`: whether it actually called the tool (by **only** searching the additional kwargs and tool_calls)
-        - **default**: False
-
-    ### Returns:
-    - True if the last message will call a tool
-
-    ### Tool Calls:
-    - 'will use tavily web search to gather context'
-        - Skipped if actually_call is True
-    - last_message.tool_calls exists and not empty
-    - last_message.additional_kwargs.tool_calls exists and not empty
-    - tools_condition(last_message) == tools
-    '''
-    last_message = messages[-1]
-    return (
-        # If actually_called is set, we should check wheather the last message is a tool call, not the content
-        'will use tavily web search to gather context' in last_message.content.lower() and not actually_called or 
-        hasattr(last_message, 'tool_calls') and last_message.tool_calls or
-        hasattr(last_message, 'additional_kwargs') and last_message.additional_kwargs.get('tool_calls', False) or
-        tools_condition({'messages': messages}) == 'tools'
-    )
-
-
-
 ''' Nodes'''
 # This node accepts a user input and provides a corrected version of it
 def correct_user_input(state: InputSchema) -> IntermediateSchema:
@@ -297,7 +264,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             return {'messages': [AIMessage(content = clarification.content)]}
         
         # If a tool call is needed/will be used, **do not** wrap it in an AIMessage, as it has to keep the context
-        if _will_tool_call(state['messages'] + [clarification]):
+        if will_tool_call(state['messages'] + [clarification], instruction_texts= ['will use tavily_search to gather context']):
             print(f'{BLUE}[NODE] [INFO]{RESET} Will use tavily web search to gather context') if DEBUG else None
             return {'messages': [clarification]}
 
@@ -412,7 +379,7 @@ def keep_clarifying(state: IntermediateSchema) -> Literal['clarify', 'tools', 'r
         return 'refine'
     
     # If a tool call is needed
-    if isinstance(state['messages'][-1], AIMessage) and _will_tool_call(state['messages']):
+    if isinstance(state['messages'][-1], AIMessage) and will_tool_call(state['messages'], instruction_texts= ['will use tavily_search to gather context']):
         print(f'{BLUE}[NODE] [INFO]{RESET} Will use tavily web search to gather context') if DEBUG else None
         return 'tools'
 
@@ -430,7 +397,7 @@ def refinement_okay(state: IntermediateSchema) -> Literal['parse_output', 'refin
     answer = state['user_requests'][-1].content
 
     # If the answer is yes, parse the output and end
-    if answer.lower() in ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '']:
+    if answer.lower() in USER_APPROVALS:
         return 'parse_output'
 
     # If the answer is no, keep refining
