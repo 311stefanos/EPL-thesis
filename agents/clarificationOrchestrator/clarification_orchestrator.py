@@ -1,0 +1,223 @@
+"""
+- `author:` Stefanos Panteli
+- `date:` 2025-10-25
+- `description:` This agent is used by the clarifying agents as a middle-man between the user and the clarifying agents.
+                 Its role is to answer the questions raised by the clarifying agents and answer them if the user already answered something similar.
+
+## How to use
+1. Import the app. (`from agents.clarificationOrchestrator.clarificationOrchestrator import clarification_orchestrator_app`)
+2. Input a dict with the following keys:
+    - `question: str` # the question raised by the clarifying agent`
+3. Invoke the app.
+4. Get the output dict with the following keys:
+    - qna: QnA # the question and answer
+        - `question: str` # the question raised by the clarifying agent
+        - `answer: str` # the answer provided by the user
+        - `justification: str` # the reasoning behind the answer
+
+## Usage
+```python
+from agents.clarificationOrchestrator.clarification_orchestrator import clarification_orchestrator_app
+graph_input = {'question': 'Clarification: Do you mean [X]?'}
+
+response = clarification_orchestrator_app.invoke(graph_input)
+
+# response = {
+#   qna: {
+#       'question': 'Clarification: Do you mean [X]?', 
+#       'answer': 'Yes', 
+#       'justification': 'The answer is Yes, because the user answered [V] to [Y]'
+#   }
+# }
+```
+"""
+
+
+
+''' Imports '''
+# Langchain imports
+from langchain_core.messages import SystemMessage, AIMessage, HumanMessage
+
+# Langgraph imports
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.constants import END, START
+from langgraph.graph import StateGraph
+
+# Schema imports
+from pydantic_core._pydantic_core import ValidationError as PydanticValidationError
+from typing import TypedDict, List, Optional, Annotated
+from pydantic import BaseModel, Field
+from operator import add
+
+# General imports
+from dotenv import load_dotenv
+from pathlib import Path
+import traceback
+import os
+
+# My imports
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name
+from agents.clarificationOrchestrator import prompts
+
+
+
+''' Constants '''
+load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
+
+DEBUG = os.getenv('DEBUG')
+
+BLUE = '\033[94m' # INFO
+RED = '\033[91m' # ERR
+GREEN = '\033[92m' # REST
+RESET = '\033[0m'
+
+
+
+print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Clarification Orchestrator') if DEBUG else None
+
+
+
+""" Schemas """
+''' General Schemas '''
+# A Schema to store the questions and answers up to now.
+# Also used to structure the output of the LLM
+class QnA(BaseModel):
+    # The question and answer
+    question: str = Field(description= 'The question you answered.')
+    answer: str = Field(description= 'The answer you provided.')
+    # The reasoning behind the answer so that the LLM does not hallucinate so much
+    justification: str = Field(description= 'The reasoning behind the answer you provided.')
+
+    def __str__(self):
+        return f'- Question:\n{self.question}\n\n- Answer:\n{self.answer}'
+
+class CoordinatorSchema(BaseModel):
+    # The confidence score
+    score: float = Field(description='The confidence score of the answer', ge=0, le=1)
+    # The questions and answers
+    qna: Optional[List[QnA]]
+    # Possible unanswered questions
+    unanswered_questions: Optional[List[str]]
+
+''' Input Schema '''
+class InputSchema(TypedDict):
+    # The question
+    question: str
+    # The questions and answers up to now (memory)
+    questions_answers: Annotated[List[QnA], add]
+
+''' Output Schema '''
+class OutputSchema(TypedDict):
+    # The user input
+    qna: QnA = Field(description= 'The question and answer.')
+
+
+
+''' LLM '''
+coordinator = myChatOpenAI(
+    temperature= 0
+).with_structured_output(CoordinatorSchema)
+
+
+
+''' Nodes'''
+# The LLM is called to answer the question, if not enough information is provided or the score is low, the user is asked to provide answers
+def answer_question(state: InputSchema) -> InputSchema:
+    '''
+    This node answers the question provided by the schema `InputSchema`
+    '''
+    print_function_name() if DEBUG else None
+
+    try:
+        # prompt
+        memory = ''
+        for i, qna in enumerate(state.get('questions_answers', [])):
+            memory += f'### QnA {i}\n\n{qna}\n\n---\n\n'
+        prompt = prompts.ANSWER_QUESTION_PROMPT.format(memory= memory)
+
+        # call the LLM
+        response: CoordinatorSchema = safe_invoke(coordinator, [SystemMessage(content= prompt), HumanMessage(content= state['question'])])
+        print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None
+
+        # If the score is low, ask the user for input
+        if response.score <= 0.8:
+            print(f'{RED}[NODE] [INFO]{RESET} Low Score') if DEBUG else None
+            print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
+            user_answer = input(state['question'] + '\n\n > ')
+            question = state['question']
+            answer =  user_answer
+
+        # If the score is high, use the answer
+        else:
+            question = '\n'.join([qna.question for qna in response.qna])
+            answer = '\n'.join([qna.answer for qna in response.qna])
+            justifications = '\n'.join([qna.justification for qna in response.qna])
+
+            # If there are unanswered questions, ask the user
+            if response.unanswered_questions:
+                print(f'{RED}[NODE] [INFO]{RESET} Unanswered Questions') if DEBUG else None
+                q = '\n'.join(response.unanswered_questions)
+                print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
+                # Ask the user
+                user_answer = input(q + '\n\n > ')
+                question += '\n' + q
+                answer += '\n' + user_answer
+        
+        if not state.get('questions_answers'):
+            state['questions_answers'] = []
+        # Append the question and answer to state
+        state['questions_answers'].append(QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.'))
+
+        return state
+    
+    # If the LLM could not follow the Pydantic Schema, ask the user
+    except PydanticValidationError as e:
+        print(f"{RED}[NODE] [ERR]{RESET}", e) if DEBUG else None
+        print(f'{RED}[NODE] [INFO]{RESET} Pydantic Validation Error') if DEBUG else None
+        print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
+        # Ask the user
+        user_answer = input(state['question'] + '\n\n > ')
+        answer = QnA(question= state['question'], answer= user_answer, justification= 'User provided the answer.')
+        
+        if not state.get('questions_answers'):
+            state['questions_answers'] = []
+        # Append the question and answer to state
+        state['questions_answers'].append(QnA(question= state['question'], answer= answer))
+        return state
+
+    except Exception as e:
+        print(f"{RED}[NODE] [ERR]{RESET}", e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+        return state
+
+# Return the last question and answer
+def return_answer(state: InputSchema) -> OutputSchema:
+    '''
+    This node returns the last question and answer.
+    '''
+    return OutputSchema(qna= state['questions_answers'][-1])
+
+
+''' Graph '''
+clarification_orchestrator_graph = StateGraph(InputSchema, output_schema= OutputSchema)
+
+clarification_orchestrator_graph.add_node('answer_question', answer_question)
+clarification_orchestrator_graph.add_node('return_answer', return_answer)
+
+clarification_orchestrator_graph.add_edge(START, 'answer_question')
+clarification_orchestrator_graph.add_edge('answer_question', 'return_answer')
+clarification_orchestrator_graph.add_edge('return_answer', END)
+
+clarification_orchestrator_app = clarification_orchestrator_graph.compile(checkpointer= MemorySaver())
+
+
+
+# from IPython.display import Image
+
+# # Visualize the graph
+# Image(clarification_orchestrator_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+# parent_dir = Path(__file__).resolve().parent
+# if not os.path.exists(parent_dir / 'graphs'):
+#     os.makedirs(parent_dir / 'graphs')
+# with open(parent_dir / 'graphs/clarification_orchestrator_app.png', 'wb') as f:
+#     f.write(clarification_orchestrator_app.get_graph().draw_mermaid_png())

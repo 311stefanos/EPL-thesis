@@ -1,7 +1,7 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2025-08-06
-- `description:` Accepts a user input and provides a corrected and refined version of it.
+- `description:` Accepts a user input and provides a corrected and refined version of it, after asking a series of clarifying questions.
 
 ## How to use
 1. Import the app. (`from agents.inputRefiner.input_refiner import input_refiner_app`)
@@ -15,13 +15,57 @@
 ## Usage
 ```python
 from agents.userInputRefiner.input_refiner import input_refiner_app
-graph_input = {'user_input': 'I want a personall fitness coach.'}
+graph_input = {'user_input': 'I want a personall fitness coach.', 'orchestrator': False}
 
 response = input_refiner_app.invoke(graph_input)
 
 # response = {
 #     'corrected_original': 'I want a personal fitness coach.', 
-#     'refined_text': '# TODO: ADD'
+#     'refined_text': '<refined paragraph>
+#                     Design a comprehensive virtual AI-powered fitness and nutrition coaching agent that creates personalized, 
+#                     structured programs targeting simultaneous weight loss and muscle gain. The agent must utilize only bodyweight 
+#                     exercises and running as available equipment, accommodating 5 weekly sessions of 90 minutes each. 
+#                     Programs should be adaptable to either morning (dawn) or afternoon workout time slots within a free or minimal-cost model, 
+#                     delivered entirely in English. The solution requires no human interaction or location dependency, with integrated dietary planning and nutritional guidance.
+#
+#                     - `role`: Virtual AI fitness coach and dietary assistant
+#                     - `scope/boundaries`:
+#                        - Designs structured workout plans using bodyweight exercises and running
+#                        - Creates integrated dietary plans for weight loss and muscle gain
+#                        - Provides program guidance only (no execution or equipment provision)
+#                        - Operates within free/minimal-cost constraints
+#                        - Delivers content solely in English
+#                     - `inputs/data sources`:
+#                        - User's health status (no conditions/injuries)
+#                        - Available equipment: bodyweight exercises, running
+#                        - Session requirements: 5 days/week, 90 minutes/session
+#                        - Time flexibility: morning (dawn) or afternoon
+#                        - Dietary preferences/allergies (if any)
+#                     - `outputs/format`:
+#                        - Weekly workout plans (structured schedules)
+#                        - Exercise instructions with form guidance
+#                        - Integrated weekly meal plans with portion guidance
+#                        - Macronutrient targets aligned with dual goals
+#                        - Progress tracking metrics for both fitness and nutrition
+#                     - `constraints`:
+#                        - **Cost**: Free or minimal-cost (freemium model)
+#                        - **Equipment**: Bodyweight and running only
+#                        - **Time**: Programs adaptable to dawn or afternoon slots
+#                        - **Safety**: Safe for general healthy individuals
+#                        - **Scope**: No medical diagnosis or prescription capabilities
+#                        - **Language**: English-only delivery
+#                        - **Dietary Limits**: Should avoid complex medical nutrition therapy
+#                     - `key preferences`:
+#                        - Simultaneous weight loss and muscle gain focus
+#                        - Integrated exercise and nutrition approach
+#                        - Strict adherence to 5x90 minute weekly structure
+#                     - `additional requirements`:
+#                        - Progression/scaling mechanisms for workouts and nutrition
+#                        - Recovery and rest day guidelines
+#                        - Form correction tips for injury prevention
+#                        - Basic nutritional guidance with calorie/macro calculations
+#                        - Hydration advice and food logging suggestions
+#                        - Dietary flexibility options for preferences/restrictions'
 # }
 ```
 """
@@ -32,7 +76,6 @@ response = input_refiner_app.invoke(graph_input)
 # Langchain imports
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_tavily import TavilySearch
-from langchain_openai import ChatOpenAI
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState, add_messages
@@ -45,7 +88,7 @@ from typing import TypedDict, Annotated, List, Literal
 from pydantic import BaseModel, Field
 
 # General imports
-from pyaspeller import YandexSpeller
+# from pyaspeller import YandexSpeller
 from dotenv import load_dotenv
 from pathlib import Path
 from time import sleep
@@ -53,6 +96,7 @@ import traceback
 import os
 
 # My imports
+from agents.clarificationOrchestrator.clarification_orchestrator import clarification_orchestrator_app
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name
 from agents.inputRefiner import prompts
 
@@ -78,6 +122,11 @@ print(f'{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Input Refiner') if DEBUG else None
 """ Schemas """
 ''' Input Schema '''
 class InputSchema(TypedDict):
+    # If it should call the orchestrator to get the inputs
+    orchestrator: bool = Field(
+        description= 'If it should call the orchestrator to get the inputs.',
+        default= False
+    )
     # The user's input as is
     user_input: str = Field(
         description= 'The user input to be clarified and refined.'
@@ -85,6 +134,11 @@ class InputSchema(TypedDict):
 
 ''' Intermediate Schema '''
 class IntermediateSchema(MessagesState): # A lit of the messages
+    # If it should call the orchestrator to get the inputs
+    orchestrator: bool = Field(
+        description= 'If it should call the orchestrator to get the inputs.',
+        default= False
+    )
     # The user's input, grammatically corrected
     corrected_original: str = Field(
         description= 'The original request with grammar and spelling fixed, vocabulary unchanged.'
@@ -198,6 +252,7 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
 
         # Replace the message with the corrected one
         return {
+            'orchestrator': state['orchestrator'],
             'messages': [HumanMessage(content= corrected)],
             'corrected_original': corrected,
             'refinements': [],
@@ -209,6 +264,7 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         traceback.print_exc() if DEBUG else None
 
         return {
+            'orchestrator': state['orchestrator'],
             'messages': [HumanMessage(content= state['user_input'])],
             'corrected_original': state['user_input'],
             'refinements': [],
@@ -247,9 +303,25 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
 
         # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
         print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
-        user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ')
 
-        return {'messages': [AIMessage(content = clarification.content), HumanMessage(content= user_input)]}
+        if state['orchestrator']:
+            orch_config = {
+                'configurable': {
+                    'user_id': 'inputRefiner',
+                    'run_name': 'inputRefiner',
+                    'thread_id': 'clarificationOrchestrator'
+                }
+            }
+            user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
+
+            new_messages = [AIMessage(content = user_input['qna'].question), HumanMessage(content= user_input['qna'].answer)]
+            # new_messages = [AIMessage(content = user_input['questions_answers'][-1].question), HumanMessage(content= user_input['questions_answers'][-1].answer)]
+
+        else:
+            user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ') 
+            new_messages = [AIMessage(content = clarification.content), HumanMessage(content= user_input)]
+
+        return {'messages': new_messages}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -429,7 +501,8 @@ if __name__ == '__main__':
         }
     }
 
-    user = {'user_input': 'heljo, i want to go play baskeball wih me freinds in th e usa. congrajulations!'}
+    user = {'user_input': 'i want a math helper', 'orchestrator': True}
+    user = {'user_input': 'I want a personall fitness coach.', 'orchestrator': False}
     response = input_refiner_app.invoke(user, config= config)
 
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

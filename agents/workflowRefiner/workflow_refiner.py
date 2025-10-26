@@ -1,24 +1,77 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2025-09-17
-- `description:` # TODO: add
+- `description:` Accepts a user input along with its refined version. After asking a series of clarifying questions about the technical workflow of the agent, it provides a graph version of the workflow.
 
 ## How to use
 1. Import the app. (`from agents.workflowRefiner.workflowRefiner import workflow_refiner_app`)
 2. Input a dict with the following keys:
-    - # TODO: add
+    - `user_input: str`: The user input as is.
+    - `clarified_user_input: str`: The user input refined to be studied and made into a workflow.
 3. Invoke the app.
 4. Get the output dict with the following keys:
-    - # TODO: add
-
+    - `workflow: WorkflowBundle`: A graph version of the workflow.
+        - `comments: str`: Use this field to add any comments regarding to the users request.
+        - `root: WorkflowGraph`: The root graph of the workflow.
+        - `subgraphs: Dict[str, WorkflowGraph]`: The subgraphs of the workflow.
+            - `sub_id: WorkflowGraph`: A subgraph of the workflow with id `sub_id`.
+                - `type: Literal['reactive_conversational', 'linear_pipeline', 'planner_executor', 'hybrid']`: The type of the subgraph.
+                - `name: str`: The name of the subgraph.
+                - `description: str`: The description of the subgraph; and the why.
+                - `nodes: List[WorkflowNode]`: The nodes of the subgraph.
+                    - `name: str`: The name of the node in snake_case.
+                    - `description: str`: The description of the node.
+                    - `subgraph_id: Optional[str]`: If set, this node references a subgraph by its ID in WorkflowBundle.subgraphs.
+                - `edges: List[WorkflowEdge]`: The edges of the subgraph.
+                    - `source_name: str`: The name of the source node in snake_case.
+                    - `target_name: str`: The name of the target node in snake_case.
+                    - `description: str`: The description of the edge; and the why.
+    
 ## Usage
 ```python
 from agents.workflowRefiner.workflow_refiner import workflow_refiner_app
-graph_input = { # TODO: add }
+graph_input = {'user_input': 'I want a personall fitness coach.', 'clarified_user_input': <Output of the input refiner>}
 
 response = workflow_refiner_app.invoke(graph_input)
 
-# response = { # TODO: add }
+# Only the str() representation of the workflow will be shown
+# response = 📝 COMMENTS: Integrated iterative refinement into a planner_executor workflow to allow re-planning if the user is dissatisfied. The plan and execute nodes are designed to handle both workout and dietary plans together, and the reflect node decides whether to re-plan or proceed to output.
+#            🌐 ROOT WORKFLOW
+#            ╭─ Iterative Fitness and Nutrition Plan Generator [planner_executor] ─────
+#            │ Iterative planner-executor workflow that collects user data, generates workout and dietary plans, then allows the user to provide feedback and request changes. The cycle of planning and execution repeats until the user is satisfied, then delivers the final output.
+#            │
+#            │ Nodes:
+#            │   • start
+#            │   ⤷ Execution: TRIGGER. Triggered by user providing input data.
+#            │   • input_collection
+#            │   ⤷ Execution: TOOLS. Collect required user input data: health status, equipment, session requirements, time flexibility, dietary preferences, age, weight, height, gender, activity level.
+#            │   • plan
+#            │   ⤷ Execution: LLM. Generate workout and dietary plans based on user input and feedback (if any).
+#            │   • execute
+#            │   ⤷ Execution: LLM. Present the generated workout and dietary plans to the user and handle feedback (e.g., adjustments like replacing eggs with broccoli).
+#            │   • reflect
+#            │   ⤷ Execution: CODE. Analyze user feedback and decide whether to re-plan or proceed to output.
+#            │   • output_generation
+#            │   ⤷ Execution: CODE. Format and deliver the final output including workout schedules, exercise instructions, meal plans, progress metrics, and safety tips.
+#            │   • end
+#            │   ⤷
+#            │
+#            │ Edges:
+#            │   • start ➜  input_collection
+#            │   ⤷ When user provides input data.
+#            │   • input_collection ➜  plan
+#            │   ⤷ After user input is collected.
+#            │   • plan ➜  execute
+#            │   ⤷ After plans are generated.
+#            │   • execute ➜  reflect
+#            │   ⤷ After user feedback is collected.
+#            │   • reflect ➜  plan
+#            │   ⤷ If feedback indicates changes are needed (user is dissatisfied).
+#            │   • reflect ➜  output_generation
+#            │   ⤷ If user is satisfied.
+#            │   • output_generation ➜  end
+#            │   ⤷ When output is delivered.
+#            ╰──────────────────────────────────────────────────────────────────────────
 ```
 """
 
@@ -389,46 +442,52 @@ if __name__ == '__main__':
     user = InputSchema(
         # user_input= 'I want an agent to help me with designing a holiday.', 
         # clarified_user_input= 'Create an interactive, English-only vacation-planning chat agent that acts as a comprehensive travel-research assistant for worldwide destinations. The agent starts every interaction with a friendly, neutral-professional greeting and then conducts a natural dialogue to gather: (1) departure location—city or IATA airport code; (2) destination(s) or criteria for destination discovery; (3) exact or flexible travel dates (e.g., “two weeks in September”); (4) total trip budget expressed in EUR plus the user’s home currency (automatically converted for comparison); (5) group size and any special requirements; (6) accommodation style (backpacker to luxury) and activity mix preferences. It immediately searches major booking APIs—flights, lodging, activities—returning 3-5 fully-priced, bookable options in real time, ranked by price–convenience balance unless the user explicitly prioritises other factors. Each option lists specific flight times, named hotels with live availability and total all-inclusive cost (taxes & mandatory fees noted). It then builds a balanced itinerary of relaxation and adventure, appending visa requirements, vaccination advice, travel-insurance suggestions, weather forecasts, and direct booking links. Transportation costs that exceed ~70 % of the stated budget are automatically hidden unless < 5 viable options exist, in which case they are shown with a clear budget-warning label. The agent maintains an automatic, continuously updated user-profile system that remembers general preferences (but never assumes they are permanent) and always re-confirms at the start of each new trip request. It works for any budget, any travel period, any global destination, but focuses on mainstream tourist cities and common routes. Responses are unlimited in length; no bookings are processed—users complete reservations externally.\n\n- role: Interactive vacation-planning research assistant\n- scope/boundaries: Worldwide travel research (flights, hotels, activities) for mainstream destinations; no payment or booking processing; English interface only\n- inputs/data sources: Real-time flight, hotel, activity, weather, visa, and health data from major booking platforms and public APIs; user-provided budget, dates, preferences, group details\n- outputs/format: 3-5 destination options with specific, bookable items, ranked by price-convenience balance, plus full itineraries, warnings, and direct booking links; unlimited conversational detail\n- constraints (cost/latency/safety/style/language): English only; filter out transport-heavy options unless < 5 choices; friendly-neutral tone; no response length cap; no minimum budget\n- key preferences: Auto-profile with preference memory (re-confirmed each session); EUR + home-currency pricing; flexible-date cost optimisation; budget-warning labels; focus on common tourist destinations'
-        user_input= 'i want to create a system that recognises when i make google maps reviews, then stores them in a DB. Then i want to be able to converse with the system asking questions and maybe reccomendations.',
-        clarified_user_input= '''<refined paragraph>
-Develop a Unix-based agent that periodically fetches your Google Maps reviews using third-party APIs (with your provided credentials and place IDs), stores review details (text content, rating 1-5, location metadata, and timestamp) in a structured SQLite database, and provides a WhatsApp-based conversational interface 
-for natural language queries about your review history and personalized recommendations based on your stored data.
-
-<bullet list of agent-creation essentials:
-- `role`: Review collection and analysis agent
+        user_input= 'i want a personal fitness coach.',
+        clarified_user_input= ''''<refined paragraph>
+Design a comprehensive virtual AI-powered fitness and nutrition coaching agent that creates personalized, 
+structured programs targeting simultaneous weight loss and muscle gain. The agent must utilize only bodyweight 
+exercises and running as available equipment, accommodating 5 weekly sessions of 90 minutes each. 
+Programs should be adaptable to either morning (dawn) or afternoon workout time slots within a free or minimal-cost model, 
+delivered entirely in English. The solution requires no human interaction or location dependency, with integrated dietary planning and nutritional guidance.
+- `role`: Virtual AI fitness coach and dietary assistant
 - `scope/boundaries`:
-  - Collects Google Maps reviews via third-party API
-  - Stores data in local SQLite database
-  - Provides conversational interface via WhatsApp for queries/recommendations
-  - Excludes direct Google API access or web scraping
+   - Designs structured workout plans using bodyweight exercises and running
+   - Creates integrated dietary plans for weight loss and muscle gain
+   - Provides program guidance only (no execution or equipment provision)
+   - Operates within free/minimal-cost constraints
+   - Delivers content solely in English
 - `inputs/data sources`:
-  - Third-party API credentials (SerpApi/Outscraper)
-  - List of place IDs for frequented locations
-  - User conversational queries/questions (sent via WhatsApp)
+   - User's health status (no conditions/injuries)
+   - Available equipment: bodyweight exercises, running
+   - Session requirements: 5 days/week, 90 minutes/session
+   - Time flexibility: morning (dawn) or afternoon
+   - Dietary preferences/allergies (if any)
 - `outputs/format`:
-  - Structured SQLite database (reviews table with text, rating, location, timestamp, place_id)
-  - Natural language responses to WhatsApp queries
-  - Recommendations based on stored review patterns
+   - Weekly workout plans (structured schedules)
+   - Exercise instructions with form guidance
+   - Integrated weekly meal plans with portion guidance
+   - Macronutrient targets aligned with dual goals
+   - Progress tracking metrics for both fitness and nutrition
 - `constraints`:
-  - Cost (third-party API usage fees)
-  - Rate limits (API provider constraints)
-  - Privacy (secure handling of API credentials)
-  - Legal compliance (third-party ToS adherence)
-  - No direct Google Maps API access or web scraping
-  - WhatsApp integration limitations (message length, availability)
-- `key preferences/deadlines`:
-  - Prefer third-party API approach over scraping/detection
-  - SQLite database storage
-  - WhatsApp-based conversational interface
-  - Recommendations based solely on user's stored history
-- `additional technical requirements`:
-  - Scheduled execution (cron jobs for periodic checks)
-  - Natural language processing capabilities
-  - Database schema design
-  - API integration layer
-  - WhatsApp integration (using Twilio/WhatsApp Business API)
-  - Conversational interface implementation
-  - Message parsing for WhatsApp queries'''
+   - **Cost**: Free or minimal-cost (freemium model)
+   - **Equipment**: Bodyweight and running only
+   - **Time**: Programs adaptable to dawn or afternoon slots
+   - **Safety**: Safe for general healthy individuals
+   - **Scope**: No medical diagnosis or prescription capabilities
+   - **Language**: English-only delivery
+   - **Dietary Limits**: Should avoid complex medical nutrition therapy
+- `key preferences`:
+   - Simultaneous weight loss and muscle gain focus
+   - Integrated exercise and nutrition approach
+   - Strict adherence to 5x90 minute weekly structure
+- `additional requirements`:
+   - Progression/scaling mechanisms for workouts and nutrition
+   - Recovery and rest day guidelines
+   - Form correction tips for injury prevention
+   - Basic nutritional guidance with calorie/macro calculations
+   - Hydration advice and food logging suggestions
+   - Dietary flexibility options for preferences/restrictions'
+</refined paragraph>'''
     )
     response: OutputSchema = workflow_refiner_app.invoke(user, config= config)
     
