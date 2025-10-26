@@ -6,6 +6,7 @@
 ## How to use
 1. Import the app. (`from agents.workflowRefiner.workflowRefiner import workflow_refiner_app`)
 2. Input a dict with the following keys:
+    - `orchestrator: bool`: If it should call the orchestrator to get the inputs.
     - `user_input: str`: The user input as is.
     - `clarified_user_input: str`: The user input refined to be studied and made into a workflow.
 3. Invoke the app.
@@ -99,6 +100,7 @@ import traceback
 import os
 
 # My imports
+from agents.clarificationOrchestrator.clarification_orchestrator import clarification_orchestrator_app
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, print_function_name
 from agents.workflowRefiner import prompts
 
@@ -183,6 +185,11 @@ class WorkflowBundle(BaseModel):
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
+    # If it should call the orchestrator to get the inputs
+    orchestrator: bool = Field(
+        description= 'If it should call the orchestrator to get the inputs.',
+        default= False
+    )
     user_input: str = Field(
         description= 'The user input to be studied and made into a workflow.'
     )
@@ -268,7 +275,7 @@ def clarify(state: InputSchema) -> InputSchema:
     try:
         # prompt
         prompt = prompts.CLARIFICATION_PROMPT.format(
-            user_input= state['user_input'],
+            # user_input= state['user_input'], # Not used
             clarified_user_input= state.get('clarified_user_input') or '',
             clarifications= '\n\n---\n'.join([mess.content for mess in state['messages']])
         )
@@ -287,11 +294,27 @@ def clarify(state: InputSchema) -> InputSchema:
             print(f'{BLUE}[NODE] [INFO]{RESET} Will tool call') if DEBUG else None
             return {'messages': [clarification]}
 
-        # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
-        print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
-        user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ')
+        # If the orchestrator flag is up, call it
+        if state['orchestrator']:
+            orch_config = {
+                'configurable': {
+                    'user_id': 'inputRefiner',
+                    'run_name': 'inputRefiner',
+                    'thread_id': 'clarificationOrchestrator'
+                }
+            }
+            user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
+            # Wrap it in an AIMessage, and the answer in a HumanMessage
+            new_messages = [AIMessage(content = user_input['qna'].question), HumanMessage(content= user_input['qna'].answer)]
 
-        return {'messages': [AIMessage(content = clarification.content), HumanMessage(content= user_input)]}
+        else:
+            # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
+            print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
+
+            user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ')
+            new_messages = [AIMessage(content = clarification.content), HumanMessage(content= user_input)]
+
+        return {'messages':new_messages}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -327,12 +350,8 @@ def create_workflow(state: InputSchema) -> OutputSchema:
             
             try:
                 workflow = safe_invoke(workflow_engineer, [SystemMessage(content= prompt)])
-            except ValueError as e: 
-                print(e)
-                input('Press enter to continue')
+            except ValueError as e:
                 continue
-
-            # print(f'{BLUE}[NODE] [INFO]{RESET} suggested workflow: {workflow}') if DEBUG else None
 
             # Ask the user if the refined version of the user input is okay
             print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {workflow}')

@@ -301,23 +301,24 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             print(f'{BLUE}[NODE] [INFO]{RESET} Will use tavily web search to gather context') if DEBUG else None
             return {'messages': [clarification]}
 
-        # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
-        print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
-
+        # If the orchestrator flag is up, call it
         if state['orchestrator']:
             orch_config = {
                 'configurable': {
                     'user_id': 'inputRefiner',
                     'run_name': 'inputRefiner',
+                    # ThreadID for the memory
                     'thread_id': 'clarificationOrchestrator'
                 }
             }
             user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
-
+            # Wrap it in an AIMessage, and the answer in a HumanMessage
             new_messages = [AIMessage(content = user_input['qna'].question), HumanMessage(content= user_input['qna'].answer)]
-            # new_messages = [AIMessage(content = user_input['questions_answers'][-1].question), HumanMessage(content= user_input['questions_answers'][-1].answer)]
 
         else:
+            # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
+            print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
+            
             user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ') 
             new_messages = [AIMessage(content = clarification.content), HumanMessage(content= user_input)]
 
