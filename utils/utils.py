@@ -37,7 +37,7 @@ def print_function_name():
     print(f'\n\033[93m[NODE]\033[0m {filename}/{func_name}')
 
 # Check if the last message will or should call a tool
-def will_tool_call(messages: list[BaseMessage], instruction_texts: list[str], actually_called: bool= False) -> bool:
+def will_tool_call(messages: list[BaseMessage], instruction_texts: list[str] = [], actually_called: bool= False) -> bool:
     '''
     Check if the last message will call a tool.
 
