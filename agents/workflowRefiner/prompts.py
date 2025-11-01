@@ -104,7 +104,7 @@ Chosen Archetype: <reactive_conversational | linear_pipeline | hybrid | planner_
 Triggers: <e.g., "only when I ask", "on a schedule (every morning 09:00)", "when a new ticket arrives">
 I/O Mode: <batch | streaming | None>
 Steps (short verb names in snake_case; each can include tools and a guard along with a description):
-    1) <step name> - tools: <allowed tools or agents> - guard: <what must be true to continue> - description: <what this step should do>
+    1) <step name> - tools: <allowed tools or agents> - guard: <what must be true to continue> - description: <what this step should do - detailed>
     2) <step name> - tools: <...> - guard: <...> - description: <...>
 Stop Conditions: <e.g., user says done; time/budget reached; N steps complete> - include for which step or the entire workflow
 Human Gates (if any): <who approves and when; otherwise "None"> - include for which step and how
@@ -156,7 +156,7 @@ Use the entire conversation history and the latest user edits to finalize the wo
 5) Encode triggers, I/O mode, and human gates inside the relevant node/edge descriptions. Add explicit nodes like "await_approval" if needed.
 6) Prefer minimal viable graphs-only steps essential for a working first version.
 7) Follow the user's latest edits precisely; do not reinterpret intent beyond safe wiring.
-8) Prefix every node description with tags: "Execution: <CODE|TOOLS|LLM|SUBGRAPH|LLM+TOOLS|SUBGRAPH+TOOLS>." Keep them on the first sentence of the description.
+8) Prefix every node description with tags: "Execution: <CODE|LLM|LLM+TOOLS|SUBGRAPH>." Keep them on the first sentence of the description.
 9) Use the `comments` field to add any clarifying notes to the user's latest request. They do not influence the workflow and can be left empty.
 
 ## Hard Rules
@@ -164,6 +164,7 @@ Use the entire conversation history and the latest user edits to finalize the wo
 - Apply the user's latest requests exactly; change nothing else unless needed for correctness/safety.
 - Always include the `start` and `end` nodes.
 - `nodes[].description`: MUST begin with "Execution: <...>." Then a concise, actionable purpose. If LLM is used, state how (e.g., "LLM for anomaly classification" or "LLM to draft alert copy").
+  - It will be used as a docstring for the node's code, so be clear and concise. You should write a long description in the `description` field of each node and edge.
 
 ## Output Format (STRICT)
 Return ONLY a JSON object that conforms to **WorkflowBundle**:
@@ -176,12 +177,12 @@ Return ONLY a JSON object that conforms to **WorkflowBundle**:
     - `description`: short rationale (what this workflow accomplishes and why this shape is chosen), briefly mention modifiers (trigger, I/O mode, human gates).
     - `nodes`: List of WorkflowNode
         - `name`: string (unique within root)
-        - `description`: string (concise, actionable)
+        - `description`: string (concise, actionable, detailed)
         - `subgraph_id` (optional): string key referencing an entry in `subgraphs`
     - `edges`: List of WorkflowEdge
         - `source_name`: string (must match a node name)
         - `target_name`: string (must match a node name)
-        - `description`: string (guard/transition rationale)
+        - `description`: string (guard/transition rationale, detailed - specifically if its conditional)
 - **subgraphs**: object (dictionary) mapping `subgraph_id` → WorkflowGraph
     - Each subgraph has the same fields as `root` (`type`, `name`, `description`, `nodes`, `edges`).
     - Node names inside a subgraph must be unique within that subgraph.
@@ -192,47 +193,47 @@ Return ONLY a JSON object that conforms to **WorkflowBundle**:
   "comments": "",
   "root": {{
     "type": "linear_pipeline",
-    "name": "Website Uptime Monitor",
-    "description": "Linear workflow that periodically checks availability and alerts on downtime. Triggered by schedule; uses a subgraph for multi-endpoint checks.",
+    "name": "website_uptime_monitor",
+    "description": "Linear workflow that periodically checks the availability of one or more websites and sends alerts if downtime or anomalies are detected. Triggered automatically on a schedule; includes a human gate for manual alert confirmation and uses a subgraph for checking multiple endpoints in sequence.",
     "nodes": [
-      {{"name": "start", "description": "Start: Triggered by schedule."}},
-      {{"name": "initialize_monitoring", "description": "Execution: CODE. Load configuration (target URLs, frequency, alert channels)."}},
-      {{"name": "check_endpoints", "description": "Execution: SUBGRAPH+TOOLS. Request target URLs and record latency/status.", "subgraph_id": "endpoint_check_flow"}},
-      {{"name": "evaluate_status", "description": "Execution: CODE. Analyze responses and decide if notification is required."}},
-      {{"name": "send_notification", "description": "Execution: LLM+TOOLS. Draft incident summary (LLM) and send Slack/email alerts."}},
-      {{"name": "log_results", "description": "Execution: CODE. Store results for trend analysis."}}
-      {{"name": "end", "description": ""}}
+      {{"name": "start","description": "Start: Triggered by a scheduled job (e.g., every 5 minutes). Loads global configuration parameters such as monitored URLs, timeout thresholds, and alert preferences from environment variables or configuration files."}},
+      {{"name": "initialize_monitoring","description": "Execution: CODE. Initialize the monitoring context — load configuration, establish network session, and prepare output data structures. This step ensures the workflow has access to target URLs, alert channels, and any custom retry settings before proceeding."}},
+      {{"name": "check_endpoints","description": "Execution: SUBGRAPH. Perform concurrent checks against all configured endpoints to determine uptime and response latency. This node references the 'endpoint_check_flow' subgraph, which handles retries, aggregation, and error handling for multiple websites.","subgraph_id": "endpoint_check_flow"}},
+      {{"name": "evaluate_status","description": "Execution: CODE. Analyze collected endpoint results. Identify failed or slow responses, compute uptime percentages, classify anomalies, and determine the severity level (warning, critical, informational)."}},
+      {{"name": "send_notification","description": "Execution: LLM+TOOLS. Draft a clear, human-readable incident report using an LLM summarization step (highlight affected endpoints, probable cause, and suggested remediation). Send the generated report to the specified alert channel (e.g., Slack, Teams, or Email) using the messaging API. A human gate applies here — if enabled, a system admin must approve the alert before it is sent."}},
+      {{"name": "log_results","description": "Execution: CODE. Store monitoring results (timestamps, status, latency, anomalies) in a persistent datastore (e.g., PostgreSQL, Elasticsearch, or S3) for trend analysis, dashboards, and historical uptime reporting."}},
+      {{"name": "end","description": "End: Termination node that signals successful completion of the workflow cycle. Can trigger optional downstream analytics or archive clean-up."}}
     ],
     "edges": [
-      {{"source_name": "start", "target_name": "initialize_monitoring", "description": "When workflow is triggered."}},
-      {{"source_name": "initialize_monitoring", "target_name": "check_endpoints", "description": "After configuration is loaded."}},
-      {{"source_name": "check_endpoints", "target_name": "evaluate_status", "description": "When endpoint responses are collected."}},
-      {{"source_name": "evaluate_status", "target_name": "send_notification", "description": "If downtime or anomalies detected."}},
-      {{"source_name": "evaluate_status", "target_name": "log_results", "description": "If all checks passed normally."}},
-      {{"source_name": "send_notification", "target_name": "log_results", "description": "After alerts are sent."}},
-      {{"source_name": "log_results", "target_name": "end", "description": "When workflow is complete."}}
+      {{"source_name": "start","target_name": "initialize_monitoring","description": "Transition when the scheduler triggers a new monitoring cycle."}},
+      {{ "source_name": "initialize_monitoring", "target_name": "check_endpoints", "description": "Once configuration and session initialization are complete, begin endpoint checks."}},
+      {{"source_name": "check_endpoints","target_name": "evaluate_status","description": "After all endpoint responses are collected and aggregated, proceed to evaluate overall service health."}},
+      {{"source_name": "evaluate_status","target_name": "send_notification","description": "If any endpoint is unreachable or response latency exceeds defined thresholds, trigger alert generation and notification step."}},
+      {{"source_name": "evaluate_status","target_name": "log_results","description": "If all endpoints pass normal checks, skip alerting and proceed directly to result logging."}},
+      {{"source_name": "send_notification","target_name": "log_results","description": "After the alert message has been approved and dispatched, record all relevant metadata to the log database."}},
+      {{"source_name": "log_results","target_name": "end","description": "Finalize monitoring cycle and close the workflow execution context."}}
     ]
   }},
   "subgraphs": {{
     "endpoint_check_flow": {{
       "type": "linear_pipeline",
-      "name": "Endpoint Check Flow",
-      "description": "Check multiple endpoints sequentially with retries.",
+      "name": "endpoint_check_flow",
+      "description": "Subgraph that sequentially checks multiple website endpoints, including retries for failures and aggregation of results into a unified response object. Executed automatically by the 'check_endpoints' node.",
       "nodes": [
-        {{"name": "start", "description": "Start: Triggered by check_endpoints."}},
-        {{"name": "fetch_endpoints", "description": "Execution: CODE. Retrieve list of endpoints to monitor."}},
-        {{"name": "ping_endpoints", "description": "Execution: TOOLS. Send HEAD/GET requests and capture status/latency."}},
-        {{"name": "retry_failures", "description": "Execution: CODE. Retry failed pings up to N times."}},
-        {{"name": "aggregate_results", "description": "Execution: CODE. Compile results into a summary object."}}
-        {{"name": "end", "description": ""}}
+        {{"name": "start","description": "Start: Triggered by the parent 'check_endpoints' node. Receives the list of endpoints to validate."}},
+        {{"name": "fetch_endpoints","description": "Execution: CODE. Retrieve endpoint list from configuration or external service. Apply filtering logic to exclude temporarily disabled or maintenance endpoints."}},
+        {{"name": "ping_endpoints","description": "Execution: TOOLS. Send concurrent HTTP HEAD or GET requests to all endpoints. Measure response latency, capture status codes, and record success/failure for each."}},
+        {{"name": "retry_failures","description": "Execution: CODE. Retry failed requests up to N times (configurable). Apply exponential backoff and record retry counts and results for post-analysis."}},
+        {{"name": "aggregate_results","description": "Execution: CODE. Combine results from all checks (successes, failures, retries) into a structured JSON object suitable for downstream evaluation."}},
+        {{"name": "end","description": "End: Pass the aggregated result object back to the parent workflow."}}
       ],
       "edges": [
-        {{"source_name": "start", "target_name": "fetch_endpoints", "description": "When workflow is triggered."}},
-        {{"source_name": "fetch_endpoints", "target_name": "ping_endpoints", "description": "After endpoint list is loaded."}},
-        {{"source_name": "ping_endpoints", "target_name": "retry_failures", "description": "If any requests failed."}},
-        {{"source_name": "retry_failures", "target_name": "aggregate_results", "description": "After retries complete."}},
-        {{"source_name": "ping_endpoints", "target_name": "aggregate_results", "description": "If all endpoints succeeded initially."}}
-        {{"source_name": "aggregate_results", "target_name": "end", "description": "When workflow is complete."}}
+        {{"source_name": "start","target_name": "fetch_endpoints","description": "Triggered automatically when subgraph execution starts."}},
+        {{"source_name": "fetch_endpoints","target_name": "ping_endpoints","description": "After the endpoint list has been retrieved."}},
+        {{"source_name": "ping_endpoints","target_name": "retry_failures","description": "If one or more endpoints return failed or timed-out responses."}},
+        {{"source_name": "retry_failures","target_name": "aggregate_results","description": "After retry logic completes, aggregate all data for evaluation."}},
+        {{"source_name": "ping_endpoints","target_name": "aggregate_results","description": "If all endpoints succeeded on the first attempt, skip retry and aggregate results immediately."}},
+        {{"source_name": "aggregate_results","target_name": "end","description": "When aggregation completes, return the summary object to the parent workflow."}}
       ]
     }}
   }}

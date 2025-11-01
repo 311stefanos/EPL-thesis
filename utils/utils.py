@@ -218,11 +218,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 # TODO: Add Schemas
 ''' General Schemas '''
 
-''' Input Schema '''
-
-''' Intermediate Schemas '''
-
-''' Output Schema '''
+''' Agent Schema '''
 
 
 
@@ -247,7 +243,6 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 
 
 
-''' Conditional Functions '''
 {conditional_functions}
 
 
@@ -462,11 +457,13 @@ def build_workflow(bundle) -> str:
             else:
                 all_edges.append(conditional_edges[edge][1])
 
+        cond = '\n'.join([conditional_edge[0] for conditional_edge in conditional_edges.values()])
+
         # Return
         return {
             'llms': llms,
             'nodes': nodes,
-            'conditional_functions': '\n'.join([conditional_edge[0] for conditional_edge in conditional_edges.values()]),
+            'conditional_functions': f"''' Conditional Functions '''\n{cond}" if cond else '',
             'edges': ''.join(all_edges)
         }
 
@@ -507,166 +504,92 @@ def build_workflow(bundle) -> str:
 
 if __name__ == '__main__':
     dict_to_test = {
-    "comments": "Added explicit start and end nodes to the root workflow as requested. The start node is triggered by either schedule (every day at 09:00) or incoming WhatsApp message. The end node is reached after both the periodic and conversational workflows have completed once.",   
+    "comments": "User requested to use LLM for workout_design, meal_plan_creation, and progress_guidance steps. Updated execution types accordingly.",
     "root": {
-        "type": "hybrid",
-        "name": "WhatsApp Review Processing",
+        "type": "linear_pipeline",
+        "name": "Fitness Program Generator",
         "nodes": [
             {
-                "name": "start",
-                "description": "Execution: CODE. Trigger both periodic and conversational workflows. Trigger: schedule (every day at 09:00) and incoming WhatsApp message.",
+                "name": "start_node",
+                "description": "Execution: CODE. Triggered when the user provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences) via a structured form.",
                 "subgraph_id": None
             },
             {
-                "name": "call_periodic_workflow",
-                "description": "Execution: CODE. Execute the periodic review fetching and storing workflow.",
-                "subgraph_id": "periodic_workflow"
+                "name": "input_collection",
+                "description": "Execution: CODE. Collect and validate user inputs for program customization. Guard: All mandatory inputs are provided and valid.",
+                "subgraph_id": None
             },
             {
-                "name": "call_conversational_workflow",
-                "description": "Execution: CODE. Execute the conversational agent workflow for WhatsApp messages.",
-                "subgraph_id": "conversational_workflow"
+                "name": "macro_calculation",
+                "description": "Execution: CODE. Calculate daily calorie and macronutrient targets for simultaneous weight loss/muscle gain using standard formulas (e.g., Mifflin-St Jeor for BMR). Guard: Inputs are valid and complete.",
+                "subgraph_id": None
             },
             {
-                "name": "end",
-                "description": "Execution: CODE. End of the root workflow.",
+                "name": "workout_design",
+                "description": "Execution: LLM. Design a structured 5-day/week workout plan using bodyweight exercises and running, split between dawn/afternoon slots. Guard: Macro targets calculated and inputs valid.",
+                "subgraph_id": None
+            },
+            {
+                "name": "meal_plan_creation",
+                "description": "Execution: LLM. Generate a weekly meal plan with portion guidance aligned with macro targets. Guard: Workout plan finalized.",
+                "subgraph_id": None
+            },
+            {
+                "name": "progress_guidance",
+                "description": "Execution: LLM. Provide static progression/scaling rules (time-based), recovery guidelines, and metrics for self-tracking (weight, measurements). Guard: Meal plan created.",
+                "subgraph_id": None
+            },
+            {
+                "name": "output_generation",
+                "description": "Execution: CODE. Deliver weekly workout schedules, exercise instructions, meal plans, and progress tracking guidelines in English. Guard: All steps complete.",
+                "subgraph_id": None
+            },
+            {
+                "name": "end_node",
+                "description": "Execution: CODE. End of workflow.",
                 "subgraph_id": None
             }
         ],
         "edges": [
             {
-                "source_name": "start",
-                "target_name": "call_periodic_workflow",
-                "description": "Guard: always true. Trigger periodic workflow."
+                "source_name": "start_node",
+                "target_name": "input_collection",
+                "description": "User provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences)."
             },
             {
-                "source_name": "start",
-                "target_name": "call_conversational_workflow",
-                "description": "Guard: always true. Trigger conversational workflow."
+                "source_name": "input_collection",
+                "target_name": "macro_calculation",
+                "description": "All mandatory inputs are collected and validated."
             },
             {
-                "source_name": "call_periodic_workflow",
-                "target_name": "end",
-                "description": "Guard: always true. End of periodic workflow done."
+                "source_name": "macro_calculation",
+                "target_name": "workout_design",
+                "description": "Macro targets calculated and inputs valid."
             },
             {
-                "source_name": "call_conversational_workflow",
-                "target_name": "end",
-                "description": "Guard: always true. End of conversational workflow done."
+                "source_name": "workout_design",
+                "target_name": "meal_plan_creation",
+                "description": "Workout plan finalized."
+            },
+            {
+                "source_name": "meal_plan_creation",
+                "target_name": "progress_guidance",
+                "description": "Meal plan created."
+            },
+            {
+                "source_name": "progress_guidance",
+                "target_name": "output_generation",
+                "description": "Progress guidance ready."
+            },
+            {
+                "source_name": "output_generation",
+                "target_name": "end_node",
+                "description": "Workflow complete."
             }
         ],
-        "description": "Hybrid workflow with two independent flows: periodic batch task (scheduled daily at 09:00) and reactive conversational agent for incoming WhatsApp messages. The start node is triggered by either schedule or message, and the end node is reached after both workflows complete."
+        "description": "Linear workflow that generates a customized fitness program (workout and meal plans) and progress tracking guidelines. Triggered by user input via a structured form; runs in batch mode without human interaction. Uses LLM for workout design, meal plan creation, and progress guidance."
     },
-    "subgraphs": {
-        "periodic_workflow": {
-            "type": "linear_pipeline",
-            "name": "Periodic Review Workflow",
-            "nodes": [
-                {
-                    "name": "start",
-                    "description": "Execution: CODE. Begin the periodic review workflow.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "periodic_review_fetcher",
-                    "description": "Execution: TOOLS. Fetch reviews using third-party APIs for all place IDs.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "database_updater",
-                    "description": "Execution: CODE. Store reviews in SQLite.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "end",
-                    "description": "Execution: CODE. End of the periodic workflow.",
-                    "subgraph_id": None
-                }
-            ],
-            "edges": [
-                {
-                    "source_name": "start",
-                    "target_name": "periodic_review_fetcher",
-                    "description": "Guard: always true."
-                },
-                {
-                    "source_name": "periodic_review_fetcher",
-                    "target_name": "database_updater",
-                    "description": "Guard: reviews fetched successfully."
-                },
-                {
-                    "source_name": "database_updater",
-                    "target_name": "end",
-                    "description": "Guard: reviews stored successfully."
-                }
-            ],
-            "description": "Automated process to fetch reviews from third-party APIs and store them in SQLite, run daily at 09:00."
-        },
-        "conversational_workflow": {
-            "type": "reactive_conversational",
-            "name": "Conversational WhatsApp Agent",
-            "nodes": [
-                {
-                    "name": "start",
-                    "description": "Execution: CODE. Capture incoming WhatsApp message.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "message_parser",
-                    "description": "Execution: LLM. Analyze user intent (query/recommendation request).",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "database_query",
-                    "description": "Execution: CODE. Retrieve relevant review data from SQLite based on parsed intent.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "response_generator",
-                    "description": "Execution: LLM. Generate natural language response/recommendation.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "whatsapp_response_sender",
-                    "description": "Execution: TOOLS. Send WhatsApp reply to user.",
-                    "subgraph_id": None
-                },
-                {
-                    "name": "end",
-                    "description": "Execution: CODE. End of the conversational flow.",
-                    "subgraph_id": None
-                }
-            ],
-            "edges": [
-                {
-                    "source_name": "start",
-                    "target_name": "message_parser",
-                    "description": "Guard: message captured successfully. Pass message to parser."
-                },
-                {
-                    "source_name": "message_parser",
-                    "target_name": "database_query",
-                    "description": "Guard: intent requires data. Pass parsed intent to query."
-                },
-                {
-                    "source_name": "database_query",
-                    "target_name": "response_generator",
-                    "description": "Guard: data retrieved. Pass data to response generator."
-                },
-                {
-                    "source_name": "response_generator",
-                    "target_name": "whatsapp_response_sender",
-                    "description": "Guard: response generated. Pass response to sender."
-                },
-                {
-                    "source_name": "whatsapp_response_sender",
-                    "target_name": "end",
-                    "description": "Guard: response sent. End conversation flow."
-                }
-            ],
-            "description": "Reactive conversational agent that handles incoming WhatsApp messages and provides review-based responses. Trigger: incoming WhatsApp message. I/O Mode: streaming."
-        }
-    }
+    "subgraphs": {}
 }
     
     parsed = build_workflow(dict_to_test)
