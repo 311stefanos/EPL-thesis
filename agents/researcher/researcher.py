@@ -249,7 +249,7 @@ def get_today_str() -> str:
 
 
 
-''' Nodes'''
+''' Nodes '''
 # The do_research node, where the agent does the actual research by calling the tools
 def do_research(state: InputSchema) -> InputSchema:
     '''

@@ -229,7 +229,7 @@ workflow_engineer = myChatOpenAI(
 
 
 
-''' Nodes'''
+''' Nodes '''
 # This node accepts a user input and asks clarifying questions or assumptions in a conversation in order to get the desired workflow.
 def clarify(state: InputSchema) -> InputSchema:
     '''

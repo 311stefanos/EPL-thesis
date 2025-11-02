@@ -1,5 +1,8 @@
 
 from openai import APIConnectionError, InternalServerError, RateLimitError, BadRequestError, AuthenticationError
+from pydantic_core._pydantic_core import ValidationError as PydanticValidationError
+from json.decoder import JSONDecodeError
+
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import tools_condition
 from langchain_openai import ChatOpenAI
@@ -104,7 +107,7 @@ class Invokable(Protocol):
     def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
 
 # A function that invokes an LLM and handles errors
-def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int = 5) -> BaseMessage:
+def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int = 5, raise_pydantic= False) -> BaseMessage:
     '''
     `safe_invoke` is a function that invokes an LLM and handles errors
 
@@ -132,7 +135,16 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int
             raise e
         
         # Try again
-        except (BadRequestError, APIConnectionError, InternalServerError) as e:
+        except PydanticValidationError as e:
+            if raise_pydantic:
+                raise e
+            else:
+                print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
+                retry_counter += 1
+                sleep(retry_interval)
+        
+        # Try again
+        except (BadRequestError, APIConnectionError, InternalServerError, JSONDecodeError) as e:
             print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
             retry_counter += 1
             sleep(retry_interval)
@@ -181,7 +193,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated
+from typing import TypedDict, Literal, List, Optional, Annotated, Union, Dict
 from pydantic import BaseModel, Field
 from operator import add
 
@@ -219,6 +231,8 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 ''' General Schemas '''
 
 ''' Agent Schema '''
+class AgentSchema(...): # TODO: Add parent class (e.g., BaseModel, TypedDict, etc.)
+    ... # TODO: Add fields
 
 
 
@@ -238,7 +252,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 
 
 
-''' Nodes'''
+''' Nodes '''
 {nodes}
 
 
@@ -247,7 +261,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 
 
 ''' Graph '''
-{agent_name}_graph = StateGraph() # TODO: change
+{agent_name}_graph = StateGraph(AgentSchema) # TODO: change
 
 {add_nodes}
 
@@ -316,18 +330,17 @@ def build_workflow(bundle) -> str:
             (str) The node
         '''
         if 'LLM' in node['description'] or 'SUBGRAPH' in node['description']:
-            invokation = f'safe_invoke({node["name"]}_llm, [SystemMessage(content= prompt)<, anything else>])' if not node['subgraph_id'] else f'{node["subgraph_id"]}_app.invoke([SystemMessage(content= prompt)<, anything else>])'
+            invokation = f'safe_invoke({node["name"]}_llm, [SystemMessage(content= prompt), ...])' if not node['subgraph_id'] else f'{node["subgraph_id"]}_app.invoke([SystemMessage(content= prompt), ...])'
             node_function = '\n'.join([
-                f'# TODO: <comment>',
-                f'def {node["name"]}(state):',
+                f'def {node["name"]}(state: AgentSchema) -> AgentSchema:',
                 f'    """ {node["description"]} """',
                  '    print_function_name()',
                  '    try:',
                  '        # TODO: <preprocess>',
-                f'        prompt = prompts.{node["name"].upper()}_PROMPT.format(<formatting>) # TODO: <formatting>',
+                f'        prompt = prompts.{node["name"].upper()}_PROMPT.format(...) # TODO: <formatting>',
                 f'        result = {invokation} # TODO: <inputs>',
                  '        # TODO: <postprocess>',
-                 '        return <return> # TODO: <return>',
+                 '        return ... # TODO: <return>',
                  '    except Exception as e:',
                  '        print(f\'{RED}[NODE] [ERR]{RESET}\', e) if DEBUG else None',
                  '        traceback.print_exc() if DEBUG else None',
@@ -337,13 +350,12 @@ def build_workflow(bundle) -> str:
             ])
         else:
             node_function = '\n'.join([
-                f'# TODO: <comment>',
-                f'def {node["name"]}(state):',
+                f'def {node["name"]}(state: AgentSchema) -> AgentSchema:',
                 f'    """ {node["description"]} """',
                  '    print_function_name()',
                  '    try:',
                  '        # TODO: <process>',
-                 '        return <return> # TODO: <return>',
+                 '        return ... # TODO: <return>',
                  '    except Exception as e:',
                  '        print(f\'{RED}[NODE] [ERR]{RESET}\', e) if DEBUG else None',
                  '        traceback.print_exc() if DEBUG else None',
@@ -389,8 +401,7 @@ def build_workflow(bundle) -> str:
         # Conditional function
         literals = ', '.join([f'"{to_node}"' for to_node in to_nodes])
         conditional_function = '\n'.join([
-            f'# TODO: <comment>',
-            f'def from_{from_node}_to(state) -> Literal[{literals}]:',
+            f'def from_{from_node}_to(state: AgentSchema) -> Literal[{literals}]:',
              '    """ TODO: <docstring> """',
              '    print_function_name()',
              '    # TODO: <conditions>',
@@ -423,7 +434,7 @@ def build_workflow(bundle) -> str:
         '''
         # LLMs
         llms = '\n'.join([
-            f'{node["name"]}_llm = myChatOpenAI(\n\ttemperature= 0\n) # TODO: <config>' 
+            f'{node["name"]}_llm = myChatOpenAI(\n\ttemperature= 0\n) # TODO: <config> and change the temperature if needed' 
             for node in graph['nodes'] if 'LLM' in node['description']
         ])
 

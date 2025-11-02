@@ -194,7 +194,7 @@ refiner = myChatOpenAI(
 
 
 
-''' Nodes'''
+''' Nodes '''
 # This node accepts a user input and provides a corrected version of it
 def correct_user_input(state: InputSchema) -> IntermediateSchema:
     '''

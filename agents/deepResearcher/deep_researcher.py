@@ -137,7 +137,7 @@ summariser = myChatOpenAI(
 
 
 
-''' Nodes'''
+''' Nodes '''
 # The node that breaks down the topic
 def breakdown_research_topic(state: InputSchema) -> InputSchema:
     '''

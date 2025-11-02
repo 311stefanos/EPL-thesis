@@ -26,7 +26,7 @@ response = code_clarifier_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
+from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage, RemoveMessage
 from langchain_core.tools import tool
 
 # Langgraph imports
@@ -35,7 +35,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated
+from typing import TypedDict, Literal, List, Optional, Annotated, Union
 from pydantic import BaseModel, Field
 from operator import add
 
@@ -49,7 +49,7 @@ import os
 import re
 
 # My imports
-from agents.clarificationOrchestrator.clarification_orchestrator import clarification_orchestrator_app
+from agents.workflowRefiner.workflow_refiner import WorkflowBundle
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, USER_APPROVALS
 from agents.codeClarifier import prompts
 
@@ -73,258 +73,279 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Code Clarifier') if DEBUG else N
 
 """ Schemas """
 ''' General Schemas '''
-class ChangeComment(BaseModel):
-    change: str = Field(description= 'The change as given from the agent.')
-    comment: str = Field(description= 'The comment as given from the user.')
+# General
+class Argument(BaseModel):
+    name: str = Field(description= 'The name of the argument.')
+    type: str = Field(description= 'The type of the argument.')
 
-class UserFeedbackSchema(BaseModel):
-    user_feedback: List[ChangeComment] = Field(description= 'The user feedback as given from the user.')
+    def __str__(self):
+        return f'{self.name}: {self.type}'
+        
+# Docstring agent
+class Docstring(BaseModel):
+    function: str = Field(description= 'The function name as given.')
+    docstring: str = Field(description= 'The docstring as given.')
 
+    def __str__(self):
+        return f'Function: {self.function}\nDocstring: {self.docstring}'
+
+class Docstrings(BaseModel):
+    docstrings: List[Docstring] = Field(description= 'The docstrings as given from the user.')
+
+    def __str__(self):
+        return '\n'.join([f'\n{i}) {docstring}' for i, docstring in enumerate(self.docstrings, start= 1)])
+
+# Helpful functions/Tool agent
+class Function(BaseModel):
+    function_name: str = Field(description= 'The proposed helper function name.')
+    arguments: List[Argument] = Field(description= 'The arguments of the helper function.')
+    output: str = Field(description= 'The output of the helper function.')
+    docstring: str = Field(description= 'The docstring of the helper function.')
+    justification: str = Field(description= 'The justification of the helper function. Why is needed.')
+
+    def __str__(self):
+        docstring = self.docstring.replace('\n', '\n\t')
+        arguments = ', '.join([str(arg) for arg in self.arguments])
+        return f'def {self.function_name}({arguments}) -> {self.output}:\n\t"""\n\t{docstring}\n\t"""\n\t...'
+
+class HelpfulFunctions(BaseModel):
+    helpful_functions: List[Function] = Field(description= 'The helpful functions.')
+
+    def __str__(self):
+        return '\n'.join([f'\n{i}) {function.justification}\n{function}' for i, function in enumerate(self.helpful_functions, start= 1)])
+    
+class ToolFunctions(BaseModel):
+    tool_functions: List[Function] = Field(description= 'The tool functions.')
+
+    def __str__(self):
+        return '\n'.join([f'\n{i}) {function.justification}\n@tool\n{function}' for i, function in enumerate(self.tool_functions, start= 1)])
+
+# Schema agent
+class Schema(BaseModel):
+    schema_name: str = Field(description= 'The name of the schema in PascalCase.')
+    docstring: str = Field(description= 'The docstring of the schema.')
+    base_class: Literal['BaseModel', 'TypedDict'] = Field(description= 'The base class of the schema.')
+    arguments: List[Argument] = Field(description= 'The arguments of the schema.')
+
+    def __str__(self):
+        arguments = '\n\t'.join([str(arg) for arg in self.arguments])
+        docstring = self.docstring.replace('\n', '\n\t')
+        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}\n'
+
+class Schemas(BaseModel):
+    schemas: List[Schema] = Field(description= 'The schemas.')
+
+    def __str__(self):
+        return '\n'.join([f'\n{i}) {schema}' for i, schema in enumerate(self.schemas, start= 1)])
+    
 ''' Input Schema '''
 class InputSchema(MessagesState):
-    orchestrator: bool = Field(description= 'If it should call the orchestrator to get the inputs.', default= False)
-    current_file_name: str = Field(description= 'The current file name as given from the user.')
+    file_path: str = Field(description= 'The current file path as given from the user.')
     clarified_user_input: str = Field(description= 'The clarified user input as given from the clarifier.')
-    workflow: dict = Field(description= 'The proposed workflow as given from the workflow engineer.')
+    workflow: WorkflowBundle = Field(description= 'The proposed workflow as given from the workflow engineer.')
     code_structure: str = Field(description= 'The code structure as given from the software engineer.')
+
+    step_changes: Union[    
+        Docstrings, 
+        HelpfulFunctions,
+        ToolFunctions,
+        Schemas
+    ] = Field(description= 'The step changes as given from the LLM at each step.')
 
 
 
 ''' Tools '''
-# Tool for the LLM to propose a new code structure
-@tool
-def propose_code_structure(file_name: str, proposed_code_structure: str, summary_of_changes: List[str]) -> str:
-    '''
-    `propose_code_structure`
-        This function creates a new file for the proposed code structure.
-        Only call this tool when you asked enough information from the user.
-        Never call this tool before you asked enough information from the user.
-        Never change the file_name or basic structure of the code.
-
-    `Args:`
-        file_name (str): The name of the file. Same as given.
-        proposed_code_structure (str): The proposed code structure. Must be the same as the given structure with annotations.
-        summary_of_changes (List[str]): The summary of changes. Each element of the list must a single change.
-
-    `Returns:`
-        (str) The file path
-    '''
-    print_function_name() if DEBUG else None
-
-    base = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in file_name).strip("_") or "proposed_code"
-    out_dir = Path("../../creations")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = out_dir / f"{base}_proposed_{ts}.py"
-
-    with open(out_path, 'w', encoding= 'utf-8') as f:
-        f.write(proposed_code_structure)
-
-    print(f'\n{BLUE}[AGENT] [INFO] [PROPOSED CODE] [CREATED]{RESET} {out_path}') if DEBUG else None
-
-    return str(out_path)
-
-# Tool for the LLM to call when it completed the code annotations.
-@tool
-def complete(message: str):
-    '''
-    `complete`
-        This function completes the code annotations.
-        After the tool is called, the user is prompted to agree or not.
-
-    `Args:`
-        message (str): The message to complete.
-
-    `Returns:`
-        (str) The message
-    '''
-    print_function_name() if DEBUG else None
-
-    return f'Message Recorded: {message}'
-
-# List of tools
-tools = [propose_code_structure, complete]
-# Dictionary of tools: tool name -> tool
-tools_by_name = {tool.name: tool for tool in tools}
 
 
 
 ''' LLM '''
-annotator = myChatOpenAI(
+docstring_generator = myChatOpenAI(
     temperature= 0.7
-).bind_tools(tools)
+).with_structured_output(Docstrings)
 
-memory_updater = myChatOpenAI(
-    temperature= 0
-).with_structured_output(UserFeedbackSchema)
+helpful_function_generator = myChatOpenAI(
+    temperature= 0.4
+).with_structured_output(HelpfulFunctions)
+
+tool_function_generator = myChatOpenAI(
+    temperature= 0.4
+).with_structured_output(ToolFunctions)
+
+schema_generator = myChatOpenAI(
+    temperature= 0.4
+).with_structured_output(Schemas,)
 
 
 
 ''' Helpful Functions '''
-# Function to parse tool arguments (when they come in additional_kwargs)
-def parse_tool_arguments(args):
-    # If the SDK already gave you a dict, use it
-    if isinstance(args, dict):
-        return args
-
-    s = str(args).strip()
-
-    # Normalize line endings
-    s = s.replace('\r\n', '\n')
-    # Replace any unescaped newlines with a space (JSON doesn't allow raw newlines)
-    #    (?<!\\)\n  = a newline not preceded by a backslash
-    s = re.sub(r'(?<!\\)\n', ' ', s)
-    # Remove other control characters that are illegal in JSON
-    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', s)
-    # Remove trailing commas before } or ]
-    s = re.sub(r',\s*([}\]])', r'\1', s)
-
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        # Optional: last-resort escape of remaining bare backslashes before quote/newline
-        s2 = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', s)
-        return json.loads(s2)  # will raise again if truly broken
-    
 
 
-''' Nodes'''
-# The clarification node that understands the code
-def clarify(state: InputSchema) -> InputSchema:
-    '''
-    This node clarifies the code.
+
+""" Nodes """
+''' Docstring Nodes '''
+# The node that understands the code and comments the node functions
+def generate_docstrings(state: InputSchema) -> InputSchema:
+    ''' # TODO: add
     '''
     print_function_name() if DEBUG else None
     
     try:
         # prompt
-        clarifications = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
+        history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
 
-        prompt = prompts.ANNOTATE_CODE_PROMPT.format(
+        prompt = prompts.ANNOTATE_NODES_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
             code_structure= state['code_structure'],
-            clarifications= clarifications,
-            filename= state['current_file_name']
+            history= history
         )
 
         # call the LLM
-        clarification = safe_invoke(annotator, [SystemMessage(content= prompt)])
+        docstring_proposal: Docstrings = safe_invoke(docstring_generator, [SystemMessage(content= prompt)])
 
-        print(f'{BLUE}[NODE] [INFO] [CLARIFICATION]{RESET} {clarification.content}') if DEBUG else None
-
-        if will_tool_call(state['messages'] + [clarification]):
-            print(f'{BLUE}[NODE] [INFO]{RESET} Tool Call') if DEBUG else None
-            return {'messages': [clarification]}
+        # Ask the user to confirm
+        print(f'{GREEN}[NODE] [DOCSTRING PROPOSAL]{RESET} {docstring_proposal if docstring_proposal.docstrings else "None"}')
         
-        # If the orchestrator flag is up, call it
-        if state['orchestrator']:
-            orch_config = {
-                'configurable': {
-                    'user_id': 'codeClarifier',
-                    'run_name': 'codeClarifier',
-                    # ThreadID for the memory
-                    'thread_id': 'clarificationOrchestrator'
-                }
-            }
-            user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
-            # Wrap it in an AIMessage, and the answer in a HumanMessage
-            new_messages = [AIMessage(content = user_input['qna'].question), HumanMessage(content= user_input['qna'].answer)]
+        user_input = input(f'\n{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ') 
+        new_messages = [AIMessage(content= str(docstring_proposal)), HumanMessage(content= user_input)]
 
-        else:
-            # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
-            print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
-            
-            user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ') 
-            new_messages = [AIMessage(content = clarification.content), HumanMessage(content= user_input)]
-
-        return {'messages': new_messages}
+        return {'messages': new_messages, 'step_changes': docstring_proposal}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
         return state
-
-# The tool_node node, where the agent uses the tools
-def tool_node(state: InputSchema) -> InputSchema:
-    '''
-    This node executes the tool.
-    '''
-    print_function_name() if DEBUG else None
     
-    try:
-        # Get the last message, and extract the tool calls
-        last_message = state['messages'][-1]
-        if last_message.tool_calls:
-            from_kwargs = False
-            tool_calls = last_message.tool_calls
+# Updates the docstring of the code
+def update_docstrings(state: InputSchema) -> InputSchema:
+    ''' # TODO: add'''
+    print_function_name() if DEBUG else None
+
+    file_path = state['file_path']
+    docstrings = state['step_changes'].model_dump()['docstrings']
+
+    with open(file_path, 'r') as f:
+        code = f.read()
+
+    nodes = code.split("''' Nodes '''")[-1].split("''' Conditional Functions '''")[0].split("''' Graph '''")[0]
+
+    new_nodes = []
+    new_node = function_name = ''
+    for line in nodes.split('\n'):
+        # Signature line
+        if line.startswith('def '):
+            # Close previous node
+            new_nodes.append(new_node) if new_node else None
+            # Start new node
+            new_node = line + '\n'
+            # Get function name and generated docstring
+            function_name = line.split(' ')[1].split('(')[0]
+            for docstring in docstrings: 
+                if docstring['function'] == function_name:
+                    function_docstring = docstring['docstring'].replace('\n', '\n\t')
+        # Docstring line
+        elif line.strip().startswith('""" Execution: '):
+            new_node += line[:-3] + f'\n\t{function_docstring}\n\t"""\n\n'
         else:
-            from_kwargs = True
-            tool_calls = last_message.additional_kwargs.get('tool_calls', [])
+            new_node += line + '\n'
 
-        print(json.dumps(tool_calls, indent= 4)) if DEBUG else None
+    # Append the last node
+    new_nodes.append(new_node)
+    # Get the whole section as a string
+    new_nodes = '\n'.join(new_nodes)
+    # Replace the section
+    code = code.replace(nodes, new_nodes)
 
-        # Execute all tool calls
-        new_messages = []
-        for tool_call in tool_calls:
-            # Get the tool and arguments
-            if from_kwargs:
-                tool_call = tool_call['function']
-            tool = tools_by_name[tool_call['name']]
+    with open(file_path, 'w') as f:
+        f.write(code)
 
-            args = tool_call.get('args', {}) or tool_call.get('arguments', {})
-            # Parse the tool arguments if needed.
-            if isinstance(args, str):
-                args = parse_tool_arguments(args)                
+    # Remove all messages and step changes
+    remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
+    return {'messages': remove_messages, 'step_changes': None}
 
-            print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {tool_call["name"]} with {args}') if DEBUG else None
+''' Helpful Functions Nodes '''
+# The node that reads the annotated code, and adds instructions for helpful functions
+def propose_helpful_functions(state: InputSchema) -> InputSchema:
+    ''' # TODO: add'''
+    print_function_name() if DEBUG else None
 
-            try:
-                # Execute the tool
-                observation = None
-                observation = tool.invoke(args)
+    try:
+        # prompt
+        history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
 
-            except Exception as e:
-                print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
-                traceback.print_exc() if DEBUG else None
-                # If the tool fails, skip it
-                continue
+        prompt = prompts.ADD_HELPFUL_FUNCTIONS_PROMPT.format(
+            clarified_user_input= state['clarified_user_input'],
+            workflow= state['workflow'],
+            code_structure= state['code_structure'],
+            history= history
+        )
 
-            # If the tool called is the complete tool, ask the user if everything is okay.
-            if tool in [complete] or tool_call['name'] == 'complete':
-                user_approval = input(f'{GREEN}[NODE] [TOOL] [COMPLETE]{RESET} Do you approve? (y/request) > ')
+        # call the LLM
+        helpful_functions_proposal: HelpfulFunctions = safe_invoke(helpful_function_generator, [SystemMessage(content= prompt)])
 
-                new_messages.extend([
-                    ToolMessage(content= observation, name= tool_call['name'], tool_call_id= tool_call['id']),
-                    HumanMessage(content= user_approval),
-                ])
-
-
-            # If the tool is a propose_code_structure, call an llm to update the memory
-            elif tool in [propose_code_structure] or tool_call['name'] == 'propose_code_structure':
-                # prompt
-                summary_of_changes = args['summary_of_changes']
-                proposed_code = args['proposed_code_structure']
-                user_comments = input(f'{GREEN}[NODE] [TOOL] [PROPOSED CODE STRUCTURE]{RESET} Kindly check the proposed code structure in {observation}. Enter your comments:\n > ')
-
-                prompt = prompts.MEMORY_UPDATE_PROMPT.format(
-                    proposed_code_structure= proposed_code,
-                    summary_of_changes= summary_of_changes,
-                    user_comments= user_comments
-                )
-                result: UserFeedbackSchema = safe_invoke(memory_updater, [SystemMessage(content= prompt)])
-
-                # Create a pair of AI and Human message
-                all_changes = '\n'.join(f'{i}. {uf.change}' for i, uf in enumerate(result.user_feedback, start= 1))
-                all_comments = '\n'.join(f'{i}. {uf.comment}' for i, uf in enumerate(result.user_feedback, start= 1))
-                new_messages.extend([
-                    AIMessage(content= f'Proposed changes:\n{all_changes}'),
-                    HumanMessage(content= f'Comments by the user:\n{all_comments}')
-                ])
+        # Ask the user to confirm
+        print(f'{GREEN}[NODE] [HELPFUL FUNCTIONS PROPOSAL]{RESET} {helpful_functions_proposal if helpful_functions_proposal.helpful_functions else "None"}')
         
-        # Add them to the state
-        return {'messages': new_messages}
+        user_input = input(f'\n{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ') 
+        new_messages = [AIMessage(content= str(helpful_functions_proposal)), HumanMessage(content= user_input)]
+
+        return {'messages': new_messages, 'step_changes': helpful_functions_proposal}
+    
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return state
+
+def update_helpful_functions(state: InputSchema) -> InputSchema:
+    ''' # TODO: add'''
+    print_function_name() if DEBUG else None
+
+    file_path = state['file_path']
+    helpful_functions = state['step_changes'].helpful_functions
+
+    with open(file_path, 'r') as f:
+        code = f.read()
+
+    new_functions = [str(function) for function in helpful_functions]
+    new_functions = '\n\n'.join(new_functions)
+    code = code.replace("''' Helpful Functions '''", f"''' Helpful Functions '''\n{new_functions}")
+
+    with open(file_path, 'w') as f:
+        f.write(code)
+
+    # Remove all messages and step changes
+    remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
+    return {'messages': remove_messages, 'step_changes': None}
+
+''' Tool Functions Nodes '''
+# TODO: add
+def propose_tool_functions(state: InputSchema) -> InputSchema:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
+
+    try:
+        # prompt
+        history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
+
+        prompt = prompts.ADD_TOOL_FUNCTIONS_PROMPT.format(
+            clarified_user_input= state['clarified_user_input'],
+            workflow= state['workflow'],
+            code_structure= state['code_structure'],
+            history= history
+        )
+
+        # call the LLM
+        tool_functions_proposal: ToolFunctions = safe_invoke(tool_function_generator, [SystemMessage(content= prompt)])
+
+        # Ask the user to confirm
+        print(f'{GREEN}[NODE] [TOOL FUNCTIONS PROPOSAL]{RESET} {tool_functions_proposal if tool_functions_proposal.tool_functions else "None"}')
+        
+        user_input = input(f'\n{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ') 
+        new_messages = [AIMessage(content= str(tool_functions_proposal)), HumanMessage(content= user_input)]
+
+        return {'messages': new_messages, 'step_changes': tool_functions_proposal}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -332,67 +353,181 @@ def tool_node(state: InputSchema) -> InputSchema:
 
         return state
 
+def update_tool_functions(state: InputSchema) -> InputSchema:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
 
+    file_path = state['file_path']
+    tool_functions = state['step_changes'].tool_functions
+
+    with open(file_path, 'r') as f:
+        code = f.read()
+
+    new_functions = [str(function) for function in tool_functions]
+    new_functions = '\n\n'.join(new_functions)
+    code = code.replace("''' Tool Functions '''", f"''' Tool Functions '''\n{new_functions}")
+
+    with open(file_path, 'w') as f:
+        f.write(code)
+
+    # Remove all messages and step changes
+    remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
+    return {'messages': remove_messages, 'step_changes': None}
+
+''' Schema Nodes '''
+# TODO: add
+def propose_schemas(state: InputSchema) -> InputSchema:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
+
+    try:
+        # prompt
+        history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
+
+        prompt = prompts.PROPOSE_SCHEMAS_PROMPT.format(
+            clarified_user_input= state['clarified_user_input'],
+            workflow= state['workflow'],
+            code_structure= state['code_structure'],
+            history= history
+        )
+
+        # call the LLM
+        schemas_proposal: Schemas = safe_invoke(schema_generator, [SystemMessage(content= prompt)])
+
+        # Ask the user to confirm
+        print(f'{GREEN}[NODE] [SCHEMAS PROPOSAL]{RESET} {schemas_proposal if schemas_proposal.schemas else "None"}')
+        
+        user_input = input(f'\n{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ') 
+        new_messages = [AIMessage(content= str(schemas_proposal)), HumanMessage(content= user_input)]
+
+        return {'messages': new_messages, 'step_changes': schemas_proposal}
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return state
+
+def update_schemas(state: InputSchema) -> InputSchema:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
+
+    file_path = state['file_path']
+    schemas = state['step_changes'].schemas
+
+    with open(file_path, 'r') as f:
+        code = f.read()
+
+    old_schemas = code.split('""" Schemas """')[-1].split("''' Tools '''")[0]
+
+    agent_schema = [str(schema) for schema in schemas if schema.schema_name == 'AgentSchema']
+    rest_schemas = [str(schema) for schema in schemas if schema.schema_name != 'AgentSchema']
+    new_schemas = [''] + rest_schemas + agent_schema + ['']
+    new_schemas = '\n'.join(new_schemas)
+    
+    code = code.replace(old_schemas, new_schemas)
+
+    with open(file_path, 'w') as f:
+        f.write(code)
+
+    # Remove all messages and step changes
+    remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
+    return {'messages': remove_messages, 'step_changes': None}
 
 ''' Conditional Functions '''
-# The next node to go after a clarification question
-def after_clarify(state: InputSchema) -> Literal['clarify', 'tools']:
-    '''
-    This functions provides the next node to go after clarifying.
-    - If a tool call is needed, go to tools
-    - Otherwise, go back to clarify
-    '''
+# TODO: add
+def after_docstrings(state: InputSchema) -> Literal['generate_docstrings', 'update_docstrings']:
+    '''# TODO: add'''
     print_function_name() if DEBUG else None
-    # If a tool call is needed
-    if will_tool_call(state['messages']):
-        return 'tools'
-    
-    return 'clarify'
 
-# The next node to go after tools
-def after_tools(state: InputSchema) -> Literal['clarify', '__end__']:
-    '''
-    This functions provides the next node to go after tools.
-    - If the user approves, go to __end__
-    - Otherwise, go back to clarify
-    '''
+    last_user_message = state['messages'][-1].content
+    if last_user_message in USER_APPROVALS:
+        return 'update_docstrings'
+    
+    return 'generate_docstrings'
+
+def after_helpful_functions(state: InputSchema) -> Literal['propose_helpful_functions', 'update_helpful_functions']:
+    '''# TODO: add'''
     print_function_name() if DEBUG else None
-    last_message = state['messages'][-1]
-    second_to_last_message = state['messages'][-2]
 
-    if (
-        isinstance(second_to_last_message, ToolMessage) and # Complete tool
-        isinstance(last_message, HumanMessage) and          # User approval or not
-        last_message.content.lower() in USER_APPROVALS
-    ):
-        return '__end__'
+    last_user_message = state['messages'][-1].content
+    if last_user_message in USER_APPROVALS:
+        return 'update_helpful_functions'
     
-    return 'clarify'
+    return 'propose_helpful_functions'
+
+def after_tool_functions(state: InputSchema) -> Literal['propose_tool_functions', 'update_tool_functions']:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
+
+    last_user_message = state['messages'][-1].content
+    if last_user_message in USER_APPROVALS:
+        return 'update_tool_functions'
+    
+    return 'propose_tool_functions'
+
+def after_schemas(state: InputSchema) -> Literal['propose_schemas', 'update_schemas']:
+    '''# TODO: add'''
+    print_function_name() if DEBUG else None
+
+    last_user_message = state['messages'][-1].content
+    if last_user_message in USER_APPROVALS:
+        return 'update_schemas'
+    
+    return 'propose_schemas'
+
 
 
 ''' Graph '''
 code_clarifier_graph = StateGraph(InputSchema) # TODO: change
 
-code_clarifier_graph.add_node('clarify', clarify)
-code_clarifier_graph.add_node('tools', tool_node)
+# code_clarifier_graph.add_node('generate_docstrings', generate_docstrings)
+# code_clarifier_graph.add_node('update_docstrings', update_docstrings)
+# code_clarifier_graph.add_node('propose_helpful_functions', propose_helpful_functions)
+# code_clarifier_graph.add_node('update_helpful_functions', update_helpful_functions)
+# code_clarifier_graph.add_node('propose_tool_functions', propose_tool_functions)
+# code_clarifier_graph.add_node('update_tool_functions', update_tool_functions)
+code_clarifier_graph.add_node('propose_schemas', propose_schemas)
+code_clarifier_graph.add_node('update_schemas', update_schemas)
 
-code_clarifier_graph.add_edge(START, 'clarify')
+# code_clarifier_graph.add_edge(START, 'generate_docstrings')
+# code_clarifier_graph.add_conditional_edges(
+#     'generate_docstrings',
+#     after_docstrings,
+#     {   # Not needed, for clarity
+#         'generate_docstrings': 'generate_docstrings',
+#         'update_docstrings': 'update_docstrings'
+#     }
+# )
+# code_clarifier_graph.add_edge('update_docstrings', 'propose_helpful_functions')
+# code_clarifier_graph.add_conditional_edges(
+#     'propose_helpful_functions',
+#     after_helpful_functions,
+#     {   # Not needed, for clarity
+#         'propose_helpful_functions': 'propose_helpful_functions',
+#         'update_helpful_functions': 'update_helpful_functions'
+#     }
+# )
+# code_clarifier_graph.add_edge('update_helpful_functions', 'propose_tool_functions')
+# code_clarifier_graph.add_conditional_edges(
+#     'propose_tool_functions',
+#     after_tool_functions,
+#     {   # Not needed, for clarity
+#         'propose_tool_functions': 'propose_tool_functions',
+#         'update_tool_functions': 'update_tool_functions'
+#     }
+# )
+
+code_clarifier_graph.add_edge(START, 'propose_schemas')
+
 code_clarifier_graph.add_conditional_edges(
-    'clarify',
-    after_clarify,
+    'propose_schemas',
+    after_schemas,
     {   # Not needed, for clarity
-        'clarify': 'clarify',
-        'tools': 'tools'
+        'propose_schemas': 'propose_schemas',
+        'update_schemas': 'update_schemas'
     }
 )
-code_clarifier_graph.add_conditional_edges(
-    'tools',
-    after_tools,
-    {   # Not needed, for clarity
-        'clarify': 'clarify',
-        '__end__': END
-    }
-)
+code_clarifier_graph.add_edge('update_schemas', END)
 
 code_clarifier_app = code_clarifier_graph.compile(checkpointer= MemorySaver())
 
@@ -426,17 +561,17 @@ if __name__ == '__main__':
         }
     }
 
-    from test_inputs import filename, clarified_user_input, workflow, code_structure
+    from test_inputs import file_path, clarified_user_input, workflow, code_structure
     user = InputSchema(
-        orchestrator= False,
-        current_file_name= filename,
+        file_path= file_path,
         clarified_user_input= clarified_user_input,
         workflow= workflow,
         code_structure= code_structure
     )
+
     response = code_clarifier_app.invoke(user, config= config)
 
-    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    if DEBUG:
-        for key, value in response.items():
-            print(f'    {key}: {value}')
+    # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
+    # if DEBUG:
+    #     for key, value in response.items():
+    #         print(f'    {key}: {value}')
