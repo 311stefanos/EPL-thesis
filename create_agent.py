@@ -28,7 +28,7 @@ agent_file_text = f"""\"\"\"
 - `description:` # TODO: add
 
 ## How to use
-1. Import the app. (`from agents.{directory_name}.{directory_name} import {agent_name}_app`)
+1. Import the app. (`from agents.{directory_name}.{agent_name} import {agent_name}_app`)
 2. Input a dict with the following keys:
     - # TODO: add
 3. Invoke the app.

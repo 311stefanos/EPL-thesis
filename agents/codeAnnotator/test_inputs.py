@@ -88,8 +88,6 @@ workflow = {
 }
 
 file_path = '../../creations/fitness_program_generator/fitness_program_generator.py'
-with open(file_path, 'r') as f:
-    code_structure = f.read()
 
 clarified_user_input = '''<refined paragraph>
 Design a comprehensive virtual AI-powered fitness and nutrition coaching agent that creates personalized, 

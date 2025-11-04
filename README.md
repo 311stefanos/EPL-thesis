@@ -47,75 +47,17 @@ python <agent_name>.py # Run the agent
 ```
 
 # Agents # TODO: Add a README.md to each agent
+# Workflow
 
-The following agents are used in the system:
+## TODO
+- Add readme.md to each agent
+- Add a workflow diagram to each agent and here
+- add an overview here
 
-## User Input Refiner
-***Purpose:*** Improves and standardizes the input so other agents or search tools can interpret it better.
-
-***Input:*** 
-```json
-{
-    "user_input": "..."
-}
-```
-***Output:*** 
-```json
-{
-    "corrected_original": "...",
-    "refined_text": "..."
-}
-```
-
----
-
-## Researcher
-***Purpose:*** Uses tools to do research on a given topic. 
-
-***Input:*** 
-```json
-{
-    "research_topic": "..."
-}
-```
-***Output:*** 
-```json
-{
-    "research_topic": "...",
-    "summary": "..."
-}
-```
-
----
-
-## Deep Researcher
-***Purpose:*** Does deep research on a given topic, using the researcher agent.
-
-***Input:*** 
-```json
-{
-    "research_topic": "..."
-}
-```
-***Output:*** 
-```json
-{
-    "answer": "...",
-}
-```
-
----
-
-## Agent
-***Purpose:*** 
-
-***Input:*** 
-```json
-
-```
-***Output:*** 
-```json
-
-```
-
----
+- test code_annotator on a more complex workflow
+    - maybe add to it a to annotate the inputs of agent schema
+- make the software engineer
+- make the coders
+- make a qa
+- make a tester
+- make the main workflow

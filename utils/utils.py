@@ -107,7 +107,7 @@ class Invokable(Protocol):
     def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
 
 # A function that invokes an LLM and handles errors
-def safe_invoke(llm: Invokable, *args, retry_interval: int = 5, max_retries: int = 5, raise_pydantic= False) -> BaseMessage:
+def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage:
     '''
     `safe_invoke` is a function that invokes an LLM and handles errors
 
@@ -193,7 +193,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated, Union, Dict
+from typing import TypedDict, Literal, List, Optional, Annotated, Union, Dict, Any
 from pydantic import BaseModel, Field
 from operator import add
 
@@ -521,8 +521,8 @@ if __name__ == '__main__':
         "name": "Fitness Program Generator",
         "nodes": [
             {
-                "name": "start_node",
-                "description": "Execution: CODE. Triggered when the user provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences) via a structured form.",
+                "name": "start",
+                "description": "",
                 "subgraph_id": None
             },
             {
@@ -556,14 +556,14 @@ if __name__ == '__main__':
                 "subgraph_id": None
             },
             {
-                "name": "end_node",
-                "description": "Execution: CODE. End of workflow.",
+                "name": "end",
+                "description": "",
                 "subgraph_id": None
             }
         ],
         "edges": [
             {
-                "source_name": "start_node",
+                "source_name": "start",
                 "target_name": "input_collection",
                 "description": "User provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences)."
             },
@@ -594,7 +594,7 @@ if __name__ == '__main__':
             },
             {
                 "source_name": "output_generation",
-                "target_name": "end_node",
+                "target_name": "end",
                 "description": "Workflow complete."
             }
         ],
