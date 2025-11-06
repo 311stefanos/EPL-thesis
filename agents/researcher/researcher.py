@@ -72,7 +72,7 @@ import os
 import re
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments
 from agents.researcher import prompts
 
 
@@ -212,31 +212,6 @@ summariser = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-# Function to parse tool arguments (when they come in additional_kwargs)
-def parse_tool_arguments(args):
-    # If the SDK already gave you a dict, use it
-    if isinstance(args, dict):
-        return args
-
-    s = str(args).strip()
-
-    # Normalize line endings
-    s = s.replace('\r\n', '\n')
-    # Replace any unescaped newlines with a space (JSON doesn't allow raw newlines)
-    #    (?<!\\)\n  = a newline not preceded by a backslash
-    s = re.sub(r'(?<!\\)\n', ' ', s)
-    # Remove other control characters that are illegal in JSON
-    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', s)
-    # Remove trailing commas before } or ]
-    s = re.sub(r',\s*([}\]])', r'\1', s)
-
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        # Optional: last-resort escape of remaining bare backslashes before quote/newline
-        s2 = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', s)
-        return json.loads(s2)  # will raise again if truly broken
-
 # Get today's date in a human-readable format
 def get_today_str() -> str:
     """Get current date formatted for display in prompts and outputs.

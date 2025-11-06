@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from time import sleep, time
 from pathlib import Path
 import inspect
+import json 
 import os
 
 
@@ -71,6 +72,31 @@ def will_tool_call(messages: list[BaseMessage], instruction_texts: list[str] = [
         tools_condition({'messages': messages}) == 'tools'
     )
 
+# Function to parse tool arguments (when they come in additional_kwargs)
+def parse_tool_arguments(args):
+    # If the SDK already gave you a dict, use it
+    if isinstance(args, dict):
+        return args
+
+    s = str(args).strip()
+
+    # Normalize line endings
+    s = s.replace('\r\n', '\n')
+    # Replace any unescaped newlines with a space (JSON doesn't allow raw newlines)
+    #    (?<!\\)\n  = a newline not preceded by a backslash
+    s = re.sub(r'(?<!\\)\n', ' ', s)
+    # Remove other control characters that are illegal in JSON
+    s = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F]', ' ', s)
+    # Remove trailing commas before } or ]
+    s = re.sub(r',\s*([}\]])', r'\1', s)
+
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        # Optional: last-resort escape of remaining bare backslashes before quote/newline
+        s2 = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', s)
+        return json.loads(s2)  # will raise again if truly broken
+    
 
 
 ''' Helpful LLM Classes/Functions '''
@@ -172,6 +198,13 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
             print(f'RateLimitError {cause}, retrying in {sleep_for} seconds...') if DEBUG else None
             retry_counter += 1
             sleep(sleep_for)
+
+        except ValueError as e:
+            error_dict: dict = e.args[0] if e.args else None
+            if error_dict.get('code', -1) == 500 and error_dict.get('message', '') == 'Internal Server Error':
+                print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
+                retry_counter += 1
+                sleep(retry_interval)
 
         # Something went wrong, raise it
         except Exception as e:
