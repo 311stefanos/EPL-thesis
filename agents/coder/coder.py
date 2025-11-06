@@ -1,24 +1,48 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2025-11-04
-- `description:` # TODO: add
+- `description:` The coder agent is used to implement any function. It can return the implemented code, along side possible function proposals to aid the implementation process.
 
 ## How to use
 1. Import the app. (`from agents.coder.coder import coder_app`)
 2. Input a dict with the following keys:
-    - # TODO: add
+    - `messages: List[Message]`: A list of messages. Should provide an empty list.
+    - `file_path: str`: The path of the file to implement the function.
+    - `function_name: str`: The name of the function to implement.
+    - `software_engineer_instructions: str`: The instructions from the software engineer.
+    - `previous_outputs: List[OutputSchema]`: A list of previous outputs. Used by the Software Engineer.
+    - `comments: List[str]`: A list of comments. Used by the Software Engineer.
 3. Invoke the app.
 4. Get the output dict with the following keys:
-    - # TODO: add
+    - `code: str`: The implemented code of the function.
+    - `proposals: List[FunctionProposal]`: A list of function proposals.
+        - `function_type: Literal["helper_function", "tool"]`
+        - `function_name: str`
+        - `docstring: str`
+        - `function_arguments: List[Argument]`
+            - `name: str`
+            - `type: str`
+        - `output: str`
+        - `justification: str`
 
 ## Usage
 ```python
 from agents.coder.coder import coder_app
-graph_input = { # TODO: add }
+graph_input = {
+    'messages': [],
+    'file_path': '../../creations/fitness_program_generator/fitness_program_generator.py',
+    'function_name': 'macro_calculation',
+    'software_engineer_instructions': 'Implement the macro_calculation function.',
+    'previous_outputs': [],
+    'comments': []
+}
 
 response = coder_app.invoke(graph_input)
 
-# response = { # TODO: add }
+# response = {
+#       'code': '<implemented code>',
+#       'proposals': []
+# }
 ```
 """
 
