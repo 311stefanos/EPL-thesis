@@ -87,6 +87,7 @@ MODEL_NAME = os.getenv('MODEL_NAME')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
+MAGENTA = '\033[95m' # TOOLS
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
 
@@ -166,6 +167,7 @@ def think_tool(reflection: str) -> str:
     Returns:
         Confirmation that reflection was recorded for decision-making
     """
+    print_function_name(colour= MAGENTA) if DEBUG else None
     return f'Reflection recorded: {reflection}'
 
 # Tavily, to search and gather information from the web
@@ -187,6 +189,7 @@ def duckduckgo_search(query: str) -> str:
     '''
     Search the web with duckduckgo for information on a topic.
     '''
+    print_function_name(colour= MAGENTA) if DEBUG else None
     search = DuckDuckGoSearchResults()
     return search.run(query)
 

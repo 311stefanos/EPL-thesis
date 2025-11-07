@@ -83,6 +83,7 @@ DEBUG = os.getenv('DEBUG')
 
 BLUE = '\\033[94m' # INFO
 RED = '\\033[91m' # ERR
+MAGENTA = '\\033[95m' # TOOLS
 GREEN = '\\033[92m' # REST
 RESET = '\\033[0m'
 

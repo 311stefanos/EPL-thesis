@@ -28,9 +28,12 @@ USER_APPROVALS = ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '']
 
 ''' Helpful General Functions '''
 # Print the name of the function that is being executed
-def print_function_name():
+def print_function_name(colour: str= '\033[93m') -> str:
     '''
     `print_function_name` is a function that prints the name of the function that is being executed
+
+    `Args:`
+        colour (str): The colour of the text
 
     `Returns:`
         (str) The name of the function that is being executed
@@ -38,7 +41,7 @@ def print_function_name():
     frame = inspect.currentframe().f_back
     func_name = frame.f_code.co_name
     filename = os.path.splitext(os.path.basename(frame.f_code.co_filename))[0]
-    print(f'\n\033[93m[NODE]\033[0m {filename}/{func_name}')
+    print(f'\n{colour}[NODE]\033[0m {filename}/{func_name}')
 
 # Check if the last message will or should call a tool
 def will_tool_call(messages: list[BaseMessage], instruction_texts: list[str] = [], actually_called: bool= False) -> bool:

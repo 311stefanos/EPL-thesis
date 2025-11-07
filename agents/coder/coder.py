@@ -84,6 +84,7 @@ DEBUG = os.getenv('DEBUG')
 
 BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
+MAGENTA = '\033[95m' # TOOLS
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
 
@@ -150,6 +151,7 @@ def output_tool(code: str, proposals: Optional[List[FunctionProposal]]) -> Outpu
     '''
     Submit the final single-function implementation (and optional function/tool proposals).
     '''
+    print_function_name(colour= MAGENTA) if DEBUG else None
     return OutputSchema(code= code, proposals= proposals)
 
 # List of tools
