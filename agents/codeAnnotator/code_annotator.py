@@ -49,14 +49,16 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from typing import Literal, List, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal, List, Union, Optional
 
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
 import traceback
+import json
 import os
+import re
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, USER_APPROVALS
@@ -148,6 +150,56 @@ class ToolFunctions(BaseModel): # Used by the tool_function_generator
     def __str__(self):
         return '\n'.join([f'\n{i}) {function.justification}\n@tool\n{function}' for i, function in enumerate(self.tool_functions, start= 1)])
 
+# For the LLM Modifier Engineer
+class LLMProposalsDict(BaseModel):
+    llm_name: str = Field(description= 'The name of the LLM as is in the code.')
+    with_structured_output: Optional[str] = Field(description= 'The strucutured output of the LLM. Must be a valid schema.', default= None)
+    bind_tools: Optional[List[str]] = Field(description= 'The tools to bind to the LLM.', default= None)
+    temperature: float = Field(description= 'The temperature of the LLM.', le= 1, ge= 0)
+
+    def to_string(self):
+        modifier = ''
+        tools = output = ''
+        if self.bind_tools: tools = ', '.join(self.bind_tools).replace('"', '').replace("'", '')
+        if self.with_structured_output: output = self.with_structured_output.replace('"', '').replace("'", '')
+
+        if tools and output:
+            modifier = f'.bind_tools([{tools}, {output}])'
+        elif tools:
+            modifier = f'.bind_tools([{tools}])'
+        elif output:
+            modifier = f'.with_structured_output({output})'
+
+        return f'{self.llm_name} = myChatOpenAI(\n\ttemperature= {self.temperature}\n){modifier}\n'
+    
+class LLMProposalList(BaseModel): # Used by the tool_or_output_generator
+    comments: str = Field(description= 'The comments as given from the LLM.')
+    llm_proposals: List[LLMProposalsDict] = Field(description= 'The LLM proposals as given from the LLM.')
+
+    def get_all_llm_names(self):
+        if not self.llm_proposals or self.llm_proposals == []:
+            return []
+        return [llm_proposal.llm_name for llm_proposal in self.llm_proposals]
+    
+    def get_all_tool_names(self):
+        if not self.llm_proposals or self.llm_proposals == []:
+            return []
+        tools = [llm_proposal.bind_tools for llm_proposal in self.llm_proposals if llm_proposal.bind_tools]
+        return [tool for tool_list in tools for tool in tool_list if tool]
+    
+    def get_all_schema_names(self):
+        if not self.llm_proposals or self.llm_proposals == []:
+            return []
+        return [llm_proposal.with_structured_output for llm_proposal in self.llm_proposals if llm_proposal.with_structured_output]
+
+    def to_string(self):
+        return f'Comments: {self.comments}\n\n' + '\n'.join([f'{llm_proposal.to_string()}' for llm_proposal in self.llm_proposals])
+    
+    def to_code(self):
+        return '\n'.join([f'{llm_proposal.to_string()}' for llm_proposal in self.llm_proposals]) + '\n\n\n\n'
+
+
+
 ''' Input Schema '''
 class InputSchema(MessagesState):
     file_path: str = Field(description= 'The current file path as given from the user.')
@@ -155,12 +207,13 @@ class InputSchema(MessagesState):
     workflow: WorkflowBundle = Field(description= 'The proposed workflow as given from the workflow engineer.')
 
     step_changes: Union[    
-        Docstrings, 
+        Docstrings,
+        Schemas,
         HelpfulFunctions,
         ToolFunctions,
-        Schemas,
+        LLMProposalList,
         None
-    ] = Field(description= 'The step changes as given from the LLM at each step.')
+    ] = Field(description= 'The step changes as given from the LLM at each step.', default= None)
 
 
 
@@ -181,13 +234,17 @@ tool_function_generator = myChatOpenAI(
     temperature= 0.2
 ).with_structured_output(ToolFunctions)
 
+tool_or_output_generator = myChatOpenAI(
+    temperature= 0.8
+).with_structured_output(LLMProposalList)
+
 
 
 ''' Helpful Functions '''
 # Reads the contents of state['file_path']
-def read_state_file(state: InputSchema) -> str:
+def _read_state_file(state: InputSchema) -> str:
     '''
-    `read_state_file` reads the contents of state['file_path']
+    `_read_state_file` reads the contents of state['file_path']
     
     `Args:`
         state (InputSchema): The state of the agent. Must have the key 'file_path'.
@@ -198,6 +255,30 @@ def read_state_file(state: InputSchema) -> str:
     with open(state['file_path'], 'r', encoding='utf-8') as f:
         code = f.read()
     return code
+
+# To get the correct section of the code
+def _slice_section(code: str, start_label: str, end_labels: list[str]) -> str:
+    q = r'["\']{3}'
+    ws = r'[ \t]*'
+    nl = r'(?:\r?\n|$)'
+
+    # Get the start line
+    start_re = re.compile(rf'{q}{ws}{start_label}{ws}{q}{ws}{nl}', re.IGNORECASE)
+    m = start_re.search(code)
+    if not m:
+        return ''  # section not found
+    
+    # Get the end lines
+    end_res = [re.compile(rf'{q}{ws}{lbl}{ws}{q}{ws}{nl}', re.IGNORECASE) for lbl in end_labels]
+    s = m.end()
+    e = len(code)
+    # For each end line, get the closest start
+    for er in end_res:
+        em = er.search(code, s)
+        if em:
+            e = min(e, em.start())
+    return code[s:e]
+
 
 
 """ Nodes """
@@ -217,7 +298,7 @@ def generate_docstrings(state: InputSchema) -> InputSchema:
         prompt = prompts.ANNOTATE_NODES_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= read_state_file(state),
+            code_structure= _read_state_file(state),
             history= history
         )
 
@@ -255,7 +336,7 @@ def update_docstrings(state: InputSchema) -> InputSchema:
         code = f.read()
 
     # Get the section of the code which contains the nodes (between ''' Nodes ''' and ''' Conditional Functions ''' or ''' Graph ''' when conditional functions don't exist)
-    nodes = code.split("''' Nodes '''")[-1].split("''' Conditional Functions '''")[0].split("''' Graph '''")[0]
+    nodes = _slice_section(code, 'Nodes', ['Conditional Functions', 'Graph'])
 
     # Build the new node block, with the docstrings
     new_nodes = []
@@ -315,7 +396,7 @@ def propose_schemas(state: InputSchema) -> InputSchema:
         prompt = prompts.PROPOSE_SCHEMAS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= read_state_file(state),
+            code_structure= _read_state_file(state),
             history= history
         )
 
@@ -352,7 +433,7 @@ def update_schemas(state: InputSchema) -> InputSchema:
         code = f.read()
 
     # Get the section of the code which contains the schemas
-    old_schemas = code.split('""" Schemas """')[-1].split("''' Tools '''")[0]
+    old_schemas = _slice_section(code, 'Schemas', ['Tools'])
 
     # Read the schemas, placing the AgentSchema last
     rest_schemas = [str(schema) for schema in schemas if schema.schema_name != 'AgentSchema']
@@ -386,7 +467,7 @@ def propose_helpful_functions(state: InputSchema) -> InputSchema:
         prompt = prompts.ADD_HELPFUL_FUNCTIONS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= read_state_file(state),
+            code_structure= _read_state_file(state),
             history= history
         )
 
@@ -451,7 +532,7 @@ def propose_tool_functions(state: InputSchema) -> InputSchema:
         prompt = prompts.ADD_TOOL_FUNCTIONS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= read_state_file(state),
+            code_structure= _read_state_file(state),
             history= history
         )
 
@@ -491,7 +572,7 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     # Parse and relace the tool function section
     new_functions = ['@tool\n' + str(function) for function in tool_functions]
     new_functions = '\n\n'.join(new_functions)
-    code = code.replace("''' Tools '''", f"''' Tools '''\n{new_functions}")
+    code = code.replace("Tools", f"''' Tools '''\n{new_functions}")
 
     # Update the file
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -501,6 +582,116 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     return {'messages': remove_messages, 'step_changes': None}
 
+''' bind_tools or with_structured_output Functions '''
+# The node that reads the annotated code, and uses the necessary bind_tools or with_structured_output methods
+def propose_llm_modifiers(state: InputSchema) -> InputSchema:
+    '''
+    This node reads the code structure up to now and proposes any needed bind_tools or with_structured_output methods. Gets its data mainly from the annotated code.
+    '''
+    print_function_name() if DEBUG else None
+
+    try:
+        # prompt
+        history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
+        code_structure = _read_state_file(state)
+        # Get the LLM definitions
+        llm_section = _slice_section(code_structure, 'LLM',   ['Helpful Functions', 'Nodes'])
+        llm_definitions = [line.split(' = ')[0] for line in re.findall(r'(\w+) = myChatOpenAI\(', llm_section)]
+        # Get the tool names
+        tool_section = _slice_section(code_structure, 'Tools', ['LLM', 'Nodes']).split('\n')
+        tool_names = [line.split('def ')[1].split('(')[0] for line in tool_section if line.startswith('def ')]
+        # Get the schema names
+        schema_section = _slice_section(code_structure, 'Schemas', ['Tools', 'LLM']).split('\n')
+        schema_names = [line.split('class ')[1].split('(')[0] for line in schema_section if line.startswith('class ')]
+        schema_names = [schema_name for schema_name in schema_names if schema_name != 'AgentSchema']
+
+        prompt = prompts.ADD_LLM_METHODS_PROMPT.format(
+            clarified_user_input= state['clarified_user_input'],
+            # workflow= state['workflow'],
+            code_structure= code_structure,
+            history= history,
+            llm_definitions= ', '.join(llm_definitions),
+            tool_names= ', '.join(tool_names),
+            schema_names= ', '.join(schema_names)
+        )
+
+        # call the LLM
+        llm_method_proposals: LLMProposalList = safe_invoke(tool_or_output_generator, [SystemMessage(content= prompt)])
+
+        # Check if the proposed LLMs match the LLMs in the code
+        proposed_llms = llm_method_proposals.get_all_llm_names()
+        llm_not_defined, llm_not_proposed = [llm for llm in proposed_llms if llm not in llm_definitions], [llm for llm in llm_definitions if llm not in proposed_llms]
+        if llm_not_defined or llm_not_proposed:
+            ndef = nprop = ''
+            if llm_not_defined:
+                ndef = f' The following defined LLMs were not returned by the agent: {", ".join(llm_not_defined)}.'
+            if llm_not_proposed:
+                nprop = f' The following LLMs were proposed by the agent, but they are not defined in the code: {", ".join(llm_not_proposed)}.'
+            
+            print(f'{RED}[NODE] [WARNING]{RESET}{ndef}{nprop}') if DEBUG else None
+            human_message = HumanMessage(content= f'You did the following errors:{ndef}{nprop}')
+            return {'messages': [AIMessage(content= json.dumps(llm_method_proposals.model_dump())), human_message], 'step_changes': llm_method_proposals}
+        
+        # Check whether the proposed with_structured_output are in the code
+        proposed_schema_bindings = llm_method_proposals.get_all_schema_names()
+        wrong_schemas = [schema for schema in proposed_schema_bindings if schema not in schema_names]
+        if wrong_schemas:
+            w = ', '.join(wrong_schemas)
+            print(f'{RED}[NODE] [WARNING]{RESET} The agent added an undefined schema ({w})') if DEBUG else None
+            human_message = HumanMessage(content= f'You added an undefined schema ({w})')
+            return {'messages': [AIMessage(content= json.dumps(llm_method_proposals.model_dump())), human_message], 'step_changes': llm_method_proposals}
+        
+        
+        # Check whether the proposed bind_tools are in the code
+        proposed_tool_bindings = llm_method_proposals.get_all_tool_names()
+        wrong_tools = [tool for tool in proposed_tool_bindings if tool not in tool_names and tool not in schema_names]
+        if wrong_tools:
+            w = ', '.join(wrong_tools)
+            print(f'{RED}[NODE] [WARNING]{RESET} The agent added an undefined tool ({w})') if DEBUG else None
+            human_message = HumanMessage(content= f'You added an undefined tool ({w})')
+            return {'messages': [AIMessage(content= json.dumps(llm_method_proposals.model_dump())), human_message], 'step_changes': llm_method_proposals}
+
+        # All good
+        # Ask the user to confirm
+        print(f'{GREEN}[NODE] [LLM METHODS PROPOSAL]{RESET} \n{llm_method_proposals.to_string()}')
+        
+        user_input = input(f'\n{GREEN}[NODE] [CONFIRMATION]{RESET} Is this okay, if not please insert your request (y/request) > ') 
+        new_messages = [AIMessage(content= json.dumps(llm_method_proposals.model_dump())), HumanMessage(content= user_input)]
+
+        # Return the new messages and the tool functions proposed.
+        return {'messages': new_messages, 'step_changes': llm_method_proposals}
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return state
+    
+# Updates the LLM definitions
+def update_llm_modifiers(state: InputSchema) -> InputSchema:
+    '''
+    This node reads the code structure up to now and updates the LLM definitions in the code with the necessary bind_tools or with_structured_output methods.
+    '''
+    print_function_name() if DEBUG else None
+
+    # Get the file path and the proposed tool functions
+    file_path = state['file_path']
+    proposed_llm_definitions = state['step_changes'].to_code()
+
+    # Read the code
+    with open(file_path, 'r') as f:
+        code = f.read()
+
+    # Parse and relace the tool function section
+    old_code = _slice_section(code, 'LLM', ['Helpful Functions', 'Nodes'])
+    code = code.replace(old_code, proposed_llm_definitions)
+
+    # Update the file
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(code)
+
+    # Remove all messages and step changes
+    remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
+    return {'messages': remove_messages, 'step_changes': None}
 
 
 
@@ -520,7 +711,7 @@ def after_docstrings(state: InputSchema) -> Literal['generate_docstrings', 'upda
         return 'generate_docstrings'
     
     # User approval
-    if last_user_message.lower()  in USER_APPROVALS:
+    if last_user_message.lower() in USER_APPROVALS:
         return 'update_docstrings'
     
     return 'generate_docstrings'
@@ -540,7 +731,7 @@ def after_schemas(state: InputSchema) -> Literal['propose_schemas', 'update_sche
         return 'propose_schemas'
     
     # User approval
-    if last_user_message.lower()  in USER_APPROVALS:
+    if last_user_message.lower() in USER_APPROVALS:
         return 'update_schemas'
     
     return 'propose_schemas'
@@ -560,7 +751,7 @@ def after_helpful_functions(state: InputSchema) -> Literal['propose_helpful_func
         return 'propose_helpful_functions'
     
     # User approval
-    if last_user_message.lower()  in USER_APPROVALS:
+    if last_user_message.lower() in USER_APPROVALS:
         return 'update_helpful_functions'
     
     return 'propose_helpful_functions'
@@ -580,17 +771,37 @@ def after_tool_functions(state: InputSchema) -> Literal['propose_tool_functions'
         return 'propose_tool_functions'
     
     # User approval
-    if last_user_message.lower()  in USER_APPROVALS:
+    if last_user_message.lower() in USER_APPROVALS:
         return 'update_tool_functions'
     
     return 'propose_tool_functions'
+
+# The conditional logic is used to determine what to do after llm changes
+def after_llm_modifiers(state: InputSchema) -> Literal['propose_llm_modifiers', 'update_llm_modifiers']:
+    '''
+    This conditional function is used to determine what to do after llm changes.
+    If the user approves, then the llm changes are updated. Else the llm changes are generated again.
+    '''
+    print_function_name() if DEBUG else None
+
+    try:
+        # If an error occured and the user did not provide any input, go back
+        last_user_message = state['messages'][-1].content
+    except IndexError:
+        return 'propose_llm_modifiers'
+    
+    # User approval
+    if last_user_message.lower() in USER_APPROVALS:
+        return 'update_llm_modifiers'
+    
+    return 'propose_llm_modifiers'
 
 
 
 ''' Graph '''
 code_annotator_graph = StateGraph(InputSchema)
 
-# Logic: Docstrings -> Schemas -> Helpful Functions -> Tool Functions
+# Logic: Docstrings -> Schemas -> Helpful Functions -> Tool Functions -> LLM Modifiers
 code_annotator_graph.add_node('generate_docstrings', generate_docstrings)
 code_annotator_graph.add_node('update_docstrings', update_docstrings)
 code_annotator_graph.add_node('propose_schemas', propose_schemas)
@@ -599,8 +810,10 @@ code_annotator_graph.add_node('propose_helpful_functions', propose_helpful_funct
 code_annotator_graph.add_node('update_helpful_functions', update_helpful_functions)
 code_annotator_graph.add_node('propose_tool_functions', propose_tool_functions)
 code_annotator_graph.add_node('update_tool_functions', update_tool_functions)
+code_annotator_graph.add_node('propose_llm_modifiers', propose_llm_modifiers)
+code_annotator_graph.add_node('update_llm_modifiers', update_llm_modifiers)
 
-# Start with docstrings
+# Start -> Docstrings
 code_annotator_graph.add_edge(START, 'generate_docstrings')
 code_annotator_graph.add_conditional_edges(
     'generate_docstrings',
@@ -630,7 +843,7 @@ code_annotator_graph.add_conditional_edges(
         'update_helpful_functions': 'update_helpful_functions'
     }
 )
-# Helpful Functions -> Tool Functions -> End
+# Helpful Functions -> Tool Functions
 code_annotator_graph.add_edge('update_helpful_functions', 'propose_tool_functions')
 code_annotator_graph.add_conditional_edges(
     'propose_tool_functions',
@@ -640,7 +853,17 @@ code_annotator_graph.add_conditional_edges(
         'update_tool_functions': 'update_tool_functions'
     }
 )
-code_annotator_graph.add_edge('update_tool_functions', END)
+code_annotator_graph.add_edge('update_tool_functions', 'propose_llm_modifiers')
+# Tool Functions -> LLM Modifiers -> END
+code_annotator_graph.add_conditional_edges(
+    'propose_llm_modifiers',
+    after_llm_modifiers,
+    {   # Not needed, for clarity
+        'propose_llm_modifiers': 'propose_llm_modifiers',
+        'update_llm_modifiers': 'update_llm_modifiers'
+    }
+)
+code_annotator_graph.add_edge('update_llm_modifiers', END)
 
 code_annotator_app = code_annotator_graph.compile(checkpointer= MemorySaver())
 
