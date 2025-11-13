@@ -50,7 +50,7 @@ response = coder_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage
+from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage, ToolMessage
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 
@@ -147,15 +147,18 @@ tavily_search = TavilySearch(
 
 # Output tool. Called when the agent is done, and ends the workflow.
 @tool(description= 'Submit the final single-function implementation (and optional function/tool proposals)', args_schema= OutputSchema)
-def output_tool(code: str, proposals: Optional[List[FunctionProposal]]) -> OutputSchema:
+def output_tool(code: str, proposals: Optional[List[FunctionProposal]]|str = None) -> OutputSchema:
     '''
     Submit the final single-function implementation (and optional function/tool proposals).
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
+    if proposals and proposals in ['None', '[]']:
+        proposals = None
+        
     return OutputSchema(code= code, proposals= proposals)
 
 # List of tools
-tools = [tavily_search] # , github_tool, stackoverflow_tool
+tools = [tavily_search, output_tool] # , github_tool, stackoverflow_tool
 # Dictionary of tools: tool name -> tool
 tools_by_name = {tool.name: tool for tool in tools}
 
@@ -237,6 +240,10 @@ def coder_node(state: InputSchema) -> InputSchema:
     This node calls the coder agent to implement the function. It has access to tools, and prior knowledge.
     '''
     print_function_name() if DEBUG else None
+
+    last_message = state['messages'][-1]
+    if isinstance(last_message, ToolMessage):
+        print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {last_message}') if DEBUG else None
 
     try:
         # prompt
