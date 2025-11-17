@@ -437,7 +437,7 @@ input_refiner_graph.add_conditional_edges(
 )
 input_refiner_graph.add_edge('parse_output', END)
 
-input_refiner_app = input_refiner_graph.compile(checkpointer= MemorySaver())
+input_refiner_app = input_refiner_graph.compile()
 
 
 

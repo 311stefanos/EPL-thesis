@@ -106,8 +106,8 @@ Your job is to
 2) If you think you can confidently implement the function, use the `output_tool` tool.
 3) If you think you cannot confidently implement the function, use the `tavily_search` tool or respond with your thought process using plain language.
 4) Use the provided tool code structure as a reference to guide the implementation. You may make small necessary changes to fit your implementation.
-5) You may use the method `with_structured_output` for an LLM, in order to have a structured response. example: safe_invoke(llm.with_structured_output(ExistingSchema), <input>)
-    - IMPORTANT: You cannot use the `with_structured_output` method if the LLM is bound to tools. If so, make a the chema a tool. Can request the tool, or bind it in the function.
+5) You should respect the `.with_structured_output` and `.bind_tools` methods of the LLM you are using.
+6) Do not import anything. You may use the any library you want, just ass a comment such as # TODO: add import <library_name>.
 
 # Tools
 You have the following tools available to you:

@@ -13,6 +13,7 @@ from pathlib import Path
 import inspect
 import json 
 import os
+import re
 
 
 
@@ -189,9 +190,8 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
             # Or becuase of free-models-per-min
             elif 'Rate limit exceeded:' in error.get('message', '') and 'free-models-per-min' in error.get('message', ''):
                 cause = '(Rate limit per minute exceeded)'
-                # Until the next minute
-                reset_time = int(error['metadata']['headers']['X-RateLimit-Reset'])
-                sleep_for = (reset_time - int(time() * 1000)) / 1000
+                # UFor a minute
+                sleep_for = 60
             # TODO: for the day
             # Or fallback
             else: 

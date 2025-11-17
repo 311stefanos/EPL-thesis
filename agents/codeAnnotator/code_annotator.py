@@ -865,7 +865,7 @@ code_annotator_graph.add_conditional_edges(
 )
 code_annotator_graph.add_edge('update_llm_modifiers', END)
 
-code_annotator_app = code_annotator_graph.compile(checkpointer= MemorySaver())
+code_annotator_app = code_annotator_graph.compile()
 
 
 

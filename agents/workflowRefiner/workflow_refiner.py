@@ -407,7 +407,7 @@ workflow_refiner_graph.add_conditional_edges(
 workflow_refiner_graph.add_edge('tools', 'clarify')
 workflow_refiner_graph.add_edge('create_workflow', END)
 
-workflow_refiner_app = workflow_refiner_graph.compile(checkpointer= MemorySaver())
+workflow_refiner_app = workflow_refiner_graph.compile()
 
 
 

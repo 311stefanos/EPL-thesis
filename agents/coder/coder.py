@@ -61,7 +61,7 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Annotated
+from typing import Literal, List, Optional, Annotated, Union
 from pydantic import BaseModel, Field
 from operator import add
 
@@ -146,8 +146,8 @@ tavily_search = TavilySearch(
 ).as_tool()
 
 # Output tool. Called when the agent is done, and ends the workflow.
-@tool(description= 'Submit the final single-function implementation (and optional function/tool proposals)', args_schema= OutputSchema)
-def output_tool(code: str, proposals: Optional[List[FunctionProposal]]|str = None) -> OutputSchema:
+@tool(description= 'Submit the final single-function implementation (and optional function/tool proposals)')
+def output_tool(code: str, proposals: Optional[Union[List[FunctionProposal],str]] = None) -> OutputSchema:
     '''
     Submit the final single-function implementation (and optional function/tool proposals).
     '''
