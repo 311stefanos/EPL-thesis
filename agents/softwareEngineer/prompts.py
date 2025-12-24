@@ -241,6 +241,7 @@ CODE_ISSUES_SECTION = '''
 
 
 
+# TODO: maybe add a `# Previous identified issues` section
 LAST_CHECK_PROMPT = '''
 You are the last coder reviewing a single Python file produced by a team.
 

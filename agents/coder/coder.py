@@ -168,13 +168,11 @@ tools_by_name = {tool.name: tool for tool in tools}
 brainstormer = myChatOpenAI(
     temperature= 0.8,
     model= 'qwen/qwen3-coder:free'
-    # 'qwen/qwen3-235b-a22b:free'
 )
 
 coder = myChatOpenAI(
     temperature= 0.5,
-    # model= 'qwen/qwen3-235b-a22b:free',
-    # 'qwen/qwen3-235b-a22b:free'
+    model= 'qwen/qwen3-coder:free',
 ).bind_tools(tools + [output_tool])
 
 
