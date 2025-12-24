@@ -209,6 +209,10 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
                 retry_counter += 1
                 sleep(retry_interval)
 
+        except KeyboardInterrupt as e:
+            print(f'{e.__class__.__name__}, exiting...') if DEBUG else None
+            exit()
+
         # Something went wrong, raise it
         except Exception as e:
             raise e
@@ -263,7 +267,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 
 
 \"\"\" Schemas \"\"\"
-# TODO: Add Schemas
+# TODO: Add Schemas (if needed)
 ''' General Schemas '''
 
 ''' Agent Schema '''
@@ -273,18 +277,18 @@ class AgentSchema(...): # TODO: Add parent class (e.g., BaseModel, TypedDict, et
 
 
 ''' Tools '''
-# TODO: Add Tools
+# TODO: Add Tools (if needed)
 
 
 
 ''' LLM '''
-# TODO: Add/Change LLMs (one per llm calling function)
+# TODO: Add/Change LLMs (one per llm calling function) (if needed)
 {llms}
 
 
 
 ''' Helpful Functions '''
-# TODO: Add Helpful Functions
+# TODO: Add Helpful Functions (if needed)
 
 
 
@@ -297,7 +301,7 @@ class AgentSchema(...): # TODO: Add parent class (e.g., BaseModel, TypedDict, et
 
 
 ''' Graph '''
-{agent_name}_graph = StateGraph(AgentSchema) # TODO: change
+{agent_name}_graph = StateGraph(AgentSchema)
 
 {add_nodes}
 
@@ -327,7 +331,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {{
-        'recursion_limit': 100, # TODO: change
+        'recursion_limit': 100,
         'configurable': {{
             'user_id': '{directory_name}',
             'run_name': '{directory_name}',

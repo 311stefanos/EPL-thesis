@@ -173,7 +173,7 @@ brainstormer = myChatOpenAI(
 
 coder = myChatOpenAI(
     temperature= 0.5,
-    model= 'qwen/qwen3-coder:free',
+    # model= 'qwen/qwen3-235b-a22b:free',
     # 'qwen/qwen3-235b-a22b:free'
 ).bind_tools(tools + [output_tool])
 

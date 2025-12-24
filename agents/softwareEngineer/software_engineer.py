@@ -79,17 +79,29 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Software Engineer') if DEBUG els
 
 """ Schemas """
 ''' General Schemas '''
+class CoderSchema(CoderOutputSchema):
+    approved: bool = Field(description= 'Whether the coder has approved the code.', default= False)
+    disapproved: bool = Field(description= 'Whether the coder has disapproved the code.', default= False)
+
+    def approve(self) -> None:
+        self.approved = True
+        self.disapproved = False
+
+    def disapprove(self) -> None:
+        self.disapproved = True
+        self.approved = False
+
 class CoderComment(BaseModel):
     comment: Optional[str] = Field(description= 'The comments from the software engineer.', default= None)
 
-class Assignements(BaseModel):
-    function_name: str = Field(description= 'The name of the function for the coder to implement.')
-    special_instructions: str = Field(description= 'The comments from the software engineer.')    
+class CodeIssues(BaseModel):
+    general_comments: Optional[str] = Field(description= 'General comments for the whole code base.', default= None)
+    issue_comments: Optional[List[Optional[str]]] = Field(description= 'The comments for each issue.', default= [])
+    issues: List[str] = Field(description= 'The code issues.', default= [])  
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
     file_path: str = Field(description= 'The path to the file.')
-    code_issues: Optional[str] = Field(description= 'The code issues the lead software engineer found.')
 
 
 
@@ -100,8 +112,9 @@ class InputSchema(MessagesState):
 
 
 ''' Global Variables '''
-coders: Dict[str, CoderOutputSchema] = {}
+coders: Dict[str, CoderSchema] = {}
 comments: Dict[str, CoderComment] = {}
+code_issues: CodeIssues = CodeIssues()
 
 
 
@@ -133,13 +146,15 @@ def write_code_to_file(file_path: str, code: str) -> str:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(code)
 
+        print(f'{BLUE}[TOOL] [INFO] [OVERWRITE]{RESET} The file {file_path} was overwritten successfully.') if DEBUG else None
         return f'[GOOD] The file {file_path} was overwritten successfully.'
 
     except Exception as e:
+        print(f'{RED}[TOOL] [ERROR] [OVERWRITE]{RESET} The file {file_path} could not be overwritten due to the error: {e}') if DEBUG else None
         return f'[ERROR] The file {file_path} could not be overwritten due to the error: {e}'
 
 @tool
-def call_coder(function_name: str, special_instructions: str, file_path: str) -> Dict[str, CoderOutputSchema]:
+def call_coder(function_name: str, special_instructions: str, file_path: str) -> Dict[str, CoderSchema]:
     '''
     `call_coder` calls a coder to implement the given function.
 
@@ -149,12 +164,22 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         file_path (str): The path to the file to implement the function in.
 
     `Returns:`
-        (Dict[str, CoderOutputSchema]): {function_name: CoderOutputSchema}
+        (Dict[str, CoderSchema]): {function_name: CoderSchema}
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
 
+    with open(file_path, 'r', encoding='utf-8') as f:
+        code = f.read()
+    
+    if f'def {function_name}(' not in code:
+        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The definition of the function could not be found in the file hence a coder cannot complete the task. {function_name}') if DEBUG else None
+        return {
+            'code': 'The definition of the function could not be found in the file hence a coder cannot complete the task. You should define the function first.', 
+            'proposals': None
+        }
+
     if function_name not in coders:
-        coders[function_name] = CoderOutputSchema(code= '', proposals= None)
+        coders[function_name] = CoderSchema(code= '', proposals= None, approved= False, disapproved= False)
         comments[function_name] = CoderComment()
 
     args: CoderInputSchema = {
@@ -182,7 +207,7 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
     
     print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
 
-    coders[function_name] = CoderOutputSchema(code= response['code'], proposals= response['proposals'])
+    coders[function_name] = CoderSchema(code= response['code'], proposals= response['proposals'], approved= False, disapproved= False)
 
     return {function_name: coders[function_name]}
 
@@ -203,10 +228,13 @@ def disapprove_and_comment_on_coder_code(function_name: str, comment: str) -> st
 
     all_keys = set(list(coders.keys()) + list(comments.keys()))
     if function_name not in all_keys:
+        print(f'{RED}[TOOL] [ERROR] [COMMENT]{RESET} The coder for function {function_name} does not exist.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not exist.'
 
+    coders[function_name].disapprove()
     comments[function_name].comment = comment
 
+    print(f'{BLUE}[TOOL] [INFO] [COMMENT]{RESET} Commented on the coder\'s output for function {function_name}: {comment}') if DEBUG else None
     return f'[SUCCESS] Commented on the coder\'s output for function {function_name}: {comment}\n\nNow ready to be called again and understand the incorrect code.'
     
 @tool
@@ -226,10 +254,12 @@ def approve_function_code(file_path: str, function_name: str) -> str:
 
     all_keys = set(list(coders.keys()) + list(comments.keys()))
     if function_name not in all_keys:
+        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not exist.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not exist.'
     
     previous_code: str = coders[function_name].code
     if not previous_code:
+        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not have a coder implementation.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not have a previous implementation.'
     
     # Replace the code in the file
@@ -238,22 +268,31 @@ def approve_function_code(file_path: str, function_name: str) -> str:
     
     # Get the code sections from the function onwards
     code_section: str = f'def {function_name}(' + f'def {function_name}('.join(code.split(f'def {function_name}(')[1:])
+    code_section = code_section.split("''' Conditional Functions '''")[0].split("''' Graph '''")[0].strip()
+    code_section = code_section.split('""" Conditional Functions """')[0].split('""" Graph """')[0].strip()
     for line in code_section.split('\n')[1:]:
         if line.startswith('def ') and line.endswith(':'):
             code_section = code_section.split(line)[0].strip()
             break
 
     if not code_section:
+        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not have a code section in the file.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not have a code section in the file.'
+    
     code = code.replace(code_section, previous_code)
+
+    print(f'{BLUE}[TOOL] [OLD SECTION]{RESET} {code_section}') if DEBUG else None
+    print(f'{BLUE}[TOOL] [NEW SECTION]{RESET} {previous_code}') if DEBUG else None
+
+    # input('\nPress enter to continue...')
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
     # Remove the function from the coders and comments
-    del coders[function_name]
-    del comments[function_name]
+    coders[function_name].approve()
 
+    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Approved the coder\'s output for function {function_name}') if DEBUG else None
     return f'[SUCCESS] Approved the coder\'s output for function {function_name}.\n\nNow ready to be called again and understand the code.'
 
 @tool
@@ -278,10 +317,11 @@ def approve_function_proposals(approved_function_proposals: List[FunctionProposa
     proposed_functions = [str(function_proposal) for function_proposal in approved_function_proposals if function_proposal.function_type == 'helper_function']
 
     code = read_state_file({'file_path': file_path})
-    code = code.replace('# TODO: Add Tools', '\n\n'.join(proposed_tools) + '\n\n# TODO: Add Tools')
-    code = code.replace('# TODO: Add Helpful Functions', '\n\n'.join(proposed_functions) + '\n\n# TODO: Add Helpful Functions')
+    code = code.replace('# TODO: Add Tools (if needed)', '\n\n'.join(proposed_tools) + '\n\n# TODO: Add Tools (if needed)')
+    code = code.replace('# TODO: Add Helpful Functions (if needed)', '\n\n'.join(proposed_functions) + '\n\n# TODO: Add Helpful Functions (if needed)')
     write_code_to_file.invoke({"file_path": file_path, "code": code}) 
 
+    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Approved the coder\'s function proposals: {[afp.function_name for afp in approved_function_proposals]}') if DEBUG else None
     return f'[SUCCESS] Approved the coder\'s function proposals: {[afp.function_name for afp in approved_function_proposals]}.\n\nThe file contents have been updated.'
 
 @tool
@@ -295,7 +335,36 @@ def submit_final_code(file_path: str) -> None:
     print_function_name(colour= MAGENTA) if DEBUG else None
     print(f'{BLUE}[NODE] [INFO] [SUBMIT]{RESET} {file_path} implemented successfully.') if DEBUG else None
 
-tools = [write_code_to_file, call_coder, disapprove_and_comment_on_coder_code, approve_function_code, approve_function_proposals, submit_final_code]
+@tool
+def code_issue_resolved(resolved_issues: List[str]) -> str:
+    '''
+    `code_issue_resolved` resolves a code issue that was proposed by the Quality Assurance team.
+
+    `Args:`
+        resolved_issues (List[str]): The issues that have been resolved. Must must exact wording as given from the Quality Assurance team (can be found in the prompt).
+
+    `Returns:`
+        (str) Either a success message or an error message
+    '''
+    print_function_name(colour= MAGENTA) if DEBUG else None
+
+    not_resolved_issues = []
+    resolved_issues = []
+
+    for resolved_issue in resolved_issues:
+        if resolved_issue not in code_issues:
+            print(f'{RED}[TOOL] [ERROR] [RESOLVE]{RESET} The code issue {resolved_issue} does not exist.') if DEBUG else None
+            not_resolved_issues.append(resolved_issue)
+        
+        elif resolved_issue in code_issues:
+            code_issues.issues.remove(resolved_issue)
+            resolved_issues.append(resolved_issue)
+
+    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {resolved_issues}') if DEBUG else None
+    print(f'{RED}[TOOL] [ERROR] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG else None
+    return f'[SUCCESS] Resolved the coder\'s code issues: {resolved_issues}\n[ERROR] The following code issues were not resolved (due to not exact wording): {not_resolved_issues}'
+
+tools = [write_code_to_file, call_coder, disapprove_and_comment_on_coder_code, approve_function_code, approve_function_proposals, submit_final_code, code_issue_resolved]
 
 
 
@@ -308,11 +377,11 @@ mistake_correcter = myChatOpenAI(
 
 software_engineer = myChatOpenAI(
     temperature= 0.4
-).bind_tools(tools)
+).bind_tools(tools, parallel_tool_calls= False)
 
 code_validator = myChatOpenAI(
     temperature= 0.4
-)
+).with_structured_output(CodeIssues)
 
 
 
@@ -381,24 +450,38 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
         last_prompt = ''
         if hasattr(last_message, 'name'):
             if last_message.name == 'call_coder':
-                last_prompt = '\n# Next Step:\nApprove requests, Approve code, Disapprove code using the respective tools.\n\n'
+                last_prompt = '\n# Next Step:\nApprove requests, Approve code, Disapprove code: using the respective tools.\n\n'
 
-        code_issues = state.get('code_issues', '')
+        issues = ''
+        for issue, comment in zip(code_issues.issues, code_issues.issue_comments):
+            if comment:
+                issues += f'{issue}\n    Comment: {comment} (Do not include comment in the `code_issue_resolved` tool call)\n'
+            else:
+                issues += f'{issue}\n'
+
         code_issues_prompt = prompts.CODE_ISSUES_SECTION.format(
-            code_issues= code_issues
-        )
-
-        tool_history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', []) if isinstance(mes, ToolMessage)])
+            code_issues= issues
+        ) if issues else ''
+        
         functions = '\n\n---\n\n'.join([
-            f'{function}:\n{coder.code}' 
-            for function, coder in coders.items() if function not in comments
+            coder_schema.code + (f'\n\nProposals:\n{coder_schema.proposals}' if coder_schema.proposals else '')
+            for _, coder_schema in coders.items()
+            if not coder_schema.approved and not coder_schema.disapproved
         ])
+
+        disapproved_functions = '\n\n---\n\n'.join([
+            coder_schema.code
+            for _, coder_schema in coders.items()
+            if coder_schema.disapproved
+        ])
+        
         prompt = prompts.SOFTWARE_ENGINEER_PROMPT.format(
             file_path= state['file_path'],
             code= read_state_file(state),
-            tool_history= tool_history,
-            code_issues= code_issues_prompt,
+            tool_messages= '\n\n'.join([message.pretty_repr() for message in state['messages'][-3:]]),
             functions= functions,
+            disapproved_functions= disapproved_functions,
+            code_issues= code_issues_prompt,
         ) + last_prompt
 
         # call the LLM
@@ -421,14 +504,15 @@ def last_check(state: InputSchema) -> InputSchema:
     try:
         # prompt
         prompt = prompts.LAST_CHECK_PROMPT.format(
-            code= read_state_file(state)
+            code= read_state_file(state).split('if __name__ ==')[0]
         )
 
         # call the LLM
-        response = safe_invoke(code_validator, [SystemMessage(content= prompt)]).content
-        print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
+        global code_issues
+        code_issues = safe_invoke(code_validator, [SystemMessage(content= prompt)])
+        print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {code_issues}') if DEBUG else None
 
-        return {'code_issues': response}
+        return state
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -470,9 +554,7 @@ def after_software_engineer(state: InputSchema) -> Literal['last_check', 'softwa
 def passed_last_check(state: InputSchema) -> Literal['software_engineer_node', '__end__']:
     print_function_name() if DEBUG else None
 
-    code_issues = state['code_issues'] or ''
-
-    if code_issues.strip().lower() in ['yes', 'good', 'end', '__end__', '', 'okay']:
+    if not code_issues.issues:
         return '__end__'
     
     return 'software_engineer_node' 
@@ -537,7 +619,7 @@ if __name__ == '__main__':
         'configurable': {
             'user_id': 'softwareEngineer',
             'run_name': 'softwareEngineer',
-            'thread_id': 'softwareEngineer', 
+            # 'thread_id': 'softwareEngineer', 
         }
     }
 
@@ -547,4 +629,4 @@ if __name__ == '__main__':
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
     if DEBUG:
         for key, value in response.items():
-            print(f'    {key}: {value}')
+            print(f'    {key}: {value}\n')

@@ -108,8 +108,29 @@ Your job is to
 4) Use the provided tool code structure as a reference to guide the implementation. You may make small necessary changes to fit your implementation.
 5) You should respect the `.with_structured_output` and `.bind_tools` methods of the LLM you are using.
 6) Do not import anything. You may use the any library you want, just ass a comment such as # TODO: add import <library_name>.
+7) Whenever possible you should include type annotations for the used variables. e.g. `var1: int = state['var_1']`
 
-# Tools
+## What is a Tool
+A **tool** is a real function in your code that the model can ask you to execute when it needs information or side effects it cannot produce by itself
+(for example: file I/O, HTTP requests, database queries, running other agents).
+
+Each tool has:
+- A **name**.
+- A clearly typed **signature**: arguments must be simple JSON-serializable types (str, int, float, bool, lists, dicts) with short, precise descriptions.
+- A **return value** that you pass back into the model as context.
+
+The model never runs the code directly. Instead:
+1. The model decides which tool to call and with which arguments.
+2. You execute the corresponding function in your environment.
+3. You feed the result back to the model as a tool message so it can continue reasoning.
+
+When you create tools, follow these rules:
+- Make them small and single-purpose: each tool should do one clear thing.
+- Keep them as side-effect-safe as possible, and document the side effects they do have.
+- Validate inputs and handle errors gracefully.
+- Return a compact, structured result (ideally a dict or Pydantic model) that is easy for the model to read, reason about, and use in the next steps.
+
+# Available Tools
 You have the following tools available to you:
 - tavily_search(query: str) -> str: Search tool for finding answers to questions. Should be used whenever you want to web search.
     - `query`: The query to search for.
