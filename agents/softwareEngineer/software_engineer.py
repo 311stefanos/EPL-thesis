@@ -1,24 +1,27 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2025-11-03
-- `description:` # TODO: add
+- `description:` The software engineer is an agent that is used to implement a python file. It is given an already created 
+                 code structure with a basic outline, and is asked to implement it with multiple tools. Its main function
+                 is to orchestrate coder subagents, and to build the code step by step.
 
 ## How to use
 1. Import the app. (`from agents.softwareEngineer.softwareEngineer import software_engineer_app`)
 2. Input a dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path of the file to implement. This file should be the outlined code structure.
 3. Invoke the app.
 4. Get the output dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path of the file that was implemented.
+The output of this agent does not matter, its purpose is to implement the code.
 
 ## Usage
 ```python
 from agents.softwareEngineer.software_engineer import software_engineer_app
-graph_input = { # TODO: add }
+graph_input = { 'file_path': path/to/file.py" }
 
 response = software_engineer_app.invoke(graph_input)
 
-# response = { # TODO: add }
+# response = { 'file_path': path/to/file.py" }
 ```
 """
 
