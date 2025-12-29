@@ -210,11 +210,6 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         # call the LLM
         corrected = correcter.invoke(prompt).content
 
-        # TODO: More tests. The LLM corrects even the grammar and capitalises.
-        # Maybe its work is good enough to use rather that an LLM invokation
-        # speller = YandexSpeller()
-        # corrected = speller.spelled(state['user_input'])
-
         print(f'{BLUE}[NODE] [INFO] [CORRECTION]{RESET} {corrected}') if DEBUG else None
 
         # Replace the message with the corrected one

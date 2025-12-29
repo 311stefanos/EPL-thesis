@@ -55,7 +55,7 @@ python <agent_name>.py # Run the agent
 - add an overview here
 
 - test code_annotator on a more complex workflow
-    - maybe add to it a to annotate the inputs of agent schema
+    - maybe add to it: to annotate the inputs of agent schema
 - make the software engineer
 - make the coders
 - make a qa

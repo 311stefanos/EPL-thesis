@@ -361,7 +361,7 @@ def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'output_node', 
 
 
 ''' Graph '''
-coder_graph = StateGraph(InputSchema, output_schema= OutputSchema) # TODO: change
+coder_graph = StateGraph(InputSchema, output_schema= OutputSchema)
 
 coder_graph.add_node('solution_brainstorm_node', solution_brainstorm_node)
 coder_graph.add_node('coder_node', coder_node)
@@ -406,7 +406,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
-        'recursion_limit': 100, # TODO: change
+        'recursion_limit': 100,
         'configurable': {
             'user_id': 'coder',
             'run_name': 'coder',
