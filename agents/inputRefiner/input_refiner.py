@@ -242,6 +242,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
     
     if DEBUG and isinstance(state['messages'][-1], ToolMessage): # The ToolNode added a message.
         print(f'{GREEN}[NODE] [TAVILY RESULT]{RESET} {state["messages"][-1].content}')
+        
     try:
         # prompt
         prompt = prompts.CLARIFICATION_PROMPT.format(
