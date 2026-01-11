@@ -107,7 +107,7 @@ Your job is to
 3) If you think you cannot confidently implement the function, use the `tavily_search` tool or respond with your thought process using plain language.
 4) Use the provided tool code structure as a reference to guide the implementation. You may make small necessary changes to fit your implementation.
 5) You should respect the `.with_structured_output` and `.bind_tools` methods of the LLM you are using.
-6) Do not import anything. You may use the any library you want, just ass a comment such as # TODO: add import <library_name>.
+6) Do not import anything. You may use the any library you want, just add the imports to the `output_tool`.
 7) Whenever possible you should include type annotations for the used variables. e.g. `var1: int = state['var_1']`
 
 ## What is a Tool
@@ -143,4 +143,5 @@ You have the following tools available to you:
         - function_arguments: [{{name, type}}]
         - output: return type
         - justification: why it's necessary now
+    - `imports` (Optional[List[str]]) a list of imports you need, do not import on the code key.
 '''

@@ -439,51 +439,20 @@ if __name__ == '__main__':
     }
 
     user = InputSchema(
-        user_input= 'I want a personal fitness coach.', 
-        clarified_user_input= '''<refined paragraph>
-Design a comprehensive virtual AI-powered fitness and nutrition coaching agent that creates personalized, 
-structured programs targeting simultaneous weight loss and muscle gain. The agent must utilize only bodyweight 
-exercises and running as available equipment, accommodating 5 weekly sessions of 90 minutes each. 
-Programs should be adaptable to either morning (dawn) or afternoon workout time slots within a free or minimal-cost model, 
-delivered entirely in English. The solution requires no human interaction or location dependency, with integrated dietary planning and nutritional guidance.
-- `role`: Virtual AI fitness coach and dietary assistant
-- `scope/boundaries`:
-   - Designs structured workout plans using bodyweight exercises and running
-   - Creates integrated dietary plans for weight loss and muscle gain
-   - Provides program guidance only (no execution or equipment provision)
-   - Operates within free/minimal-cost constraints
-   - Delivers content solely in English
-- `inputs/data sources`:
-   - User's health status (no conditions/injuries)
-   - Available equipment: bodyweight exercises, running
-   - Session requirements: 5 days/week, 90 minutes/session
-   - Time flexibility: morning (dawn) or afternoon
-   - Dietary preferences/allergies (if any)
-- `outputs/format`:
-   - Weekly workout plans (structured schedules)
-   - Exercise instructions with form guidance
-   - Integrated weekly meal plans with portion guidance
-   - Macronutrient targets aligned with dual goals
-   - Progress tracking metrics for both fitness and nutrition
-- `constraints`:
-   - **Cost**: Free or minimal-cost (freemium model)
-   - **Equipment**: Bodyweight and running only
-   - **Time**: Programs adaptable to dawn or afternoon slots
-   - **Safety**: Safe for general healthy individuals
-   - **Scope**: No medical diagnosis or prescription capabilities
-   - **Language**: English-only delivery
-   - **Dietary Limits**: Should avoid complex medical nutrition therapy
-- `key preferences`:
-   - Simultaneous weight loss and muscle gain focus
-   - Integrated exercise and nutrition approach
-   - Strict adherence to 5x90 minute weekly structure
-- `additional requirements`:
-   - Progression/scaling mechanisms for workouts and nutrition
-   - Recovery and rest day guidelines
-   - Form correction tips for injury prevention
-   - Basic nutritional guidance with calorie/macro calculations
-   - Hydration advice and food logging suggestions
-   - Dietary flexibility options for preferences/restrictions'''
+        orchestrator= False,
+        user_input= 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link of a menu, it can give me suggestions. after i can comment on the food i ate, and it should update its memory-db.', 
+        clarified_user_input= '''A WhatsApp-integrated food and drink preference agent that maintains persistent user profiles in local JSON storage. The agent receives menu inputs through three channels: photos processed via OpenRouter's free vision models (like `google/gemini-2.0-flash-exp:free`) for OCR text extraction, URLs scraped with requests/BeautifulSoup, and PDFs parsed with PyMuPDF/pdfplumber. It provides ranked dish suggestions with brief explanations by matching menu items against stored preferences: dietary restrictions, cuisine types, flavor profiles (spicy/sweet/salty/bitter/sour), price range tiers, favorite/disliked ingredients, and specific dish preferences. After meals, the agent engages in free-form conversation to collect feedback, uses an LLM to parse preference updates from the dialogue, and immediately appends these to the user's JSON profile. Multiple users are supported via username identification. The system runs as a Flask web app with Twilio WhatsApp integration, using ngrok for local webhook testing. Suggestions are generated in real-time upon receiving menu input, and preference memory updates occur after each feedback conversation session.
+
+- **role**: Food/drink preference agent with menu analysis, suggestion generation, and dynamic memory updating
+- **scope/boundaries**: WhatsApp messaging via Twilio API, local JSON file storage on hosting PC, handles photos/URLs/PDFs for menu input, provides personalized suggestions, parses free-form feedback conversations for preference updates, supports multiple username-based user profiles
+- **inputs/data sources**: WhatsApp messages (text, images, links), OpenRouter vision API for OCR, web scraping with requests/BeautifulSoup for URL content, PyMuPDF/pdfplumber for PDF text extraction, local JSON file for user preference database
+- **outputs/format**: Ranked list of menu items with brief explanations (e.g., "1. Margherita Pizza - matches your preference for vegetarian, mid-range, and mozzarella cheese"), conversational responses for feedback collection
+- **constraints (cost/latency/safety/style/language)**: Use OpenRouter free tier models for cost efficiency, local JSON storage only (no cloud databases), natural language conversation style, handle one user conversation at a time, web scraping with reasonable rate limits
+- **preference categories to track**: Dietary restrictions (allergies, vegetarian, vegan, gluten-free), cuisine preferences (Italian, Asian, Mexican, etc.), flavor profiles (spicy, sweet, salty, bitter, sour), price range (budget, mid-range, premium), favorite ingredients, disliked ingredients, specific dish preferences (e.g., "likes pasta with cream sauce")
+- **feedback processing**: Free-form conversation about meals eaten, LLM-powered extraction of preference updates, immediate JSON append after conversation ends
+- **technical implementation**: Flask web app with `/webhook` endpoint for Twilio, ngrok for local HTTPS tunneling, preference JSON structure with username keys, OCR fallback chain (OpenRouter vision → text extraction), web scraping with error handling
+- **menu processing workflow**: Photo → OpenRouter vision → text extraction → parsing; URL → requests/BeautifulSoup → content extraction; PDF → PyMuPDF/pdfplumber → text extraction → parsing
+- **suggestion ranking logic**: Match against dietary restrictions, score by cuisine/flavor/price alignment, exclude disliked items, rank by preference fit, include brief explanation for each item'''
     )
     response: OutputSchema = workflow_refiner_app.invoke(user, config= config)
     

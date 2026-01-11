@@ -5,10 +5,10 @@ from json.decoder import JSONDecodeError
 
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import tools_condition
+from typing import Protocol, Any, Callable
 from langchain_openai import ChatOpenAI
-from typing import Protocol, Any
 from dotenv import load_dotenv
-from time import sleep, time
+from time import sleep
 from pathlib import Path
 import inspect
 import json 
@@ -24,20 +24,17 @@ DEBUG = os.getenv('DEBUG')
 
 
 # A constant for user approvals
-USER_APPROVALS = ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '']
+USER_APPROVALS = ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '', 'true', 'True']
 
 
 ''' Helpful General Functions '''
 # Print the name of the function that is being executed
-def print_function_name(colour: str= '\033[93m') -> str:
+def print_function_name(colour: str= '\033[93m') -> None:
     '''
     `print_function_name` is a function that prints the name of the function that is being executed
 
     `Args:`
         colour (str): The colour of the text
-
-    `Returns:`
-        (str) The name of the function that is being executed
     '''
     frame = inspect.currentframe().f_back
     func_name = frame.f_code.co_name
@@ -221,8 +218,7 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
 
 
 
-CODE = """
-''' Imports '''
+CODE = """''' Imports '''
 # Langchain imports
 from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
 from langchain_core.tools import tool
@@ -231,6 +227,7 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, MessagesState
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
+from langgraph.prebuilt import ToolNode
 
 # Schema imports
 from typing import TypedDict, Literal, List, Optional, Annotated, Union, Dict, Any
@@ -271,7 +268,7 @@ print(f'\\n{{BLUE}}[AGENT] [INFO] [STARTUP]{{RESET}} {agent_name}') if DEBUG els
 ''' General Schemas '''
 
 ''' Agent Schema '''
-class AgentSchema(...): # TODO: Add parent class (e.g., BaseModel, TypedDict, etc.)
+class AgentSchema(...): # TODO: Add parent class (e.g. MessagesState, BaseModel, TypedDict, etc.)
     ... # TODO: Add fields
 
 
@@ -434,9 +431,8 @@ def build_workflow(bundle) -> str:
         `Returns:`
             (str) The edge
         '''
-        for to_node in to_nodes:
-            if to_node == 'end':
-                to_node = '__end__'
+        upper_end: Callable[[str],str] = lambda s: s.upper() if s == 'end' else s
+        to_nodes = [upper_end(to_node) for to_node in to_nodes]
 
         # Conditional function
         literals = ', '.join([f'"{to_node}"' for to_node in to_nodes])
@@ -555,94 +551,84 @@ def build_workflow(bundle) -> str:
 
 if __name__ == '__main__':
     dict_to_test = {
-    "comments": "User requested to use LLM for workout_design, meal_plan_creation, and progress_guidance steps. Updated execution types accordingly.",
+    "comments": "The user requested that 'generate_suggestions' and 'collect_feedback' nodes should loop back to themselves, and 'update_preferences' should be a tool used by 'collect_feedback'.",
     "root": {
-        "type": "linear_pipeline",
-        "name": "Fitness Program Generator",
+        "type": "reactive_conversational",
+        "name": "whatsapp_menu_suggestion_workflow",
         "nodes": [
             {
                 "name": "start",
-                "description": "",
+                "description": "Execution: CODE. Start node triggered by a user sending a WhatsApp message (text, image, link, or PDF). Initializes the conversation context and prepares to receive menu input.",
                 "subgraph_id": None
             },
             {
-                "name": "input_collection",
-                "description": "Execution: CODE. Collect and validate user inputs for program customization. Guard: All mandatory inputs are provided and valid.",
+                "name": "receive_menu_input",
+                "description": "Execution: LLM+TOOLS. Extract text from menu input (photo, URL, or PDF) using OpenRouter vision API, requests/BeautifulSoup, and PyMuPDF/pdfplumber. Parse the extracted text into a structured format.",
                 "subgraph_id": None
             },
             {
-                "name": "macro_calculation",
-                "description": "Execution: CODE. Calculate daily calorie and macronutrient targets for simultaneous weight loss/muscle gain using standard formulas (e.g., Mifflin-St Jeor for BMR). Guard: Inputs are valid and complete.",
+                "name": "generate_suggestions",
+                "description": "Execution: LLM+TOOLS. Engage in free-form conversation to generate dish suggestions based on parsed menu items and user preferences stored in local JSON. Uses a tool called 'suggest_list(list: List)' to transition to the next node.",
                 "subgraph_id": None
             },
             {
-                "name": "workout_design",
-                "description": "Execution: LLM. Design a structured 5-day/week workout plan using bodyweight exercises and running, split between dawn/afternoon slots. Guard: Macro targets calculated and inputs valid.",
+                "name": "send_suggestions",
+                "description": "Execution: TOOLS. Send the ranked dish suggestions to the user via WhatsApp using the Twilio WhatsApp API.",
                 "subgraph_id": None
             },
             {
-                "name": "meal_plan_creation",
-                "description": "Execution: LLM. Generate a weekly meal plan with portion guidance aligned with macro targets. Guard: Workout plan finalized.",
-                "subgraph_id": None
-            },
-            {
-                "name": "progress_guidance",
-                "description": "Execution: LLM. Provide static progression/scaling rules (time-based), recovery guidelines, and metrics for self-tracking (weight, measurements). Guard: Meal plan created.",
-                "subgraph_id": None
-            },
-            {
-                "name": "output_generation",
-                "description": "Execution: CODE. Deliver weekly workout schedules, exercise instructions, meal plans, and progress tracking guidelines in English. Guard: All steps complete.",
+                "name": "collect_feedback",
+                "description": "Execution: LLM+TOOLS. Engage in free-form conversation to collect feedback on the meal and parse preference updates from the dialogue using an LLM. Uses a tool called 'update_preferences' to update user preferences.",
                 "subgraph_id": None
             },
             {
                 "name": "end",
-                "description": "",
+                "description": "Execution: CODE. End node that signals the termination of the workflow when the user ends the conversation or no further input is received.",
                 "subgraph_id": None
             }
         ],
         "edges": [
             {
                 "source_name": "start",
-                "target_name": "input_collection",
-                "description": "User provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences)."
+                "target_name": "receive_menu_input",
+                "description": "Transition triggered when a valid WhatsApp message is received from the user."
             },
             {
-                "source_name": "input_collection",
-                "target_name": "macro_calculation",
-                "description": "All mandatory inputs are collected and validated."
+                "source_name": "receive_menu_input",
+                "target_name": "generate_suggestions",
+                "description": "Proceed to generate suggestions once the menu input has been successfully parsed."
             },
             {
-                "source_name": "macro_calculation",
-                "target_name": "workout_design",
-                "description": "Macro targets calculated and inputs valid."
+                "source_name": "generate_suggestions",
+                "target_name": "send_suggestions",
+                "description": "Transition occurs when the LLM uses the tool 'suggest_list(list: List)' to generate and send suggestions."
             },
             {
-                "source_name": "workout_design",
-                "target_name": "meal_plan_creation",
-                "description": "Workout plan finalized."
+                "source_name": "send_suggestions",
+                "target_name": "collect_feedback",
+                "description": "Engage in conversation to collect feedback after suggestions have been sent."
             },
             {
-                "source_name": "meal_plan_creation",
-                "target_name": "progress_guidance",
-                "description": "Meal plan created."
-            },
-            {
-                "source_name": "progress_guidance",
-                "target_name": "output_generation",
-                "description": "Progress guidance ready."
-            },
-            {
-                "source_name": "output_generation",
+                "source_name": "collect_feedback",
                 "target_name": "end",
-                "description": "Workflow complete."
+                "description": "Terminate the workflow after feedback has been collected and preferences have been updated."
+            },
+            {
+                "source_name": "generate_suggestions",
+                "target_name": "generate_suggestions",
+                "description": "Loop back to continue generating suggestions if more interaction is needed."
+            },
+            {
+                "source_name": "collect_feedback",
+                "target_name": "collect_feedback",
+                "description": "Loop back to continue collecting feedback if more interaction is needed."
             }
         ],
-        "description": "Linear workflow that generates a customized fitness program (workout and meal plans) and progress tracking guidelines. Triggered by user input via a structured form; runs in batch mode without human interaction. Uses LLM for workout design, meal plan creation, and progress guidance."
+        "description": "A reactive conversational workflow that processes user-provided menu inputs via WhatsApp, generates dish suggestions based on user preferences, sends these suggestions back to the user, collects feedback, and updates preferences. The workflow is triggered by user messages and operates in a streaming I/O mode."
     },
     "subgraphs": {}
 }
-    
+
     parsed = build_workflow(dict_to_test)
 
     def print_text_values(d, indent= 0):

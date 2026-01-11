@@ -1,135 +1,93 @@
 workflow = {
-    "comments": "User requested to use LLM for workout_design, meal_plan_creation, and progress_guidance steps. Updated execution types accordingly.",
+    "comments": "The user requested that 'generate_suggestions' and 'collect_feedback' nodes should loop back to themselves, and 'update_preferences' should be a tool used by 'collect_feedback'.",
     "root": {
-        "type": "linear_pipeline",
-        "name": "Fitness Program Generator",
+        "type": "reactive_conversational",
+        "name": "whatsapp_menu_suggestion_workflow",
         "nodes": [
             {
-                "name": "start_node",
-                "description": "Execution: CODE. Triggered when the user provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences) via a structured form.",
+                "name": "start",
+                "description": "Execution: CODE. Start node triggered by a user sending a WhatsApp message (text, image, link, or PDF). Initializes the conversation context and prepares to receive menu input.",
                 "subgraph_id": None
             },
             {
-                "name": "input_collection",
-                "description": "Execution: CODE. Collect and validate user inputs for program customization. Guard: All mandatory inputs are provided and valid.",
+                "name": "receive_menu_input",
+                "description": "Execution: LLM+TOOLS. Extract text from menu input (photo, URL, or PDF) using OpenRouter vision API, requests/BeautifulSoup, and PyMuPDF/pdfplumber. Parse the extracted text into a structured format.",
                 "subgraph_id": None
             },
             {
-                "name": "macro_calculation",
-                "description": "Execution: CODE. Calculate daily calorie and macronutrient targets for simultaneous weight loss/muscle gain using standard formulas (e.g., Mifflin-St Jeor for BMR). Guard: Inputs are valid and complete.",
+                "name": "generate_suggestions",
+                "description": "Execution: LLM+TOOLS. Engage in free-form conversation to generate dish suggestions based on parsed menu items and user preferences stored in local JSON. Uses a tool called 'suggest_list(list: List)' to transition to the next node.",
                 "subgraph_id": None
             },
             {
-                "name": "workout_design",
-                "description": "Execution: LLM. Design a structured 5-day/week workout plan using bodyweight exercises and running, split between dawn/afternoon slots. Guard: Macro targets calculated and inputs valid.",
+                "name": "send_suggestions",
+                "description": "Execution: TOOLS. Send the ranked dish suggestions to the user via WhatsApp using the Twilio WhatsApp API.",
                 "subgraph_id": None
             },
             {
-                "name": "meal_plan_creation",
-                "description": "Execution: LLM. Generate a weekly meal plan with portion guidance aligned with macro targets. Guard: Workout plan finalized.",
+                "name": "collect_feedback",
+                "description": "Execution: LLM+TOOLS. Engage in free-form conversation to collect feedback on the meal and parse preference updates from the dialogue using an LLM. Uses a tool called 'update_preferences' to update user preferences.",
                 "subgraph_id": None
             },
             {
-                "name": "progress_guidance",
-                "description": "Execution: LLM. Provide static progression/scaling rules (time-based), recovery guidelines, and metrics for self-tracking (weight, measurements). Guard: Meal plan created.",
-                "subgraph_id": None
-            },
-            {
-                "name": "output_generation",
-                "description": "Execution: CODE. Deliver weekly workout schedules, exercise instructions, meal plans, and progress tracking guidelines in English. Guard: All steps complete.",
-                "subgraph_id": None
-            },
-            {
-                "name": "end_node",
-                "description": "Execution: CODE. End of workflow.",
+                "name": "end",
+                "description": "Execution: CODE. End node that signals the termination of the workflow when the user ends the conversation or no further input is received.",
                 "subgraph_id": None
             }
         ],
         "edges": [
             {
-                "source_name": "start_node",
-                "target_name": "input_collection",
-                "description": "User provides complete input data (health status, equipment, session requirements, time slot preference, dietary preferences)."
+                "source_name": "start",
+                "target_name": "receive_menu_input",
+                "description": "Transition triggered when a valid WhatsApp message is received from the user."
             },
             {
-                "source_name": "input_collection",
-                "target_name": "macro_calculation",
-                "description": "All mandatory inputs are collected and validated."
+                "source_name": "receive_menu_input",
+                "target_name": "generate_suggestions",
+                "description": "Proceed to generate suggestions once the menu input has been successfully parsed."
             },
             {
-                "source_name": "macro_calculation",
-                "target_name": "workout_design",
-                "description": "Macro targets calculated and inputs valid."
+                "source_name": "generate_suggestions",
+                "target_name": "send_suggestions",
+                "description": "Transition occurs when the LLM uses the tool 'suggest_list(list: List)' to generate and send suggestions."
             },
             {
-                "source_name": "workout_design",
-                "target_name": "meal_plan_creation",
-                "description": "Workout plan finalized."
+                "source_name": "send_suggestions",
+                "target_name": "collect_feedback",
+                "description": "Engage in conversation to collect feedback after suggestions have been sent."
             },
             {
-                "source_name": "meal_plan_creation",
-                "target_name": "progress_guidance",
-                "description": "Meal plan created."
+                "source_name": "collect_feedback",
+                "target_name": "end",
+                "description": "Terminate the workflow after feedback has been collected and preferences have been updated."
             },
             {
-                "source_name": "progress_guidance",
-                "target_name": "output_generation",
-                "description": "Progress guidance ready."
+                "source_name": "generate_suggestions",
+                "target_name": "generate_suggestions",
+                "description": "Loop back to continue generating suggestions if more interaction is needed."
             },
             {
-                "source_name": "output_generation",
-                "target_name": "end_node",
-                "description": "Workflow complete."
+                "source_name": "collect_feedback",
+                "target_name": "collect_feedback",
+                "description": "Loop back to continue collecting feedback if more interaction is needed."
             }
         ],
-        "description": "Linear workflow that generates a customized fitness program (workout and meal plans) and progress tracking guidelines. Triggered by user input via a structured form; runs in batch mode without human interaction. Uses LLM for workout design, meal plan creation, and progress guidance."
+        "description": "A reactive conversational workflow that processes user-provided menu inputs via WhatsApp, generates dish suggestions based on user preferences, sends these suggestions back to the user, collects feedback, and updates preferences. The workflow is triggered by user messages and operates in a streaming I/O mode."
     },
     "subgraphs": {}
 }
 
-file_path = '../../creations/fitness_program_generator/fitness_program_generator.py'
+file_path = '..\..\creations\whatsapp_menu_suggestion_workflow\whatsapp_menu_suggestion_workflow.py'
 
-clarified_user_input = '''<refined paragraph>
-Design a comprehensive virtual AI-powered fitness and nutrition coaching agent that creates personalized, 
-structured programs targeting simultaneous weight loss and muscle gain. The agent must utilize only bodyweight 
-exercises and running as available equipment, accommodating 5 weekly sessions of 90 minutes each. 
-Programs should be adaptable to either morning (dawn) or afternoon workout time slots within a free or minimal-cost model, 
-delivered entirely in English. The solution requires no human interaction or location dependency, with integrated dietary planning and nutritional guidance.
-- `role`: Virtual AI fitness coach and dietary assistant
-- `scope/boundaries`:
-   - Designs structured workout plans using bodyweight exercises and running
-   - Creates integrated dietary plans for weight loss and muscle gain
-   - Provides program guidance only (no execution or equipment provision)
-   - Operates within free/minimal-cost constraints
-   - Delivers content solely in English
-- `inputs/data sources`:
-   - User's health status (no conditions/injuries)
-   - Available equipment: bodyweight exercises, running
-   - Session requirements: 5 days/week, 90 minutes/session
-   - Time flexibility: morning (dawn) or afternoon
-   - Dietary preferences/allergies (if any)
-- `outputs/format`:
-   - Weekly workout plans (structured schedules)
-   - Exercise instructions with form guidance
-   - Integrated weekly meal plans with portion guidance
-   - Macronutrient targets aligned with dual goals
-   - Progress tracking metrics for both fitness and nutrition
-- `constraints`:
-   - **Cost**: Free or minimal-cost (freemium model)
-   - **Equipment**: Bodyweight and running only
-   - **Time**: Programs adaptable to dawn or afternoon slots
-   - **Safety**: Safe for general healthy individuals
-   - **Scope**: No medical diagnosis or prescription capabilities
-   - **Language**: English-only delivery
-   - **Dietary Limits**: Should avoid complex medical nutrition therapy
-- `key preferences`:
-   - Simultaneous weight loss and muscle gain focus
-   - Integrated exercise and nutrition approach
-   - Strict adherence to 5x90 minute weekly structure
-- `additional requirements`:
-   - Progression/scaling mechanisms for workouts and nutrition
-   - Recovery and rest day guidelines
-   - Form correction tips for injury prevention
-   - Basic nutritional guidance with calorie/macro calculations
-   - Hydration advice and food logging suggestions
-   - Dietary flexibility options for preferences/restrictions'''
+clarified_user_input = '''A WhatsApp-integrated food and drink preference agent that maintains persistent user profiles in local JSON storage. The agent receives menu inputs through three channels: photos processed via OpenRouter's free vision models (like `google/gemini-2.0-flash-exp:free`) for OCR text extraction, URLs scraped with requests/BeautifulSoup, and PDFs parsed with PyMuPDF/pdfplumber. It provides ranked dish suggestions with brief explanations by matching menu items against stored preferences: dietary restrictions, cuisine types, flavor profiles (spicy/sweet/salty/bitter/sour), price range tiers, favorite/disliked ingredients, and specific dish preferences. After meals, the agent engages in free-form conversation to collect feedback, uses an LLM to parse preference updates from the dialogue, and immediately appends these to the user's JSON profile. Multiple users are supported via username identification. The system runs as a Flask web app with Twilio WhatsApp integration, using ngrok for local webhook testing. Suggestions are generated in real-time upon receiving menu input, and preference memory updates occur after each feedback conversation session.
+
+- **role**: Food/drink preference agent with menu analysis, suggestion generation, and dynamic memory updating
+- **scope/boundaries**: WhatsApp messaging via Twilio API, local JSON file storage on hosting PC, handles photos/URLs/PDFs for menu input, provides personalized suggestions, parses free-form feedback conversations for preference updates, supports multiple username-based user profiles
+- **inputs/data sources**: WhatsApp messages (text, images, links), OpenRouter vision API for OCR, web scraping with requests/BeautifulSoup for URL content, PyMuPDF/pdfplumber for PDF text extraction, local JSON file for user preference database
+- **outputs/format**: Ranked list of menu items with brief explanations (e.g., "1. Margherita Pizza - matches your preference for vegetarian, mid-range, and mozzarella cheese"), conversational responses for feedback collection
+- **constraints (cost/latency/safety/style/language)**: Use OpenRouter free tier models for cost efficiency, local JSON storage only (no cloud databases), natural language conversation style, handle one user conversation at a time, web scraping with reasonable rate limits
+- **preference categories to track**: Dietary restrictions (allergies, vegetarian, vegan, gluten-free), cuisine preferences (Italian, Asian, Mexican, etc.), flavor profiles (spicy, sweet, salty, bitter, sour), price range (budget, mid-range, premium), favorite ingredients, disliked ingredients, specific dish preferences (e.g., "likes pasta with cream sauce")
+- **feedback processing**: Free-form conversation about meals eaten, LLM-powered extraction of preference updates, immediate JSON append after conversation ends
+- **technical implementation**: Flask web app with `/webhook` endpoint for Twilio, ngrok for local HTTPS tunneling, preference JSON structure with username keys, OCR fallback chain (OpenRouter vision → text extraction), web scraping with error handling
+- **menu processing workflow**: Photo → OpenRouter vision → text extraction → parsing; URL → requests/BeautifulSoup → content extraction; PDF → PyMuPDF/pdfplumber → text extraction → parsing
+- **suggestion ranking logic**: Match against dietary restrictions, score by cuisine/flavor/price alignment, exclude disliked items, rank by preference fit, include brief explanation for each item'''

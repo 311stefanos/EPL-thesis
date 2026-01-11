@@ -45,12 +45,11 @@ from langchain_core.messages import SystemMessage, AIMessage, HumanMessage, Remo
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 
 # Schema imports
-from pydantic import BaseModel, Field, model_validator
 from typing import Literal, List, Union, Optional
+from pydantic import BaseModel, Field
 
 # General imports
 from dotenv import load_dotenv
@@ -91,8 +90,32 @@ class Argument(BaseModel):
     type: str = Field(description= 'The type of the argument.')
 
     def __str__(self):
+        if self.name == 'self':
+            return f'self'
         return f'{self.name}: {self.type}'
         
+class Function(BaseModel):
+    function_name: str = Field(description= 'The proposed helper function name.')
+    arguments: List[Argument] = Field(description= 'The arguments of the helper function.')
+    output: str = Field(description= 'The output of the helper function.')
+    docstring: str = Field(description= 'The docstring of the helper function.')
+    justification: str = Field(description= 'The justification of the helper function. Why is needed.')
+
+    def __str__(self):
+        docstring = self.docstring.replace('\n', '\n\t')
+        arguments = ', '.join([str(arg) for arg in self.arguments])
+        return f'def {self.function_name}({arguments}) -> {self.output}:\n\t"""\n\t{docstring}\n\t"""\n\t...'
+    
+    def to_method(self):
+        docstring = self.docstring.replace('\n', '\n\t')
+        # Add the self argument if not present
+        args = list(self.arguments)
+        if not any(arg.name == 'self' for arg in args):
+            args.insert(0, Argument(name='self', type='...'))
+
+        arguments = ', '.join(str(arg) for arg in args)
+        return f'\tdef {self.function_name}({arguments}) -> {self.output}:\n\t\t"""\n\t{docstring}\n\t\t"""\n\t\t...'
+
 # Docstring agent
 class Docstring(BaseModel):
     function: str = Field(description= 'The function name as given.')
@@ -108,42 +131,39 @@ class Docstrings(BaseModel): # Used by the docstring_generator
         return '\n'.join([f'\n{i}) {docstring}' for i, docstring in enumerate(self.docstrings, start= 1)])
 
 # Schema agent
+class SchemaArgument(Argument):
+    comment: str = Field(description= 'The comment of the argument.')
+
+    def __str__(self):
+        return f'{super().__str__()} # {self.comment}'
+
 class Schema(BaseModel):
     schema_name: str = Field(description= 'The name of the schema in PascalCase.')
     docstring: str = Field(description= 'The docstring of the schema. Be sure to comment on every argument\'s structure.')
-    base_class: Literal['BaseModel', 'TypedDict'] = Field(description= 'The base class of the schema.')
-    arguments: List[Argument] = Field(description= 'The arguments of the schema.')
+    base_class: Literal['BaseModel', 'TypedDict', 'MessagesState'] = Field(description= 'The base class of the schema.')
+    arguments: List[SchemaArgument] = Field(description= 'The arguments of the schema.')
+    proposed_methods: List[Function] = Field(description= 'The proposed methods of the schema.')
 
     def __str__(self):
         arguments = '\n\t'.join([str(arg) for arg in self.arguments])
         docstring = self.docstring.replace('\n', '\n\t')
-        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}\n'
+        methods = '\n\n'.join([method.to_method() for method in self.proposed_methods])
+        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}{methods}'
 
 class Schemas(BaseModel): # Used by the schema_generator
     schemas: List[Schema] = Field(description= 'The schemas.')
 
     def __str__(self):
-        return '\n'.join([f'\n{i}) {schema}' for i, schema in enumerate(self.schemas, start= 1)])
+        return '\n\n'.join([f'\n{i}) {schema}' for i, schema in enumerate(self.schemas, start= 1)])
     
-# Helpful functions/Tool agent
-class Function(BaseModel):
-    function_name: str = Field(description= 'The proposed helper function name.')
-    arguments: List[Argument] = Field(description= 'The arguments of the helper function.')
-    output: str = Field(description= 'The output of the helper function.')
-    docstring: str = Field(description= 'The docstring of the helper function.')
-    justification: str = Field(description= 'The justification of the helper function. Why is needed.')
-
-    def __str__(self):
-        docstring = self.docstring.replace('\n', '\n\t')
-        arguments = ', '.join([str(arg) for arg in self.arguments])
-        return f'def {self.function_name}({arguments}) -> {self.output}:\n\t"""\n\t{docstring}\n\t"""\n\t...'
-
+# Helpful functions agent
 class HelpfulFunctions(BaseModel): # Used by the helpful_function_generator
     helpful_functions: List[Function] = Field(description= 'The helpful functions.')
 
     def __str__(self):
         return '\n'.join([f'\n{i}) {function.justification}\n{function}' for i, function in enumerate(self.helpful_functions, start= 1)])
     
+# Tool functions agent
 class ToolFunctions(BaseModel): # Used by the tool_function_generator
     tool_functions: List[Function] = Field(description= 'The tool functions.')
 
@@ -155,7 +175,7 @@ class LLMProposalsDict(BaseModel):
     llm_name: str = Field(description= 'The name of the LLM as is in the code.')
     with_structured_output: Optional[str] = Field(description= 'The strucutured output of the LLM. Must be a valid schema.', default= None)
     bind_tools: Optional[List[str]] = Field(description= 'The tools to bind to the LLM.', default= None)
-    temperature: float = Field(description= 'The temperature of the LLM.', le= 1, ge= 0)
+    temp: float = Field(description= 'The temp of the LLM.', le= 1, ge= 0)
 
     def to_string(self):
         modifier = ''
@@ -170,7 +190,7 @@ class LLMProposalsDict(BaseModel):
         elif output:
             modifier = f'.with_structured_output({output})'
 
-        return f'{self.llm_name} = myChatOpenAI(\n\ttemperature= {self.temperature}\n){modifier}\n'
+        return f'{self.llm_name} = myChatOpenAI(\n\ttemperature= {self.temp}\n){modifier}\n'
     
 class LLMProposalList(BaseModel): # Used by the tool_or_output_generator
     comments: str = Field(description= 'The comments as given from the LLM.')
@@ -572,7 +592,7 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     # Parse and relace the tool function section
     new_functions = ['@tool\n' + str(function) for function in tool_functions]
     new_functions = '\n\n'.join(new_functions)
-    code = code.replace("Tools", f"''' Tools '''\n{new_functions}")
+    code = code.replace("''' Tools '''", f"''' Tools '''\n{new_functions}")
 
     # Update the file
     with open(file_path, 'w', encoding='utf-8') as f:

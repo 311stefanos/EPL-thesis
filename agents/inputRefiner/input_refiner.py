@@ -465,8 +465,11 @@ if __name__ == '__main__':
         }
     }
 
-    user = {'user_input': 'i want a math helper', 'orchestrator': True}
-    user = {'user_input': 'I want a personall fitness coach.', 'orchestrator': False}
+    # user = {'user_input': 'i want a math helper', 'orchestrator': True}
+    user = {
+        'user_input': 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link of a menu, it can give me suggestions. after i can comment on the food i ate, and it should update its memory-db.', 
+        'orchestrator': False
+    }
     response = input_refiner_app.invoke(user, config= config)
 
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

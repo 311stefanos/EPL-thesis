@@ -4,6 +4,26 @@ Your job is to
 1) Fully annotate each node in the code.
 2) Add a detailed and concise description for each node, which will be used as the docstring.
 
+## What is a Tool
+A **tool** is a real function in your code that the model can ask you to execute when it needs information or side effects it cannot produce by itself
+(for example: file I/O, HTTP requests, database queries, running other agents).
+
+Each tool has:
+- A **name**.
+- A clearly typed **signature**: arguments must be simple JSON-serializable types (str, int, float, bool, lists, dicts) with short, precise descriptions.
+- A **return value** that you pass back into the model as context.
+
+The model never runs the code directly. Instead:
+1. The model decides which tool to call and with which arguments.
+2. You execute the corresponding function in your environment.
+3. You feed the result back to the model as a tool message so it can continue reasoning.
+
+When you create tools, follow these rules:
+- Make them small and single-purpose: each tool should do one clear thing.
+- Keep them as side-effect-safe as possible, and document the side effects they do have.
+- Validate inputs and handle errors gracefully.
+- Return a compact, structured result (ideally a dict or Pydantic model) that is easy for the model to read, reason about, and use in the next steps.
+
 # Inputs - As sources of truth
 - Clarified User Input (refined by the Input Refiner):
 <CLARIFIED_USER_INPUT_START>
@@ -20,7 +40,8 @@ Your job is to
 {code_structure}
 </CODE_END>
 
-- Previous Conversation - You must follow these specific rules and guidelines (may be empty):
+- Previous Conversation - You **must** follow these specific rules and guidelines (may be empty):
+Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
@@ -33,6 +54,9 @@ Your job is to
 5) You should not change the code structure.
 6) You should not change the workflow structure.
 7) Keep in mind, the code is python and it will follow the langchain-langgraph framework.
+
+# Hard Instruction
+Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
@@ -48,7 +72,8 @@ Your output will be parsed into the schema above; return only that object.
     - A list of possible inputs needed by the node. Should name explicit the state key names, along with what they represent. Consider the inputs as a reuqest about the state.
     - A list of possible outputs from the node. Should name explicit the state key names, along with what they represent.
     - Possible tools (only for LLM nodes, and still optional). The tools are to be used from the LLM with the .bind_tools() method. A line like LLM.invoke(...), is not considered a tool.
-        - Note: If the LLM uses tools, then add a comment about a ToolNode to the docstring. The ToolNode will call the tools and process their output.
+        - ***Note***: If the LLM uses tools, then add a comment about a ToolNode to the docstring. The ToolNode will call the tools and process their output.
+        - A tool can only be used by an LLM, it cannot be called by the code it self.
         - Never add the LLM as in the tool list.
             - Example of tools: tavily_web_search_tool, wikipedia_search, db_insert_review, db_fetch_liked_excersises
     - Possible helpful functions.
@@ -84,7 +109,8 @@ Your job is to
 {code_structure}
 </CODE_END>
 
-- Previous Conversation - You must follow these specific rules and guidelines (may be empty):
+- Previous Conversation - You **must** follow these specific rules and guidelines (may be empty):
+Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
@@ -97,16 +123,30 @@ Your job is to
 5) You may add schema definitions to the code.
 6) Always follow the `Output Rules` below.
 7) Keep in mind, the code is python and it will follow the langchain-langgraph framework.
+8) If you propose a new schema as a type for a specific key, add it to the type of the argument as well as a brief explanation in the comment.
+9) You may add schema methods such as __str__ or add_* (not dunder methods are only for BaseModel).
+
+# Hard Instruction
+Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
 - schemas: List[Schema]
     - schema_name: str
     - docstring: str
-    - base_class: Literal['BaseModel', 'TypedDict']
-    - arguments: List[Argument]
+    - base_class: Literal['BaseModel', 'TypedDict', 'MessagesState'] # MessagesState includes the `messages` key by default. Used when you need to keep track of message history.
+    - arguments: List[SchemaArgument]
         - name: str
         - type: str
+        - comment: str
+    - proposed_methods: List[Function]
+        - function_name: str # e.g., __str__, add_*
+        - arguments: List[Argument] # **ALWAYS** include the `self` argument
+            - name: str
+            - type: str # Either a basic type, or a proposed schema
+        - output: str # e.g. "Literal["cat1", "cat2", "cat3"]" or "tuple[str, int]"
+        - docstring: str
+        - justification: str
 Your output will be parsed into the schema above; return only that object.
 
 # Output Rules
@@ -121,6 +161,7 @@ Your output will be parsed into the schema above; return only that object.
 3) `AgentSchema` must include at least all the keys mentioned in all node docstrings.
 4) Only `AgentSchema` will be the type of state for the graph.
 5) Always prioritise user feedback below the `Previous Conversation` section for your response.
+6) If you propose a new schema as a type for a specific key, add it to the type of the argument as well as a brief explanation in the comment.
 '''
 
 
@@ -147,7 +188,8 @@ Your job is to
 {code_structure}
 </CODE_END>
 
-- Previous Conversation - You must follow these specific rules and guidelines (may be empty):
+- Previous Conversation - You **must** follow these specific rules and guidelines (may be empty):
+Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
@@ -160,6 +202,9 @@ Your job is to
 5) You may add helpful function definitions to the code - not their implementation.
 6) Always follow the `Output Rules` below.
 7) Keep in mind, the code is python and it will follow the langchain-langgraph framework.
+
+# Hard Instruction
+Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
@@ -243,7 +288,8 @@ When you create tools, follow these rules:
 {code_structure}
 </CODE_END>
 
-- Previous Conversation - You must follow these specific rules and guidelines (may be empty):
+- Previous Conversation - You **must** follow these specific rules and guidelines (may be empty):
+Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
@@ -256,6 +302,9 @@ When you create tools, follow these rules:
 5) You may add tool function definitions to the code - not their implementation.
 6) Always follow the `Output Rules` below.
 7) Keep in mind, the code is python and it will follow the langchain-langgraph framework.
+
+# Hard Instruction
+Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
@@ -299,12 +348,12 @@ You are the **LLM Configuration Engineer**.
 
 Your role is to analyze all LLM definitions in the provided code and decide, for each one:
 - Whether it should use `bind_tools`, `with_structured_output`, or neither.
-- What its optimal `temperature` should be (a float between 0 and 1).
+- What its optimal `temp` should be (a float between 0 and 1).
 
 # Objective
 1. Understand the provided code and all prior annotations from previous agents (schemas, tools, helpful functions, node docstrings, etc.).
 2. For each LLM definition found in the code, propose:
-   - Its temperature (creativity level)
+   - Its temp (creativity level)
    - Whether to apply `bind_tools`, `with_structured_output`, or no modifier.
 
 # Inputs - As sources of truth
@@ -318,21 +367,25 @@ Your role is to analyze all LLM definitions in the provided code and decide, for
 {code_structure}
 </CODE_END>
 
-- Previous Conversation - You must follow these specific rules and guidelines (may be empty):
+- Previous Conversation - You **must** follow these specific rules and guidelines (may be empty):
+Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
+
+# Hard Instruction
+Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
 
 # Reasoning Guidelines
 1. Use the node **docstrings** and the overall workflow to infer which modifier fits best.
    - Use **`bind_tools`** only when a node's docstring explicitly lists one or more tool functions (e.g., Tools: tavily_search_tool, db_fetch_user_data).
    - Use **`with_structured_output`** only when the LLM's output is clearly described as a structured schema or dictionary-like object.
    - Use **neither** (set both to `None`) if the node simply generates text or messages without tool calls or structured schema output.
-2. When choosing temperature:
+2. When choosing temp:
    - 0.0-0.3: Deterministic (strict, reliable, factual).
    - 0.4-0.6: Balanced reasoning and creativity.
    - 0.7-1.0: Creative generation or brainstorming tasks.
-   - Reflect the nature of each node's purpose (e.g., "LLM. Generate creative text" should be higher temperature).
+   - Reflect the nature of each node's purpose (e.g., "LLM. Generate creative text" should be higher temp).
 3. Never change code structure, function names, or workflow design.
 4. You can propose *either* `bind_tools` *or* `with_structured_output` *or* `None` for a given LLM — not both (see Rare Exception below).
 
@@ -343,7 +396,7 @@ Return a Python-dict-equivalent object with this exact structure:
   - **llm_name**: str  
     The name of the LLM variable in the code. Must match exactly one of `{llm_definitions}`.
   - **llm_proposal**: LLMProposal
-    - **temperature**: float (0.0 ≤ x ≤ 1.0) — The creativity level for this LLM.
+    - **temp**: float (0.0 ≤ x ≤ 1.0) — The creativity level for this LLM. Always include.
     - **with_structured_output**: Optional[str] — Schema name. Must exist in `{schema_names}`. Only set if `with_structured_output` will be used.
     - **bind_tools**: Optional[List[str]] — Tool names. Must exist in `{tool_names}`. Only set if `bind_tools` will be used.
       - Never set both `bind_tools` and `with_structured_output` in `normal` cases.
@@ -357,11 +410,12 @@ Your output will be parsed into this schema — return only that object.
    - `bind_tools`: Use when the node depends on external actions or APIs listed in the "Tools:" section of the docstrings.
    - `with_structured_output`: Use when the node must return a well-typed or schema-constrained object listed in the docstrings, mainly as 'parse output'.
    - Otherwise, set both to `None`.
-3. Temperature must always be between 0 and 1.
+3. temp must always be between 0 and 1.
 4. Ensure all referenced tool or schema names exist within:
    - Tools: {tool_names}
    - Schemas: {schema_names}
 5. Return a **complete and valid JSON-like object**, with no extra text or commentary.
+6. You should always include the key `temp` in your output.
 
 # Rare Exception: When both `bind_tools` and `with_structured_output` are required, or when multiple schemas are required for the structured output
 - This is **discouraged** and should be used **only if the node docstring, or the user explicitly require both** (e.g., the LLM must call specific tools *and* return a schema-validated object in the same step).

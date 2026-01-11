@@ -24,6 +24,7 @@
             - `type: str`
         - `output: str`
         - `justification: str`
+    - `imports: List[str]`: A list of imports.
 
 ## Usage
 ```python
@@ -41,7 +42,8 @@ response = coder_app.invoke(graph_input)
 
 # response = {
 #       'code': '<implemented code>',
-#       'proposals': []
+#       'proposals': [],
+#       'imports': []
 # }
 ```
 """
@@ -134,6 +136,7 @@ class InputSchema(MessagesState):
 class OutputSchema(BaseModel):
     code: str = Field(description= 'The implemented code of the function.')
     proposals: Optional[List[FunctionProposal]] = Field(description= 'The requested proposals.')
+    imports: Optional[List[str]] = Field(description= 'The requested imports. Every string should correspond to a line of `from * import *` or `import *`.')
 
 
 
@@ -167,13 +170,13 @@ tools_by_name = {tool.name: tool for tool in tools}
 ''' LLM '''
 brainstormer = myChatOpenAI(
     temperature= 0.8,
-    model= 'qwen/qwen3-coder:free'
+    model= 'xiaomi/mimo-v2-flash:free'
 )
 
 coder = myChatOpenAI(
     temperature= 0.5,
-    model= 'qwen/qwen3-coder:free',
-).bind_tools(tools + [output_tool])
+    model= 'xiaomi/mimo-v2-flash:free'
+).bind_tools(tools)
 
 
 

@@ -23,7 +23,7 @@ The user wrote:
 
 "{user_input}"
 
-Previous clarifications or context (may be empty):
+# Previous clarifications or context (may be empty):
 
 {clarifications}
 
