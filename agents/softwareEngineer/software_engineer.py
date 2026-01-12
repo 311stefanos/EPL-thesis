@@ -38,7 +38,7 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Dict
+from typing import Literal, List, Optional, Dict, Set
 from pydantic import BaseModel, Field
 
 # General imports
@@ -47,7 +47,6 @@ from pathlib import Path
 import traceback
 import json
 import os
-import re
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments
@@ -120,35 +119,40 @@ coders: Dict[str, CoderSchema] = {}
 comments: Dict[str, CoderComment] = {}
 # A pydantic schema used to store the identified problems in the code
 code_issues: CodeIssues = CodeIssues()
+# A set of import strings to be added to the code
+imports: Set[str] = set()
 
 
 
 ''' Tools '''
 # A tool used to write code to a file as a whole.
 @tool
-def write_code_to_file(file_path: str, code: str) -> str:
+def replace_code(file_path: str, old_code: str, new_code: str) -> str:
     '''
-    `write_code_to_file` writes the contents of `code` to the file `file_path`
-    This tool should be called a coder returned a code you approved.
-    
+    `replace_code` replaces the old code with the new code in the file.
+    New code can have the same code as old code with some modifications or additions.
+    Basically it just calls `code.replace(old_code, new_code)`.
+
     `Args:`
-        file_path (str): The path to the file to overwrite.
-        code (str): The code to write to the file.
+        file_path (str): The path to the file.
+        old_code (str): The old code.
+        new_code (str): The new code.
 
     `Returns:`
-        (str) If the file overwrite was successful
+        (str) TA confirmation message.
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
 
     try:
-        # Remove possible tags from the LLM's output
-        while code[0] == '<':
-            index = code.find('>\n')
-            code = code[index + 1:].strip()
+        old_code = clean_llm_output(old_code)
+        new_code = clean_llm_output(new_code)
 
-        while code.strip()[-1] == '>':
-            index = code.rfind('<')
-            code = code[:index].strip()
+        # Read the code from the file
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+
+        # Replace the old code with the new code
+        code = code.replace(old_code, new_code)
 
         # Write the code to the file
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -185,12 +189,13 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The definition of the function could not be found in the file hence a coder cannot complete the task. {function_name}') if DEBUG else None
         return {
             'code': 'The definition of the function could not be found in the file hence a coder cannot complete the task. You should define the function first.', 
-            'proposals': None
+            'proposals': None,
+            'imports': None
         }
 
     # If the coder does not exist in the coders dict, add it
     if function_name not in coders:
-        coders[function_name] = CoderSchema(code= '', proposals= None, approved= False, disapproved= False)
+        coders[function_name] = CoderSchema(code= '', proposals= None, imports= None, approved= False, disapproved= False)
         comments[function_name] = CoderComment()
 
     # Call the coder
@@ -201,6 +206,8 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         'software_engineer_instructions': special_instructions,
         'previous_outputs': [coders[function_name].code] if coders[function_name].code else [],
         'comments': [comments[function_name].comment] if comments[function_name].comment else [],
+        'previous_implementation': None,
+        'reviewer_comments': None
     }
     config = {
         'recursion_limit': 100,
@@ -219,7 +226,7 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
     
     print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
     # Save the coder's output
-    coders[function_name] = CoderSchema(code= response['code'], proposals= response['proposals'], approved= False, disapproved= False)
+    coders[function_name] = CoderSchema(code= response['code'], proposals= response['proposals'], imports= response['imports'], approved= False, disapproved= False)
 
     # Return the coder's output for the ToolMessage
     return {function_name: coders[function_name]}
@@ -268,6 +275,7 @@ def approve_function_code(file_path: str, function_name: str) -> str:
         (str) Either a success message or an error message
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
+    global coders, comments, imports
 
     # Check if the coder exists
     all_keys = set(list(coders.keys()) + list(comments.keys()))
@@ -289,6 +297,7 @@ def approve_function_code(file_path: str, function_name: str) -> str:
     is_tool = ''
     if '@tool' in previous_code:
         is_tool = '@tool\n'
+    # Get only the function that was implemented, in order to update it
     code_section: str = f'def {function_name}(' + f'def {function_name}('.join(code.split(f'{is_tool}def {function_name}(')[1:])
     code_section = code_section.split("''' Conditional Functions '''")[0].split("''' Graph '''")[0].strip()
     code_section = code_section.split('""" Conditional Functions """')[0].split('""" Graph """')[0].strip()
@@ -316,15 +325,16 @@ def approve_function_code(file_path: str, function_name: str) -> str:
     if '@tool\n@tool' in code:
         code = code.replace('@tool\n@tool', '@tool')
 
-    print(f'{BLUE}[TOOL] [OLD SECTION]{RESET} {code_section}') if DEBUG else None
-    print(f'{BLUE}[TOOL] [NEW SECTION]{RESET} {previous_code}') if DEBUG else None
+    # print(f'{BLUE}[TOOL] [OLD SECTION]{RESET} {code_section}') if DEBUG else None
+    # print(f'{BLUE}[TOOL] [NEW SECTION]{RESET} {previous_code}') if DEBUG else None
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(code)
 
+    # Add the imports to the set
     if coders[function_name].imports:
-        add_imports.invoke(coders[function_name].imports, file_path)
-
+        imports.update(coders[function_name].imports)
+        
     # Approve the coder's implementation
     coders[function_name].approve()
 
@@ -355,34 +365,40 @@ def approve_function_proposals(approved_function_proposals: List[FunctionProposa
     proposed_functions = [str(function_proposal) for function_proposal in approved_function_proposals if function_proposal.function_type == 'helper_function']
 
     # Add the tools and helper functions to the file - as definitions
-    code = read_state_file({'file_path': file_path})
+    with open(file_path, 'r', encoding='utf-8') as f:
+        code = f.read()
+
     code = code.replace('# TODO: Add Tools (if needed)', '\n\n'.join(proposed_tools) + '\n\n# TODO: Add Tools (if needed)')
     code = code.replace('# TODO: Add Helpful Functions (if needed)', '\n\n'.join(proposed_functions) + '\n\n# TODO: Add Helpful Functions (if needed)')
-    write_code_to_file.invoke({"file_path": file_path, "code": code}) 
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(code)
 
     print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Approved the coder\'s function proposals: {[afp.function_name for afp in approved_function_proposals]}') if DEBUG else None
     return f'[SUCCESS] Approved the coder\'s function proposals: {[afp.function_name for afp in approved_function_proposals]}.\n\nThe file contents have been updated.'
 
 # A tool to add imports fast
 @tool
-def add_imports(imports: List[str], file_path: str) -> str:
+def add_imports(new_imports: List[str], file_path: str) -> str:
     '''
     `add_imports` adds imports to the file. you should use this tool as little as possible.
 
     `Args:`
-        imports (List[str]): The imports to add to the file. Should input the full import line.
+        new_imports (List[str]): The new imports to add to the file. Should input the full import line.
         file_path (str): The path to the file to implement the function in.
     
     `Returns:`
         (str) Either a success message or an error message
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
+
+    global imports
     
     try:
         code = read_state_file({'file_path': file_path})
         
-        old_code_section = code.split("''' Imports '''")[-1].split("''' Constants '''")[0].strip()
-        new_code_section = old_code_section + '\n\n' + '\n'.join(imports)
+        old_code_section = code.split("''' new_imports '''")[-1].split("''' Constants '''")[0].strip()
+        new_code_section = old_code_section + '\n\n' + '\n'.join(new_imports)
 
         code = code.replace(old_code_section, new_code_section)
 
@@ -392,8 +408,13 @@ def add_imports(imports: List[str], file_path: str) -> str:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(code)
 
-        print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Added the imports to the file.') if DEBUG else None
-        return f'[SUCCESS] Added the imports to the file.'
+        # Remove the imports from the set
+        for new_import in new_imports:
+            if new_import in imports:
+                imports.remove(new_import)
+
+        print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Added the new_imports to the file.') if DEBUG else None
+        return f'[SUCCESS] Added the new_imports to the file.'
 
     except Exception as e:
         print(f'{RED}[TOOL] [ERR]{RESET}', e) if DEBUG else None
@@ -463,7 +484,7 @@ def submit_final_code(file_path: str) -> None:
 
 # A tool used to resolve code issues
 @tool
-def code_issue_resolved(resolved_issues: List[str]) -> str:
+def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
     '''
     `code_issue_resolved` resolves a code issue that was proposed by the Quality Assurance team.
 
@@ -475,9 +496,11 @@ def code_issue_resolved(resolved_issues: List[str]) -> str:
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
 
+    global code_issues
+
     # Split the 'resolved' code issues into resolved and not resolved
     not_resolved_issues = []
-    resolved_issues = []
+    actually_resolved_issues = []
 
     for resolved_issue in resolved_issues:
         # Check if the code issue exists
@@ -487,14 +510,14 @@ def code_issue_resolved(resolved_issues: List[str]) -> str:
         
         elif resolved_issue in code_issues:
             code_issues.issues.remove(resolved_issue)
-            resolved_issues.append(resolved_issue)
+            actually_resolved_issues.append(resolved_issue)
 
-    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {resolved_issues}') if DEBUG else None
-    print(f'{RED}[TOOL] [ERROR] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG else None
-    return f'[SUCCESS] Resolved the coder\'s code issues: {resolved_issues}\n[ERROR] The following code issues were not resolved (due to not exact wording): {not_resolved_issues}'
+    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {actually_resolved_issues}') if DEBUG else None
+    print(f'{RED}[TOOL] [FAIL] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG else None
+    return f'[SUCCESS] Resolved the coder\'s code issues: {actually_resolved_issues}\n[FAIL] The following code issues were not resolved (due to not exact wording): {not_resolved_issues}'
 
 tools = [
-    write_code_to_file, 
+    replace_code, 
     call_coder, 
     disapprove_and_comment_on_coder_code, 
     approve_function_code, 
@@ -519,7 +542,7 @@ tool_adder = myChatOpenAI(
 software_engineer = myChatOpenAI(
     temperature= 0.4,
     model= 'mistralai/devstral-2512:free'
-).bind_tools(tools, parallel_tool_calls= False)
+).bind_tools(tools)
 
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
@@ -530,6 +553,39 @@ code_validator = myChatOpenAI(
 
 
 ''' Helpful Functions '''
+# Remove heading and trailing tags or markdown special characters
+def clean_llm_output(code: str) -> str:
+    '''
+    `clean_llm_output` removes heading and trailing tags or markdown special characters from the LLM's output
+
+    `Args:`
+        code (str): The LLM's output
+
+    `Returns:`
+        code: str
+    '''
+    # Remove possible tags or markdown special characters from the LLM's output
+    while code[0] in ['<', '`']:
+        # Removing tags
+        while code[0] == '<':
+            index = code.find('>\n')
+            code = code[index + 1:].strip()
+
+        while code.strip()[-1] == '>':
+            index = code.rfind('<')
+            code = code[:index].strip()
+
+        # Removing markdown ```
+        while code.startswith('```python\n'):
+            index = len('```python')
+            code = code[index + 1:].strip()
+
+        while code.strip()[-1] == '`':
+            index = code.rfind('`')
+            code = code[:index].strip()
+
+    return code.strip()
+
 # Reads the contents of state['file_path']
 def read_state_file(state: InputSchema) -> str:
     '''
@@ -562,12 +618,16 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
 
         response = safe_invoke(tool_adder, prompt).content
 
+        cleaned_response = clean_llm_output(response)
+
         with open(state['file_path'], 'w', encoding='utf-8') as f:
-            f.write(response)
+            f.write(cleaned_response)
 
         return state
     except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc()
+
         return state
 
 # The Software Engineer node where the Software Engineer is prompted to call the tools
@@ -575,7 +635,7 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
     '''
     This node calls the Software Engineer to implement the code with the help of various tools.
     Available tools:
-    - write_code_to_file
+    - replace_code
     - call_coder
     - disapprove_and_comment_on_coder_code
     - approve_function_code
@@ -587,6 +647,8 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
     '''
     print_function_name() if DEBUG else None
 
+    global coders, code_issues, imports
+
     try:
         # prompt
         # A simple line to guide the Software Engineer through the process
@@ -597,21 +659,21 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
                 last_prompt = '\n# Next Step:\nApprove requests, Approve code, Disapprove code: using the respective tools.\n\n'
 
         # Get the code issues from the Quality Assurance
-        issues = ''
+        issues = '' # TODO: add indexing
         for issue_schema in code_issues.issues:
             issue = issue_schema.issue
             comment = issue_schema.comment
             if comment:
-                issues += f'{issue}\n    Comment: {comment} (Do not include comment in the `code_issue_resolved` tool call)\n'
+                issues += f'- Issue: {issue}\n    Comment: {comment} (Do not include comment in the `code_issue_resolved` tool call)\n\n'
             else:
-                issues += f'{issue}\n'
+                issues += f'- Issue: {issue}\n\n'
 
         code_issues_prompt = prompts.CODE_ISSUES_SECTION.format(
             code_issues= issues
         ) if issues else ''
 
         # Files under file_path/..
-        files = '\n- '.join([Path(state['file_path']).parent])
+        files = '\n- '.join([f.name for f in Path(state['file_path']).parent.iterdir() if f.is_file()])
         
         # Get the implemented functions from the Coders that have not been approved or disapproved yet
         functions = '\n\n---\n\n'.join([
@@ -626,6 +688,9 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
             for _, coder_schema in coders.items()
             if coder_schema.disapproved
         ])
+
+        # Parse the imports
+        parsed_imports = '\n'.join([f'- {f}' for f in imports])
         
         prompt = prompts.SOFTWARE_ENGINEER_PROMPT.format(
             file_path= state['file_path'],
@@ -634,6 +699,7 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
             files= files,
             functions= functions,
             disapproved_functions= disapproved_functions,
+            imports= parsed_imports,
             code_issues= code_issues_prompt,
         ) + last_prompt
 
@@ -754,6 +820,7 @@ def after_software_engineer(state: InputSchema) -> Literal['last_check', 'softwa
 
     # Plain language response
     if not will_tool_call(state['messages']):
+        print(f'{BLUE}[NODE] [INFO] [NO TOOL CALL]{RESET} Back to Software Engineer') if DEBUG else None
         return 'software_engineer_node'
     
     # Get the last message and extract the tool calls
@@ -762,28 +829,33 @@ def after_software_engineer(state: InputSchema) -> Literal['last_check', 'softwa
 
     # If the last message is not a tool call, go back to the coder node
     if tool_calls is []:
+        print(f'{BLUE}[NODE] [INFO] [NO TOOL CALL]{RESET} Back to Software Engineer') if DEBUG else None
         return 'software_engineer_node'
     
     # Get the names of all called tools
     called_tools = []
     for tool_call in tool_calls:
         if 'function' in tool_call:
-            called_tools.append(tool_call['function']['name'])
+            called_tools.append((tool_call['function']['name'], tool_call['function']['args']))
 
         else:
-            called_tools.append(tool_call['name'])
+            called_tools.append((tool_call['name'], tool_call['args']))
 
-    print(f'{BLUE}[NODE] [INFO] [CALLED TOOLS]{RESET} {called_tools}') if DEBUG else None
+    formatted_called_tools = '\n- '.join([f'{tool_name} {args}' for (tool_name, args) in called_tools])
+    print(f'{BLUE}[NODE] [INFO] [CALLED TOOLS]{RESET} {formatted_called_tools}') if DEBUG else None
 
     # If the tool is the output tool (submit_final_code), go to the output node
-    if 'submit_final_code' in called_tools:
+    if 'submit_final_code' in [called_tool[0] for called_tool in called_tools]:
+        print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} submit_final_code') if DEBUG else None
         return 'last_check'
     
     # If the last tool call has the approve_function_code, approve_function_proposals, add_imports tools
-    if any(called_tool in ['approve_function_code', 'approve_function_proposals', 'add_imports'] for called_tool in called_tools):
+    if any(called_tool[0] in ['approve_function_code', 'approve_function_proposals', 'add_imports'] for called_tool in called_tools):
+        print(f'{BLUE}[NODE] [INFO] [APPROVAL TOOL CALL]{RESET} approve_tool') if DEBUG else None
         return 'approve_tool'
 
     # Else, go to the tool node
+    print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} tools') if DEBUG else None
     return 'tools'
 
 # This conditional logic is used to determine what to do after the Quality Assurance: Pass the last check, or go back to the Software Engineer to fix the issues
@@ -813,8 +885,9 @@ software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
-software_engineer_graph.add_edge(START, 'add_tool_sections')
-software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
+# software_engineer_graph.add_edge(START, 'add_tool_sections')
+# software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
+software_engineer_graph.add_edge(START, 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
     after_software_engineer,
