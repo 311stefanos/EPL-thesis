@@ -445,7 +445,7 @@ def build_workflow(bundle) -> str:
         ])
         
         # Edge function
-        edge_map = '\n'.join([f'        "{to_node}": {to_node},' for to_node in to_nodes])
+        edge_map = '\n'.join([f'        "{to_node}": "{to_node}",' for to_node in to_nodes])
         edge_function = '\n'.join([
             f'{graph_name}_graph.add_conditional_edges(',
             f'    "{from_node}",' ,

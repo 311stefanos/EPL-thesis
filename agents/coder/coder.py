@@ -12,6 +12,8 @@
     - `software_engineer_instructions: str`: The instructions from the software engineer.
     - `previous_outputs: List[OutputSchema]`: A list of previous outputs. Used by the Software Engineer.
     - `comments: List[str]`: A list of comments. Used by the Software Engineer.
+    - `previous_implementation: Optional[OutputSchema]`: A previous implementation. Used for the output.
+    - `reviewer_comments: Optional[str]`: A comment from the reviewer.
 3. Invoke the app.
 4. Get the output dict with the following keys:
     - `code: str`: The implemented code of the function.
@@ -35,7 +37,9 @@ graph_input = {
     'function_name': 'macro_calculation',
     'software_engineer_instructions': 'Implement the macro_calculation function.',
     'previous_outputs': [],
-    'comments': []
+    'comments': [],
+    'previous_implementation': None,
+    'reviewer_comments': None
 }
 
 response = coder_app.invoke(graph_input)
@@ -71,10 +75,11 @@ from operator import add
 from dotenv import load_dotenv
 from pathlib import Path
 import traceback
+import json
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, USER_APPROVALS
 from agents.coder import prompts
 
 
@@ -132,11 +137,14 @@ class InputSchema(MessagesState):
     previous_outputs: Annotated[List['OutputSchema'], add] = Field(description= 'The previous outputs you provided.')
     comments: Annotated[List[str], add] = Field(description= 'The comments the software engineer provided.')
 
+    previous_implementation: Optional['OutputSchema']
+    reviewer_comments: Optional[str]
+
 ''' Output Schema '''
 class OutputSchema(BaseModel):
     code: str = Field(description= 'The implemented code of the function.')
-    proposals: Optional[List[FunctionProposal]] = Field(description= 'The requested proposals.')
-    imports: Optional[List[str]] = Field(description= 'The requested imports. Every string should correspond to a line of `from * import *` or `import *`.')
+    proposals: Optional[List[FunctionProposal]] = Field(description= 'The requested proposals.', default= None)
+    imports: Optional[List[str]] = Field(description= 'The requested imports that dont already exist. Every string should correspond to a line of `from * import *` or `import *`.', default= None)
 
 
 
@@ -150,33 +158,48 @@ tavily_search = TavilySearch(
 
 # Output tool. Called when the agent is done, and ends the workflow.
 @tool(description= 'Submit the final single-function implementation (and optional function/tool proposals)')
-def output_tool(code: str, proposals: Optional[Union[List[FunctionProposal],str]] = None) -> OutputSchema:
+def output_tool(code: str, proposals: Optional[Union[List[FunctionProposal],str]] = None, imports: Optional[Union[List[str],str]] = None) -> OutputSchema:
     '''
     Submit the final single-function implementation (and optional function/tool proposals).
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
+    # Parse proposals
     if proposals and proposals in ['None', '[]']:
         proposals = None
+
+    elif proposals and isinstance(proposals, str):
+        proposals = json.loads(proposals)
+
+    # Parse imports
+    if imports and imports in ['None', '[]']:
+        imports = None
+
+    elif imports and isinstance(imports, str):
+        imports = json.loads(imports)
         
-    return OutputSchema(code= code, proposals= proposals)
+    return OutputSchema(code= code, proposals= proposals, imports= imports)
 
 # List of tools
-tools = [tavily_search, output_tool] # , github_tool, stackoverflow_tool
+tools = [tavily_search] # TODO:, github_tool, stackoverflow_tool
 # Dictionary of tools: tool name -> tool
-tools_by_name = {tool.name: tool for tool in tools}
+tools_by_name = {tool.name: tool for tool in tools + [output_tool]}
 
 
 
 ''' LLM '''
 brainstormer = myChatOpenAI(
     temperature= 0.8,
-    model= 'xiaomi/mimo-v2-flash:free'
+    model= 'arcee-ai/trinity-mini:free'
 )
 
 coder = myChatOpenAI(
     temperature= 0.5,
-    model= 'xiaomi/mimo-v2-flash:free'
-).bind_tools(tools)
+    model= 'mistralai/devstral-2512:free'
+).bind_tools(tools + [output_tool])
+
+reviewer = myChatOpenAI(
+    temperature= 0.2
+)
 
 
 
@@ -195,6 +218,19 @@ def read_state_file(state: InputSchema) -> str:
     with open(state['file_path'], 'r', encoding='utf-8') as f:
         code = f.read()
     return code
+
+# Returns true when the agent already called the tavily tool
+def was_tavily_called(state: InputSchema) -> bool:
+    '''
+    `was_tavily_called` returns true when the agent already called the tavily tool
+    
+    `Args:`
+        state (InputSchema): The state of the agent. Must have the key 'messages'.
+
+    `Returns:`
+        was_tavily_called: bool
+    '''
+    return any([mes.tool_name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage)])
 
 
 
@@ -253,12 +289,18 @@ def coder_node(state: InputSchema) -> InputSchema:
             for i, (po, comm) in enumerate(zip(state['previous_outputs'], state['comments']), start= 1)
         ])
 
+        prev = prompts.PREV.format(
+            previous_implementation= state['previous_implementation'].code,
+            reviewer_comments= state['reviewer_comments']
+        ) if state['previous_implementation'] else ''
+
         prompt = prompts.CODE_PROMPT.format(
             code= read_state_file(state),
             function_name= state['function_name'],
             special_instructions= state['software_engineer_instructions'],
             history= history,
-            tool_history= [mes.pretty_repr() for mes in state.get('messages', [])]
+            tool_history= '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])]),
+            prev= prev
         )
 
         # call the LLM
@@ -275,7 +317,7 @@ def coder_node(state: InputSchema) -> InputSchema:
         return {'messages': AIMessage(content= '')}
 
 # This node executes the output tool, and ends the workflow
-def output_node(state: InputSchema) -> OutputSchema:
+def parse_output_tool(state: InputSchema) -> InputSchema:
     '''
     This node executes the output tool, and ends the workflow.
     '''
@@ -306,30 +348,72 @@ def output_node(state: InputSchema) -> OutputSchema:
         # Add the proposals key if the LLM skipped it.
         if 'proposals' not in args:
             args['proposals'] = []
+        # Add the imports key if the LLM skipped it.
+        if 'imports' not in args:
+            args['imports'] = []
 
         # Execute the tool
         output: OutputSchema = tool.invoke(args)
 
         print(f'{BLUE}[NODE] [INFO] [OUTPUT]{RESET} {output}') if DEBUG else None
         
-        return output
+        return {'previous_implementation': output}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
-        return OutputSchema(code= '', proposals= None)
+        return state
+    
+# This node calls a reviewer to review the code and provide feedback
+def review_node(state: InputSchema) -> InputSchema:
+    '''
+    This node calls a reviewer to review the code and provide feedback
+    '''
+    print_function_name() if DEBUG else None
+    
+    try:
+        # prompt
+        prompt = prompts.REVIEW_PROMPT.format(
+            code= read_state_file(state),
+            function_name= state['function_name'],
+            special_instructions= state['software_engineer_instructions'],
+            previous_implementation= state['previous_implementation'].code,
+            issues= state['reviewer_comments']
+        )
+
+        # call the LLM
+        response = safe_invoke(reviewer, [SystemMessage(content= prompt)]).content
+
+        print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
+
+        return {'reviewer_comments': response}
+
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return {'messages': [AIMessage(content= '')]}
+
+# This node just returns the output
+def output_node(state: InputSchema) -> OutputSchema:
+    '''
+    This node just returns the output located in the state.
+    '''
+    print_function_name() if DEBUG else None
+
+    return state['previous_implementation']
 
 
 
 ''' Conditional Functions '''
 # This node is called to decide the next step of the coder_node
-def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'output_node', 'coder_node']:
+def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'parse_output_tool', 'coder_node']:
     '''
     This node is called to decide the next step of the coder_node.
     Possible return values: 
         - 'tool_node': When the agent called a tool, except the output tool.
-        - 'output_node': When the agent called the output tool.
+        - 'parse_output_tool': When the agent called the output tool, to go for a code review.
         - 'coder_node': When the agent did not call a tool, or an error occured.
     '''
     print_function_name() if DEBUG else None
@@ -350,10 +434,14 @@ def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'output_node', 
 
         # If the tool is the output tool, go to the output node
         if tool_call['name'] == 'output_tool':
-            return 'output_node'
-        # Else, go to the tool node
-        else:
+            return 'parse_output_tool'
+        # Else, check if the tool is tavily called
+        # If not go to the tool node
+        elif not was_tavily_called(state):
             return 'tool_node'
+        # Else, go back to the coder node
+        else:
+            return 'coder_node'
 
     # If an error occured, go to the coder node
     except Exception as e:
@@ -362,6 +450,41 @@ def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'output_node', 
 
         return 'coder_node'
 
+# This node is called to decide the next step of the parse_output_tool
+def already_reviewed(state: InputSchema) -> Literal['output_node', 'review_node']:
+    '''
+    This node is called to decide the next step of the parse_output_tool.
+    Possible return values: 
+        - 'output_node': When the agent already reviewed the output.
+        - 'review_node': When the agent did not review the output.
+    '''
+    print_function_name() if DEBUG else None
+
+    # If already reviewed, go to the output node
+    if state['reviewer_comments']:
+        return 'output_node'
+    # Else, go to the review node
+    else:
+        return 'review_node'
+
+# This node is called to decide the next step of the review_node
+def passed_review_node(state: InputSchema) -> Literal['output_node', 'coder_node']:
+    '''
+    This node is called to decide the next step of the review_node.
+    Possible return values: 
+        - 'output_node': When the agent passed the review.
+        - 'coder_node': When the agent did not pass the review.
+    '''
+    print_function_name() if DEBUG else None
+
+    # Passed review
+    if state['reviewer_comments'] in USER_APPROVALS:
+        return 'output_node'
+    # Else, go to the coder node
+    else:
+        return 'coder_node'
+
+
 
 ''' Graph '''
 coder_graph = StateGraph(InputSchema, output_schema= OutputSchema)
@@ -369,6 +492,8 @@ coder_graph = StateGraph(InputSchema, output_schema= OutputSchema)
 coder_graph.add_node('solution_brainstorm_node', solution_brainstorm_node)
 coder_graph.add_node('coder_node', coder_node)
 coder_graph.add_node('tool_node', ToolNode(tools)) # ToolNode with all the tools excluding the output tool
+coder_graph.add_node('parse_output_tool', parse_output_tool)
+coder_graph.add_node('review_node', review_node)
 coder_graph.add_node('output_node', output_node)
 
 coder_graph.add_edge(START, 'solution_brainstorm_node')
@@ -378,11 +503,27 @@ coder_graph.add_conditional_edges(
     tool_node_or_end,
     {   # Not needed, for clarity
         'tool_node': 'tool_node',
-        'output_node': 'output_node',
+        'parse_output_tool': 'parse_output_tool',
         'coder_node': 'coder_node'
     }    
 )
 coder_graph.add_edge('tool_node', 'coder_node')
+coder_graph.add_conditional_edges(
+    'parse_output_tool',
+    already_reviewed,
+    {   # Not needed, for clarity
+        'output_node': 'output_node',
+        'review_node': 'review_node'
+    }
+)
+coder_graph.add_conditional_edges(
+    'review_node',
+    passed_review_node,
+    {   # Not needed, for clarity
+        'output_node': 'output_node',
+        'coder_node': 'coder_node'
+    }
+)
 coder_graph.add_edge('output_node', END)
 
 coder_app = coder_graph.compile(checkpointer= MemorySaver())
@@ -419,11 +560,13 @@ if __name__ == '__main__':
 
     user = InputSchema(
         messages= [],
-        file_path= '../../creations/fitness_program_generator/fitness_program_generator.py',
-        function_name= 'macro_calculation',
-        software_engineer_instructions= 'Implement the macro_calculation function.',
+        file_path= '..\..\creations\whatsapp_menu_suggestion_workflow\whatsapp_menu_suggestion_workflow.py',
+        function_name= 'suggest_list',
+        software_engineer_instructions= 'Implement the suggest_list function. Use the docstring to guide you.',
         previous_outputs= [],
-        comments= []
+        comments= [],
+        previous_implementation= None,
+        reviewer_comments= None
     )
     response = coder_app.invoke(user, config= config)
 

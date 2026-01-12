@@ -242,6 +242,7 @@ Your output will be parsed into the schema above; return only that object.
     - You should not include any functions regarding the parsing the LLM's output.
 3) Always prioritise user feedback below the `Previous Conversation` section for your response.
 4) Closely follow any `Helpful Functions:` section in each node docstring.
+5) A helpful function cannot be called by an llm nor can it change the state schema. It may use the state schema as a parameter.
 '''
 
 
@@ -339,6 +340,8 @@ Your output will be parsed into the schema above; return only that object.
 1) Only add tools you can justify. If the annotator did not specify a tool, probably a tool is not needed.
 2) Always prioritise user feedback below the `Previous Conversation` section for your response.
 3) Closely follow any `Tools:` section in each node docstring.
+4) A tool can be called by an LLM.
+5) A tool cannot change the state schema, nor can it receive it as an argument.
 '''
 
 
