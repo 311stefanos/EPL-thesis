@@ -255,7 +255,7 @@ Do not call multiple tools at the same time.
     3. When you receive the coder's output and carefully reviewed it using the current file and requirements. You may either: 
         - **Only when you genuinely need more context in order to decide**, call `call_coder(...)` again - this should be rare.
         - Otherwise (most of the time):
-            - `approve_function_code(...)` if it is correct and acceptable.
+            - `approve_function_code(...)` if it is correct and acceptable. You may only aoorive if the funtcoin will work, if it has any issue the program will fail.
             - `disapprove_and_comment_on_coder_code(...)` if it is incorrect.
             - `approve_function_proposals(...)` if you want to accept proposals.
             - For very small tweaks, you may first approve and then use `replace_code(...)` to make tiny local edits.

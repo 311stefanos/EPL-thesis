@@ -166,9 +166,7 @@ def answer_question(state: InputSchema) -> InputSchema:
         if not state.get('questions_answers'):
             state['questions_answers'] = []
         # Append the question and answer to state
-        state['questions_answers'].append(QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.'))
-
-        return state
+        return {'question_answers': [QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.')]}
     
     # If the LLM could not follow the Pydantic Schema, ask the user
     except PydanticValidationError as e:

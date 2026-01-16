@@ -20,6 +20,7 @@ Special instructions: {special_instructions}
 5) You should highlight pros and cons of each solution. Required.
 6) You may include code examples and snippets for each solution, no more that a few lines each. Optional.
 7) Follow the output format below. Required.
+8) You should follow the docstring of the function you are implementing. Do not go off track. Required.
 
 # Inputs - As sources of truth
 - The whole codebase (use it as a reference):
@@ -102,15 +103,17 @@ Your job is to
 </TOOL_HISTORY_END>
 {prev}
 
-# Hard Instructions
+# Hard Instructions - The most important section
 1) Use all provided inputs to guide your implementation. Give extra priority to the `Special Instruction` section and the `Prior Implementations` section.
 2) If you think you can confidently implement the function, use the `output_tool` tool.
 3) If you think you cannot confidently implement the function, use the `tavily_search` tool or respond with your thought process using plain language.
 4) Use the provided tool code structure as a reference to guide the implementation. You may make small necessary changes to fit your implementation.
 5) You should respect the `.with_structured_output` and `.bind_tools` methods of the LLM you are using.
-6) Do not import anything. You may use the any library you want, just add the imports to the `output_tool`.
+6) Do not import anything. You may use the any library you want, just add the imports to the `output_tool` in the `imports` key.
 7) Whenever possible you should include type annotations for the used variables. e.g. `var1: int = state['var_1']`
 8) You should use type annotations to make the code more readable and maintainable.
+9) You should understand how to access the `state` dictionary. If the state is `BaseModel`, you can access it like `state.key`, otherwise you can should `state['key']`
+10) You should not change the docstring, except if you make adjustments, or add new information.
 
 # Catastrophic Failure Condition
 1. You may not import anything on the code you provide.
@@ -176,7 +179,7 @@ You have the following tools available to you:
     - `query`: The query to search for.
 You should not call tavily_search more than once.
 - output_tool(code: str, proposals: Optional[List[FunctionProposal]]= None) -> OutputSchema: Use this whenever you are ready to implement the code. When you use this tool, you officially submit your code to the Software Engineer.
-    - `code`: The implemented code of the function only.
+    - `code`: The implemented code of the function only. **DO NOT** include any import in line. If you need imports, add them in the `imports` key.
     - `proposals` (Optional[List[FunctionProposal]]) **NOT** a string: request helpers/tools you need. Each must include:
         - function_type: "helper_function" | "tool"
         - function_name
@@ -189,9 +192,9 @@ You should not call tavily_search more than once.
 
 PREV = '''
 ## Previous Implementation and Comments by a Reviewer
-<YOUR_PREEVIOUS_IMPLEMENTATION_START>
+<YOUR_PREVIOUS_IMPLEMENTATION_START>
 {previous_implementation}
-<YOUR_PREEVIOUS_IMPLEMENTATION_END>
+<YOUR_PREVIOUS_IMPLEMENTATION_END>
 You must follow the rules and guidelines given by the reviewer before submitting the code.
 <YOUR_REVIEWER_COMMENTS_START>
 {reviewer_comments}
@@ -214,6 +217,9 @@ Your job:
 <CODE_START>
 {code}
 </CODE_END>
+<ADDITIONAL_IMPORTS_START>
+{additional_imports}
+</ADDITIONAL_IMPORTS_END>
 
 - You must review the function named: {function_name}
 

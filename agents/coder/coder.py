@@ -177,6 +177,12 @@ def output_tool(code: str, proposals: Optional[Union[List[FunctionProposal],str]
     elif imports and isinstance(imports, str):
         imports = json.loads(imports)
         
+    # If the coder imported in line, remove it
+    if imports:
+        for import_ in imports:
+            if import_ in code:
+                code = code.replace(import_, '')
+
     return OutputSchema(code= code, proposals= proposals, imports= imports)
 
 # List of tools
@@ -189,7 +195,7 @@ tools_by_name = {tool.name: tool for tool in tools + [output_tool]}
 ''' LLM '''
 brainstormer = myChatOpenAI(
     temperature= 0.8,
-    model= 'arcee-ai/trinity-mini:free'
+    model= 'mistralai/devstral-2512:free'
 )
 
 coder = myChatOpenAI(
@@ -198,7 +204,8 @@ coder = myChatOpenAI(
 ).bind_tools(tools + [output_tool])
 
 reviewer = myChatOpenAI(
-    temperature= 0.2
+    temperature= 0.2,
+    model= 'google/gemma-3n-e2b-it:free'
 )
 
 
@@ -376,6 +383,7 @@ def review_node(state: InputSchema) -> InputSchema:
         # prompt
         prompt = prompts.REVIEW_PROMPT.format(
             code= read_state_file(state),
+            additional_imports= state['previous_implementation'].imports,
             function_name= state['function_name'],
             special_instructions= state['software_engineer_instructions'],
             previous_implementation= state['previous_implementation'].code,
@@ -561,8 +569,8 @@ if __name__ == '__main__':
     user = InputSchema(
         messages= [],
         file_path= '..\..\creations\whatsapp_menu_suggestion_workflow\whatsapp_menu_suggestion_workflow.py',
-        function_name= 'suggest_list',
-        software_engineer_instructions= 'Implement the suggest_list function. Use the docstring to guide you.',
+        function_name= 'generate_suggestions',
+        software_engineer_instructions= 'Implement the generate_suggestions function. Use the docstring to guide you.',
         previous_outputs= [],
         comments= [],
         previous_implementation= None,
