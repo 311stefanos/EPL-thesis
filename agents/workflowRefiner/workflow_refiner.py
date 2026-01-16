@@ -150,13 +150,14 @@ class WorkflowGraph(BaseModel):
     type: Literal['reactive_conversational', 'linear_pipeline', 'planner_executor', 'hybrid'] = Field(
         description= 'The type of the workflow.'
     )
+    memory: bool = Field(description= 'Whether the workflow uses memory.')
     name: str = Field(description= 'The name of the workflow.')
     nodes: List[WorkflowNode] = Field(description= 'The nodes of the workflow.')
     edges: List[WorkflowEdge] = Field(description= 'The edges of the workflow.')
     description: str = Field(description= 'The description of the workflow; and the why.')
 
     def __str__(self) -> str:
-        title_bar = f'╭─ {self.name} [{self.type}] ─────'
+        title_bar = f'╭─ {self.name} [{self.type}] ─────' + (' with memory ─────' if self.memory else '')
         desc_block = f'│ {self.description}'
         nodes_block = '│\n│ Nodes:\n' + '\n'.join(f'│   {str(node)}' for node in self.nodes) if self.nodes else '│ Nodes: (none)'
         edges_block = '│\n│ Edges:\n' + '\n'.join(f'│   {str(edge)}' for edge in self.edges) if self.edges else '│ Edges: (none)'
@@ -220,11 +221,13 @@ tavily_search = TavilySearch(
 
 ''' LLM '''
 clarifier = myChatOpenAI(
-    temperature= 0.7
+    temperature= 0.7,
+    model= 'mistralai/devstral-2512:free'
 ).bind_tools([tavily_search])
 
 workflow_engineer = myChatOpenAI(
-    temperature= 0.7
+    temperature= 0.7,
+    model= 'mistralai/devstral-2512:free'
 ).with_structured_output(WorkflowBundle)
 
 
@@ -441,18 +444,23 @@ if __name__ == '__main__':
     user = InputSchema(
         orchestrator= False,
         user_input= 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link of a menu, it can give me suggestions. after i can comment on the food i ate, and it should update its memory-db.', 
-        clarified_user_input= '''A WhatsApp-integrated food and drink preference agent that maintains persistent user profiles in local JSON storage. The agent receives menu inputs through three channels: photos processed via OpenRouter's free vision models (like `google/gemini-2.0-flash-exp:free`) for OCR text extraction, URLs scraped with requests/BeautifulSoup, and PDFs parsed with PyMuPDF/pdfplumber. It provides ranked dish suggestions with brief explanations by matching menu items against stored preferences: dietary restrictions, cuisine types, flavor profiles (spicy/sweet/salty/bitter/sour), price range tiers, favorite/disliked ingredients, and specific dish preferences. After meals, the agent engages in free-form conversation to collect feedback, uses an LLM to parse preference updates from the dialogue, and immediately appends these to the user's JSON profile. Multiple users are supported via username identification. The system runs as a Flask web app with Twilio WhatsApp integration, using ngrok for local webhook testing. Suggestions are generated in real-time upon receiving menu input, and preference memory updates occur after each feedback conversation session.
+        clarified_user_input= '''The agent will store and manage user-specific food and drink preferences, including dietary restrictions and allergies, in a structured JSON file. Upon receiving a menu (via photo, link, or text), it will parse the content in a single step and generate a ranked list of recommendations with clear explanations for each suggestion. The agent will support multiple user profiles, adapt over time based on feedback, and operate exclusively within the scope of menu items. It will engage users conversationally with a friendly tone in English, functioning as a WhatsApp chatbot without relying on external tools.
 
-- **role**: Food/drink preference agent with menu analysis, suggestion generation, and dynamic memory updating
-- **scope/boundaries**: WhatsApp messaging via Twilio API, local JSON file storage on hosting PC, handles photos/URLs/PDFs for menu input, provides personalized suggestions, parses free-form feedback conversations for preference updates, supports multiple username-based user profiles
-- **inputs/data sources**: WhatsApp messages (text, images, links), OpenRouter vision API for OCR, web scraping with requests/BeautifulSoup for URL content, PyMuPDF/pdfplumber for PDF text extraction, local JSON file for user preference database
-- **outputs/format**: Ranked list of menu items with brief explanations (e.g., "1. Margherita Pizza - matches your preference for vegetarian, mid-range, and mozzarella cheese"), conversational responses for feedback collection
-- **constraints (cost/latency/safety/style/language)**: Use OpenRouter free tier models for cost efficiency, local JSON storage only (no cloud databases), natural language conversation style, handle one user conversation at a time, web scraping with reasonable rate limits
-- **preference categories to track**: Dietary restrictions (allergies, vegetarian, vegan, gluten-free), cuisine preferences (Italian, Asian, Mexican, etc.), flavor profiles (spicy, sweet, salty, bitter, sour), price range (budget, mid-range, premium), favorite ingredients, disliked ingredients, specific dish preferences (e.g., "likes pasta with cream sauce")
-- **feedback processing**: Free-form conversation about meals eaten, LLM-powered extraction of preference updates, immediate JSON append after conversation ends
-- **technical implementation**: Flask web app with `/webhook` endpoint for Twilio, ngrok for local HTTPS tunneling, preference JSON structure with username keys, OCR fallback chain (OpenRouter vision → text extraction), web scraping with error handling
-- **menu processing workflow**: Photo → OpenRouter vision → text extraction → parsing; URL → requests/BeautifulSoup → content extraction; PDF → PyMuPDF/pdfplumber → text extraction → parsing
-- **suggestion ranking logic**: Match against dietary restrictions, score by cuisine/flavor/price alignment, exclude disliked items, rank by preference fit, include brief explanation for each item'''
+**Agent-Creation Essentials:**
+- **Role:** Personalized menu recommendation assistant.
+- **Scope/Boundaries:** Focused solely on food/drink menu items; no external tool usage.
+- **Inputs/Data Sources:** Menu data (photo/link/text), user preferences (JSON file), user feedback.
+- **Outputs/Format:** Ranked list of menu recommendations with explanations; conversational responses.
+- **Constraints:**
+  - Language: English only.
+  - Style: Friendly, interactive tone.
+  - Latency: Single-step menu parsing.
+  - Safety: No external tools; data stored locally (JSON).
+- **Key Preferences:**
+  - Multi-user profile support.
+  - Adaptive learning from feedback.
+  - Deployment as a WhatsApp chatbot.
+- **Deadlines:** None specified.'''
     )
     response: OutputSchema = workflow_refiner_app.invoke(user, config= config)
     
