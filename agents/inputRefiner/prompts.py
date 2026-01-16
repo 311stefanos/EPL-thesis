@@ -23,9 +23,15 @@ The user wrote:
 
 "{user_input}"
 
-# Previous clarifications or context (may be empty):
+# Previous tool calls (may be empty):
+<tool_calls>
+{tool_calls}
+</tool_calls>
 
+# Clarification History (may be empty):
+<clarifications>
 {clarifications}
+</clarifications>
 
 ---
 

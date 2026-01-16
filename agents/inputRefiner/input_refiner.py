@@ -79,12 +79,11 @@ from langchain_tavily import TavilySearch
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState, add_messages
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import TypedDict, Annotated, List, Literal
+from typing import TypedDict, Annotated, List, Literal, Tuple
 from pydantic import BaseModel, Field
 
 # General imports
@@ -139,6 +138,9 @@ class IntermediateSchema(MessagesState): # A lit of the messages
         description= 'If it should call the orchestrator to get the inputs.',
         default= False
     )
+    qna: List[Tuple[str, str]] = Field(
+        description= 'The user answers to the clarifying questions.'
+    )
     # The user's input, grammatically corrected
     corrected_original: str = Field(
         description= 'The original request with grammar and spelling fixed, vocabulary unchanged.'
@@ -179,17 +181,20 @@ tavily_search = TavilySearch(
 ''' LLM '''
 # The LLM used to correct the user's input
 correcter =  myChatOpenAI(
-    temperature= 0
+    temperature= 0,
+    model= 'mistralai/devstral-2512:free'
 )
 
 # The LLM used to clarify the user's input with questions and assumptions
 clarifier = myChatOpenAI(
-    temperature= 0.8
+    temperature= 0.8,
+    model= 'mistralai/devstral-2512:free'
 ).bind_tools([tavily_search])
 
 # The LLM used to refine the user's input
 refiner = myChatOpenAI(
-    temperature= 0.7
+    temperature= 0.7,
+    model= 'mistralai/devstral-2512:free'
 )
 
 
@@ -216,6 +221,7 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         return {
             'orchestrator': state['orchestrator'],
             'messages': [HumanMessage(content= corrected)],
+            'qna': [],
             'corrected_original': corrected,
             'refinements': [],
             'user_requests': []
@@ -228,6 +234,7 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         return {
             'orchestrator': state['orchestrator'],
             'messages': [HumanMessage(content= state['user_input'])],
+            'qna': [],
             'corrected_original': state['user_input'],
             'refinements': [],
             'user_requests': []
@@ -241,18 +248,19 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
     print_function_name() if DEBUG else None
     
     if DEBUG and isinstance(state['messages'][-1], ToolMessage): # The ToolNode added a message.
-        print(f'{GREEN}[NODE] [TAVILY RESULT]{RESET} {state["messages"][-1].content}')
+        print(f'{BLUE}[NODE] [TAVILY RESULT]{RESET} {state["messages"][-1].content}')
         
     try:
         # prompt
         prompt = prompts.CLARIFICATION_PROMPT.format(
             user_input= state['corrected_original'],
-            clarifications= '\n---\n'.join([mess.content for mess in state['messages'][1:]])
+            tool_calls= '\n---\n'.join([mess.content for mess in state['messages'][1:]]),
+            clarifications= '\n\n'.join([f'Question: {qna[0]}\nAnswer: {qna[1]}' for qna in state['qna']])
         )
         # call the LLM
         clarification = safe_invoke(clarifier, [SystemMessage(content= prompt)])
 
-        print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
+        print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
 
         # If no further clarifications are needed, wrap it in an AIMessage
         if 'no clarification needed' in clarification.content.lower():
@@ -276,16 +284,16 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             }
             user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
             # Wrap it in an AIMessage, and the answer in a HumanMessage
-            new_messages = [AIMessage(content = user_input['qna'].question), HumanMessage(content= user_input['qna'].answer)]
+            new_qna = (user_input['qna'].question, user_input['qna'].answer)
 
         else:
             # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
             print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
             
             user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ') 
-            new_messages = [AIMessage(content = clarification.content), HumanMessage(content= user_input)]
+            new_qna = (clarification.content, user_input)
 
-        return {'messages': new_messages}
+        return {'qna': state['qna'] + [new_qna]}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -467,7 +475,7 @@ if __name__ == '__main__':
 
     # user = {'user_input': 'i want a math helper', 'orchestrator': True}
     user = {
-        'user_input': 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link of a menu, it can give me suggestions. after i can comment on the food i ate, and it should update its memory-db.', 
+        'user_input': 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link/text of a menu, it can give me suggestions. whenever i want it to be conversational and interactive.', 
         'orchestrator': False
     }
     response = input_refiner_app.invoke(user, config= config)
