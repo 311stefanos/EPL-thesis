@@ -46,6 +46,106 @@ Use this section to guide your process.
 {history}
 </HISTORY_END>
 
+## LangChain + LangGraph Runtime (must follow)
+
+This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for graph execution.
+
+### 1) What a LangGraph run is
+- One inbound event triggers one graph run (one invocation).
+  - Typical trigger: a single user message arriving via webhook.
+- A run is synchronous. It starts at START and follows edges until END.
+- Nodes cannot pause. Nodes must finish quickly and return an updated state.
+
+### 2) What state is (the only memory source)
+- The graph state is a Python dict-like object.
+- A LangGraph checkpointer persists this state across runs for the same conversation thread.
+- This persisted state is the only memory you can rely on.
+- Common persisted keys:
+  - messages: ordered list of conversation messages
+  - mode / next_action: what the workflow is waiting for next
+  - pending_question: the last question asked and what would satisfy it
+  - last_seen_event_id: dedupe key for retried webhook events
+
+### 3) How “user input” works (turn-based, re-invoked)
+- The system never waits inside the graph for the user to reply.
+- If the workflow needs the user to respond, it must do ALL of the following:
+  1) produce one outbound assistant message to the user,
+  2) set state.mode or state.next_action describing what it expects next,
+  3) optionally set state.pending_question,
+  4) transition to END for that run.
+- When the user replies later:
+  - a new inbound event triggers a new run,
+  - the run loads the persisted state via the checkpointer,
+  - the new user message is appended to state.messages,
+  - the start routing (or the chat node) uses mode/next_action to decide the next step.
+
+### 4) Messages (what they are, where they live)
+- Messages are an ordered conversation log, typically stored in state["messages"].
+- Message types:
+  - HumanMessage: inbound user message for this run
+  - AIMessage: assistant output produced during this run
+  - ToolMessage: tool result returned during this run
+- Nodes should read from state["messages"] to understand context and append new messages when they produce outputs.
+
+### 5) Tools (how they work)
+- A tool is a real function that the LLM may request to run.
+- Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
+- Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 6) ToolNode and the LLM-tool loop
+- In LangGraph, tool execution is commonly handled by a ToolNode.
+- Typical loop:
+  - An LLM node proposes tool calls (via bind_tools).
+  - ToolNode executes those tools and appends ToolMessages.
+  - Control returns to the LLM node to continue reasoning with the tool results.
+- A run should end after producing the intended user-visible reply (send + END).
+
+### 7) Start routing and conditional edges
+- The start of the graph should route based on persisted state (mode/next_action) and/or the newest HumanMessage.
+- Conditional edges are used to select the correct next node for the current run.
+- Never model “await input” as a node. “Await input” is always: send message + set mode/next_action + END, then resume on the next run.
+
+### 8) Practical design rules you must follow
+- Every run must either:
+  - produce one user-visible reply and then end, OR
+  - perform a bounded internal processing step and then produce a reply and end.
+- If a step requires user confirmation or more information, the node must end the run after asking, and the next run resumes based on mode/next_action.
+- If the trigger source can retry events, use last_seen_event_id to dedupe before repeating side effects.
+
+### 9) Conversational Node Contract (LangGraph, turn-based)
+A conversational node is the main decision-maker for a multi-turn chat workflow. 
+It runs once per inbound user message. It reads the conversation history from state["messages"] plus any relevant state keys.
+
+On each run, it must do exactly one of these:
+
+A) Natural-language reply
+- Generate one user-facing reply.
+- Write it to state["latest"].
+- Append it to state["messages"] as an AI message.
+- Transition to END for this run.
+- State['next_action'] must be also set where aplicable.
+
+B) Tool-driven action
+- Request one or more tool calls.
+- Treat tools as external code actions whose results return as Tool messages.
+- After tool results are available, either continue reasoning in the same node or produce the final user-facing reply and then end the run.
+
+Tool behavior must follow these rules:
+- Some tools may be non-terminal, meaning they update context or memory and then control returns to the conversational node in the same run.
+- Some tools may be terminal, meaning they produce the final user-facing output and must end the run.
+- A tool must never "wait for the user". Waiting is not a tool behavior.
+
+User input must never be awaited inside a run:
+- If the node needs more input, it must ask a single clear question.
+- It must set state["next_action"] to describe what it expects next.
+- It must write state["latest"], append the AI message to state["messages"], and end the run.
+
+Resuming the conversation:
+- When the user replies later, a new run starts.
+- The run loads persisted state via the checkpointer, appends the new Human message to state["messages"], and routes based on state["next_action"].
+
+You must design and describe nodes, schemas, tools, and annotations in a way that is consistent with these rules.
+
 # Instructions
 1) Fully annotate each node in the code with the best of your ability.
 2) Use the provided workflow to guide your annotation.
@@ -114,6 +214,106 @@ Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
+
+## LangChain + LangGraph Runtime (must follow)
+
+This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for graph execution.
+
+### 1) What a LangGraph run is
+- One inbound event triggers one graph run (one invocation).
+  - Typical trigger: a single user message arriving via webhook.
+- A run is synchronous. It starts at START and follows edges until END.
+- Nodes cannot pause. Nodes must finish quickly and return an updated state.
+
+### 2) What state is (the only memory source)
+- The graph state is a Python dict-like object.
+- A LangGraph checkpointer persists this state across runs for the same conversation thread.
+- This persisted state is the only memory you can rely on.
+- Common persisted keys:
+  - messages: ordered list of conversation messages
+  - mode / next_action: what the workflow is waiting for next
+  - pending_question: the last question asked and what would satisfy it
+  - last_seen_event_id: dedupe key for retried webhook events
+
+### 3) How “user input” works (turn-based, re-invoked)
+- The system never waits inside the graph for the user to reply.
+- If the workflow needs the user to respond, it must do ALL of the following:
+  1) produce one outbound assistant message to the user,
+  2) set state.mode or state.next_action describing what it expects next,
+  3) optionally set state.pending_question,
+  4) transition to END for that run.
+- When the user replies later:
+  - a new inbound event triggers a new run,
+  - the run loads the persisted state via the checkpointer,
+  - the new user message is appended to state.messages,
+  - the start routing (or the chat node) uses mode/next_action to decide the next step.
+
+### 4) Messages (what they are, where they live)
+- Messages are an ordered conversation log, typically stored in state["messages"].
+- Message types:
+  - HumanMessage: inbound user message for this run
+  - AIMessage: assistant output produced during this run
+  - ToolMessage: tool result returned during this run
+- Nodes should read from state["messages"] to understand context and append new messages when they produce outputs.
+
+### 5) Tools (how they work)
+- A tool is a real function that the LLM may request to run.
+- Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
+- Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 6) ToolNode and the LLM-tool loop
+- In LangGraph, tool execution is commonly handled by a ToolNode.
+- Typical loop:
+  - An LLM node proposes tool calls (via bind_tools).
+  - ToolNode executes those tools and appends ToolMessages.
+  - Control returns to the LLM node to continue reasoning with the tool results.
+- A run should end after producing the intended user-visible reply (send + END).
+
+### 7) Start routing and conditional edges
+- The start of the graph should route based on persisted state (mode/next_action) and/or the newest HumanMessage.
+- Conditional edges are used to select the correct next node for the current run.
+- Never model “await input” as a node. “Await input” is always: send message + set mode/next_action + END, then resume on the next run.
+
+### 8) Practical design rules you must follow
+- Every run must either:
+  - produce one user-visible reply and then end, OR
+  - perform a bounded internal processing step and then produce a reply and end.
+- If a step requires user confirmation or more information, the node must end the run after asking, and the next run resumes based on mode/next_action.
+- If the trigger source can retry events, use last_seen_event_id to dedupe before repeating side effects.
+
+### 9) Conversational Node Contract (LangGraph, turn-based)
+A conversational node is the main decision-maker for a multi-turn chat workflow. 
+It runs once per inbound user message. It reads the conversation history from state["messages"] plus any relevant state keys.
+
+On each run, it must do exactly one of these:
+
+A) Natural-language reply
+- Generate one user-facing reply.
+- Write it to state["latest"].
+- Append it to state["messages"] as an AI message.
+- Transition to END for this run.
+- State['next_action'] must be also set where aplicable.
+
+B) Tool-driven action
+- Request one or more tool calls.
+- Treat tools as external code actions whose results return as Tool messages.
+- After tool results are available, either continue reasoning in the same node or produce the final user-facing reply and then end the run.
+
+Tool behavior must follow these rules:
+- Some tools may be non-terminal, meaning they update context or memory and then control returns to the conversational node in the same run.
+- Some tools may be terminal, meaning they produce the final user-facing output and must end the run.
+- A tool must never "wait for the user". Waiting is not a tool behavior.
+
+User input must never be awaited inside a run:
+- If the node needs more input, it must ask a single clear question.
+- It must set state["next_action"] to describe what it expects next.
+- It must write state["latest"], append the AI message to state["messages"], and end the run.
+
+Resuming the conversation:
+- When the user replies later, a new run starts.
+- The run loads persisted state via the checkpointer, appends the new Human message to state["messages"], and routes based on state["next_action"].
+
+You must design and describe nodes, schemas, tools, and annotations in a way that is consistent with these rules.
 
 # Instructions
 1) Use the provided inputs to guide your process.
@@ -193,6 +393,106 @@ Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
+
+## LangChain + LangGraph Runtime (must follow)
+
+This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for graph execution.
+
+### 1) What a LangGraph run is
+- One inbound event triggers one graph run (one invocation).
+  - Typical trigger: a single user message arriving via webhook.
+- A run is synchronous. It starts at START and follows edges until END.
+- Nodes cannot pause. Nodes must finish quickly and return an updated state.
+
+### 2) What state is (the only memory source)
+- The graph state is a Python dict-like object.
+- A LangGraph checkpointer persists this state across runs for the same conversation thread.
+- This persisted state is the only memory you can rely on.
+- Common persisted keys:
+  - messages: ordered list of conversation messages
+  - mode / next_action: what the workflow is waiting for next
+  - pending_question: the last question asked and what would satisfy it
+  - last_seen_event_id: dedupe key for retried webhook events
+
+### 3) How “user input” works (turn-based, re-invoked)
+- The system never waits inside the graph for the user to reply.
+- If the workflow needs the user to respond, it must do ALL of the following:
+  1) produce one outbound assistant message to the user,
+  2) set state.mode or state.next_action describing what it expects next,
+  3) optionally set state.pending_question,
+  4) transition to END for that run.
+- When the user replies later:
+  - a new inbound event triggers a new run,
+  - the run loads the persisted state via the checkpointer,
+  - the new user message is appended to state.messages,
+  - the start routing (or the chat node) uses mode/next_action to decide the next step.
+
+### 4) Messages (what they are, where they live)
+- Messages are an ordered conversation log, typically stored in state["messages"].
+- Message types:
+  - HumanMessage: inbound user message for this run
+  - AIMessage: assistant output produced during this run
+  - ToolMessage: tool result returned during this run
+- Nodes should read from state["messages"] to understand context and append new messages when they produce outputs.
+
+### 5) Tools (how they work)
+- A tool is a real function that the LLM may request to run.
+- Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
+- Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 6) ToolNode and the LLM-tool loop
+- In LangGraph, tool execution is commonly handled by a ToolNode.
+- Typical loop:
+  - An LLM node proposes tool calls (via bind_tools).
+  - ToolNode executes those tools and appends ToolMessages.
+  - Control returns to the LLM node to continue reasoning with the tool results.
+- A run should end after producing the intended user-visible reply (send + END).
+
+### 7) Start routing and conditional edges
+- The start of the graph should route based on persisted state (mode/next_action) and/or the newest HumanMessage.
+- Conditional edges are used to select the correct next node for the current run.
+- Never model “await input” as a node. “Await input” is always: send message + set mode/next_action + END, then resume on the next run.
+
+### 8) Practical design rules you must follow
+- Every run must either:
+  - produce one user-visible reply and then end, OR
+  - perform a bounded internal processing step and then produce a reply and end.
+- If a step requires user confirmation or more information, the node must end the run after asking, and the next run resumes based on mode/next_action.
+- If the trigger source can retry events, use last_seen_event_id to dedupe before repeating side effects.
+
+### 9) Conversational Node Contract (LangGraph, turn-based)
+A conversational node is the main decision-maker for a multi-turn chat workflow. 
+It runs once per inbound user message. It reads the conversation history from state["messages"] plus any relevant state keys.
+
+On each run, it must do exactly one of these:
+
+A) Natural-language reply
+- Generate one user-facing reply.
+- Write it to state["latest"].
+- Append it to state["messages"] as an AI message.
+- Transition to END for this run.
+- State['next_action'] must be also set where aplicable.
+
+B) Tool-driven action
+- Request one or more tool calls.
+- Treat tools as external code actions whose results return as Tool messages.
+- After tool results are available, either continue reasoning in the same node or produce the final user-facing reply and then end the run.
+
+Tool behavior must follow these rules:
+- Some tools may be non-terminal, meaning they update context or memory and then control returns to the conversational node in the same run.
+- Some tools may be terminal, meaning they produce the final user-facing output and must end the run.
+- A tool must never "wait for the user". Waiting is not a tool behavior.
+
+User input must never be awaited inside a run:
+- If the node needs more input, it must ask a single clear question.
+- It must set state["next_action"] to describe what it expects next.
+- It must write state["latest"], append the AI message to state["messages"], and end the run.
+
+Resuming the conversation:
+- When the user replies later, a new run starts.
+- The run loads persisted state via the checkpointer, appends the new Human message to state["messages"], and routes based on state["next_action"].
+
+You must design and describe nodes, schemas, tools, and annotations in a way that is consistent with these rules.
 
 # Instructions
 1) Use the provided inputs to guide your process.
@@ -295,6 +595,106 @@ Use this section to guide your process.
 {history}
 </HISTORY_END>
 
+## LangChain + LangGraph Runtime (must follow)
+
+This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for graph execution.
+
+### 1) What a LangGraph run is
+- One inbound event triggers one graph run (one invocation).
+  - Typical trigger: a single user message arriving via webhook.
+- A run is synchronous. It starts at START and follows edges until END.
+- Nodes cannot pause. Nodes must finish quickly and return an updated state.
+
+### 2) What state is (the only memory source)
+- The graph state is a Python dict-like object.
+- A LangGraph checkpointer persists this state across runs for the same conversation thread.
+- This persisted state is the only memory you can rely on.
+- Common persisted keys:
+  - messages: ordered list of conversation messages
+  - mode / next_action: what the workflow is waiting for next
+  - pending_question: the last question asked and what would satisfy it
+  - last_seen_event_id: dedupe key for retried webhook events
+
+### 3) How “user input” works (turn-based, re-invoked)
+- The system never waits inside the graph for the user to reply.
+- If the workflow needs the user to respond, it must do ALL of the following:
+  1) produce one outbound assistant message to the user,
+  2) set state.mode or state.next_action describing what it expects next,
+  3) optionally set state.pending_question,
+  4) transition to END for that run.
+- When the user replies later:
+  - a new inbound event triggers a new run,
+  - the run loads the persisted state via the checkpointer,
+  - the new user message is appended to state.messages,
+  - the start routing (or the chat node) uses mode/next_action to decide the next step.
+
+### 4) Messages (what they are, where they live)
+- Messages are an ordered conversation log, typically stored in state["messages"].
+- Message types:
+  - HumanMessage: inbound user message for this run
+  - AIMessage: assistant output produced during this run
+  - ToolMessage: tool result returned during this run
+- Nodes should read from state["messages"] to understand context and append new messages when they produce outputs.
+
+### 5) Tools (how they work)
+- A tool is a real function that the LLM may request to run.
+- Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
+- Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 6) ToolNode and the LLM-tool loop
+- In LangGraph, tool execution is commonly handled by a ToolNode.
+- Typical loop:
+  - An LLM node proposes tool calls (via bind_tools).
+  - ToolNode executes those tools and appends ToolMessages.
+  - Control returns to the LLM node to continue reasoning with the tool results.
+- A run should end after producing the intended user-visible reply (send + END).
+
+### 7) Start routing and conditional edges
+- The start of the graph should route based on persisted state (mode/next_action) and/or the newest HumanMessage.
+- Conditional edges are used to select the correct next node for the current run.
+- Never model “await input” as a node. “Await input” is always: send message + set mode/next_action + END, then resume on the next run.
+
+### 8) Practical design rules you must follow
+- Every run must either:
+  - produce one user-visible reply and then end, OR
+  - perform a bounded internal processing step and then produce a reply and end.
+- If a step requires user confirmation or more information, the node must end the run after asking, and the next run resumes based on mode/next_action.
+- If the trigger source can retry events, use last_seen_event_id to dedupe before repeating side effects.
+
+### 9) Conversational Node Contract (LangGraph, turn-based)
+A conversational node is the main decision-maker for a multi-turn chat workflow. 
+It runs once per inbound user message. It reads the conversation history from state["messages"] plus any relevant state keys.
+
+On each run, it must do exactly one of these:
+
+A) Natural-language reply
+- Generate one user-facing reply.
+- Write it to state["latest"].
+- Append it to state["messages"] as an AI message.
+- Transition to END for this run.
+- State['next_action'] must be also set where aplicable.
+
+B) Tool-driven action
+- Request one or more tool calls.
+- Treat tools as external code actions whose results return as Tool messages.
+- After tool results are available, either continue reasoning in the same node or produce the final user-facing reply and then end the run.
+
+Tool behavior must follow these rules:
+- Some tools may be non-terminal, meaning they update context or memory and then control returns to the conversational node in the same run.
+- Some tools may be terminal, meaning they produce the final user-facing output and must end the run.
+- A tool must never "wait for the user". Waiting is not a tool behavior.
+
+User input must never be awaited inside a run:
+- If the node needs more input, it must ask a single clear question.
+- It must set state["next_action"] to describe what it expects next.
+- It must write state["latest"], append the AI message to state["messages"], and end the run.
+
+Resuming the conversation:
+- When the user replies later, a new run starts.
+- The run loads persisted state via the checkpointer, appends the new Human message to state["messages"], and routes based on state["next_action"].
+
+You must design and describe nodes, schemas, tools, and annotations in a way that is consistent with these rules.
+
 # Instructions
 1) Use the provided inputs to guide your process.
 2) Always prioritize user feedback about the code.
@@ -375,6 +775,106 @@ Use this section to guide your process.
 <HISTORY_START>
 {history}
 </HISTORY_END>
+
+## LangChain + LangGraph Runtime (must follow)
+
+This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for graph execution.
+
+### 1) What a LangGraph run is
+- One inbound event triggers one graph run (one invocation).
+  - Typical trigger: a single user message arriving via webhook.
+- A run is synchronous. It starts at START and follows edges until END.
+- Nodes cannot pause. Nodes must finish quickly and return an updated state.
+
+### 2) What state is (the only memory source)
+- The graph state is a Python dict-like object.
+- A LangGraph checkpointer persists this state across runs for the same conversation thread.
+- This persisted state is the only memory you can rely on.
+- Common persisted keys:
+  - messages: ordered list of conversation messages
+  - mode / next_action: what the workflow is waiting for next
+  - pending_question: the last question asked and what would satisfy it
+  - last_seen_event_id: dedupe key for retried webhook events
+
+### 3) How “user input” works (turn-based, re-invoked)
+- The system never waits inside the graph for the user to reply.
+- If the workflow needs the user to respond, it must do ALL of the following:
+  1) produce one outbound assistant message to the user,
+  2) set state.mode or state.next_action describing what it expects next,
+  3) optionally set state.pending_question,
+  4) transition to END for that run.
+- When the user replies later:
+  - a new inbound event triggers a new run,
+  - the run loads the persisted state via the checkpointer,
+  - the new user message is appended to state.messages,
+  - the start routing (or the chat node) uses mode/next_action to decide the next step.
+
+### 4) Messages (what they are, where they live)
+- Messages are an ordered conversation log, typically stored in state["messages"].
+- Message types:
+  - HumanMessage: inbound user message for this run
+  - AIMessage: assistant output produced during this run
+  - ToolMessage: tool result returned during this run
+- Nodes should read from state["messages"] to understand context and append new messages when they produce outputs.
+
+### 5) Tools (how they work)
+- A tool is a real function that the LLM may request to run.
+- Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
+- Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 6) ToolNode and the LLM-tool loop
+- In LangGraph, tool execution is commonly handled by a ToolNode.
+- Typical loop:
+  - An LLM node proposes tool calls (via bind_tools).
+  - ToolNode executes those tools and appends ToolMessages.
+  - Control returns to the LLM node to continue reasoning with the tool results.
+- A run should end after producing the intended user-visible reply (send + END).
+
+### 7) Start routing and conditional edges
+- The start of the graph should route based on persisted state (mode/next_action) and/or the newest HumanMessage.
+- Conditional edges are used to select the correct next node for the current run.
+- Never model “await input” as a node. “Await input” is always: send message + set mode/next_action + END, then resume on the next run.
+
+### 8) Practical design rules you must follow
+- Every run must either:
+  - produce one user-visible reply and then end, OR
+  - perform a bounded internal processing step and then produce a reply and end.
+- If a step requires user confirmation or more information, the node must end the run after asking, and the next run resumes based on mode/next_action.
+- If the trigger source can retry events, use last_seen_event_id to dedupe before repeating side effects.
+
+### 9) Conversational Node Contract (LangGraph, turn-based)
+A conversational node is the main decision-maker for a multi-turn chat workflow. 
+It runs once per inbound user message. It reads the conversation history from state["messages"] plus any relevant state keys.
+
+On each run, it must do exactly one of these:
+
+A) Natural-language reply
+- Generate one user-facing reply.
+- Write it to state["latest"].
+- Append it to state["messages"] as an AI message.
+- Transition to END for this run.
+- State['next_action'] must be also set where aplicable.
+
+B) Tool-driven action
+- Request one or more tool calls.
+- Treat tools as external code actions whose results return as Tool messages.
+- After tool results are available, either continue reasoning in the same node or produce the final user-facing reply and then end the run.
+
+Tool behavior must follow these rules:
+- Some tools may be non-terminal, meaning they update context or memory and then control returns to the conversational node in the same run.
+- Some tools may be terminal, meaning they produce the final user-facing output and must end the run.
+- A tool must never "wait for the user". Waiting is not a tool behavior.
+
+User input must never be awaited inside a run:
+- If the node needs more input, it must ask a single clear question.
+- It must set state["next_action"] to describe what it expects next.
+- It must write state["latest"], append the AI message to state["messages"], and end the run.
+
+Resuming the conversation:
+- When the user replies later, a new run starts.
+- The run loads persisted state via the checkpointer, appends the new Human message to state["messages"], and routes based on state["next_action"].
+
+You must design and describe nodes, schemas, tools, and annotations in a way that is consistent with these rules.
 
 # Hard Instruction
 Always follow the user's feedback under the `Previous Conversation`. If there are conflicting feedback, use the most recent one to guide your response.
