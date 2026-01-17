@@ -22,10 +22,11 @@ from dotenv import load_dotenv
 from pathlib import Path
 from time import sleep
 import traceback
+import json
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS
 from creations.{root} import {directory_name}_prompts as prompts
 
 

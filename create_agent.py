@@ -172,8 +172,11 @@ if __name__ == '__main__':
         for key, value in response.items():
             print(f'    {{key}}: {{value}}')
 """
+
 # Create each file in the new directory
 for file in FILE_NAMES:
     with open(parent_path / 'agents' / directory_name / file, 'w') as f:
         if file == f'{agent_name}.py':
             f.write(agent_file_text)
+
+        print(f'Created {file} succesfully')
