@@ -612,7 +612,6 @@ This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for gr
 - Common persisted keys:
   - messages: ordered list of conversation messages
   - mode / next_action: what the workflow is waiting for next
-  - pending_question: the last question asked and what would satisfy it
   - last_seen_event_id: dedupe key for retried webhook events
 
 ### 3) How “user input” works (turn-based, re-invoked)
@@ -640,6 +639,16 @@ This codebase uses LangChain for LLMs, messages, and tools, and LangGraph for gr
 - A tool is a real function that the LLM may request to run.
 - Tools are not called directly by the model. The model requests a tool call, code executes it, then the tool result is appended as a ToolMessage.
 - Tools must use JSON-serializable inputs and return compact structured outputs.
+
+### 5.5) Tool Types (must classify each tool)
+- Non-terminal tool (context updater)
+  - Purpose: fetch data, compute something, or perform a safe side effect that supports the caller LLM's reasoning.
+  - After the tool runs, control returns to the caller LLM in the same run.
+  - The caller LLM must produce the final user-facing reply (or decide the next tool call).
+- Terminal tool (finalizer)
+  - Purpose: perform the final action that directly produces the user-visible outcome (for example: writing the final artifact, submitting the final payload, or producing the final formatted response).
+  - After the tool runs, the caller LLM must end the run (END) without additional tool calls.
+  - Terminal tools should return a compact, final payload that can be sent to the user as-is (or with minimal wrapping).
 
 ### 6) ToolNode and the LLM-tool loop
 - In LangGraph, tool execution is commonly handled by a ToolNode.
@@ -720,13 +729,20 @@ Return a Python-dict-equivalent object with a single top-level key and value:
 Your output will be parsed into the schema above; return only that object.
 
 # Output Rules
-1) A function's docstring must include the following:
-    - An overview what the function should do. Make it detailed. 
+1) A tool function's docstring must include the following:
+    - An overview what the tool should do. Make it detailed. 
         - Use header `Overview: `
-    - Which LLM will call this function. 
+    - Which LLM will call this tool. 
         - Use header `Caller LLM: `
+    - Which function bares which responsibility. (either tool or tool handler)
+        - Use header `Outside-the-Tool Work (Tool Handler Function Responsibilities):` (not responsibility of the LLM) 
+        Mainly for: state updates, message appends, routing after tool
+        If outside the tool, the only needed transformation is just a messages update, just say `None`
+        - Use header `Inside-the-Tool Work (Tool Responsibilities):` (e.g., execution, returns, etc.)
     - A very detailed step-by-step instruction block. 
         - Use header `Instructions: `
+    - A detailed block about what state keys should be changed before or after the tool is called. 
+        - Use header `State Updates (on the caller function): `
     - A list of possible arguments needed. State their type when possible. Prefer not to use vague parameters, use distinct names. Always list all parameters, specifically the data needed by the instruction block.
         - Use header `Args: `
         Make sure to match the `arguments` key of the tool function.
@@ -742,6 +758,8 @@ Your output will be parsed into the schema above; return only that object.
 3) Closely follow any `Tools:` section in each node docstring.
 4) A tool can be called by an LLM.
 5) A tool cannot change the state schema, nor can it receive it as an argument.
+	- The tool cannot even see the state schema. Only tool handlers can modify the schema. Tools cannot get their argument value's from the schema.
+	- Keep in mind the above information for generating the docstring, especially sections `Outside-the-Tool Work (Caller Responsibilities)`, `Inside-the-Tool Work (Tool Responsibilities)`, and `Instructions`.
 '''
 
 

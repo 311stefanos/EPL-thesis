@@ -148,7 +148,7 @@ class Schema(BaseModel):
         arguments = '\n\t'.join([str(arg) for arg in self.arguments])
         docstring = self.docstring.replace('\n', '\n\t')
         methods = '\n\n'.join([method.to_method() for method in self.proposed_methods])
-        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}{methods}'
+        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}{methods}\n\n'
 
 class Schemas(BaseModel): # Used by the schema_generator
     schemas: List[Schema] = Field(description= 'The schemas.')
