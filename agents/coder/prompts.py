@@ -112,12 +112,14 @@ Your job is to
 6) Do not import anything. You may use the any library you want, just add the imports to the `output_tool` in the `imports` key.
 7) Whenever possible you should include type annotations for the used variables. e.g. `var1: int = state['var_1']`
 8) You should use type annotations to make the code more readable and maintainable.
-9) You should understand how to access the `state` dictionary. If the state is `BaseModel`, you can access it like `state.key`, otherwise you can should `state['key']`
+9) You should understand how to access the `state` dictionary. If the state is `BaseModel`, you can access it like `state.key`, otherwise (TypedDict, MessagesState) you should `state['key']`
 10) You should not change the docstring, except if you make adjustments, or add new information.
+11) Any external files you will need, should be located under the same directory as the code.
 
 # Catastrophic Failure Condition
 1. You may not import anything on the code you provide.
 2. You may not use the `tavily_search` tool more than once.
+3. You have to respect the class of the schemas. For `BaseModel`, you can access it like `state.key`, otherwise (TypedDict, MessagesState) you should `state['key']`
 
 # Basic Information
 ## What is a Tool
@@ -142,7 +144,7 @@ When you create tools, follow these rules:
 
 When you want to call a tool, you should follow these rules:
 - Tools with the `@tool` decorator cannot be called directly as they are not Callable.
-- Tools with the `@tool` decorator have the `.invoke` method. The invoke method takes the same arguments as the tool definition, however, they are passed in a dictionary.
+- Tools with the `@tool` decorator have the `.invoke` method. The invoke method takes the same arguments as the tool definition, however, they are passed in a dictionary. The invoke method returns the result of the tool.
 ```python
 # Example:
 @tool
@@ -152,11 +154,88 @@ def my_tool(arg1: str, arg2: int) -> str:
 
 response = safe_invoke(llm, _) # Called a tool
 ... # fetch the tool call and tool name
-tool_message: ToolMessage = my_tool.invoke(tool_call)
+tool_message: str = my_tool.invoke(tool_call)
 # or
-tool_message: ToolMessage = my_tool.invoke({{'arg1': arg1, 'arg2': arg2}})
+tool_message: str = my_tool.invoke({{'arg1': arg1, 'arg2': arg2}})
+# can be parsed into a TollMessage
+tool_msg: ToolMessage = ToolMessage(content= tool_message, name= tool_call['name'], tool_call_id= tool_call['id'])
 ```
-- The invoke method returns the result of the tool.
+
+When you have to implement a tool handler, you should follow these rules:
+- Extract tool calls from the last message.
+- For each tool call, dispatch by tool name.
+- Invoke the tool and update state keys.
+- Append ToolMessage(s) when a tool was invoked.
+- Return a state update dict that matches the graph state schema style used in the codebase.
+
+You may use this reference shape to guide your implementation (do not copy/paste it, it need some changes):
+```python
+def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
+        print_function_name() if DEBUG else None
+    
+    try:
+        # Get the last message, and extract the tool calls
+        last_message = state['messages'][-1]
+        if last_message.tool_calls:
+            from_kwargs = False
+            tool_calls = last_message.tool_calls
+        else:
+            from_kwargs = True
+            tool_calls = last_message.additional_kwargs.get('tool_calls', [])
+
+        print(json.dumps(tool_calls, indent= 4)) if DEBUG else None
+
+        # Execute all tool calls
+        observations = []
+        for tool_call in tool_calls:
+            # Get the tool and arguments
+            if from_kwargs:
+                tool_call = tool_call['function']
+
+            # If its for a single tool, you can just tool = tool_name. If you choose to use tools_by_name, you have to create it in this function. tools_by_name = {{tool.name: tool for tool in [tools]}}
+            tool = tools_by_name[tool_call['name']] 
+
+            args = tool_call.get('args', {{}}) or tool_call.get('arguments', {{}})
+            # Parse the tool arguments if needed.
+            if isinstance(args, str):
+                args = parse_tool_arguments(args)
+
+            try:
+                observation = None
+                # Execute the tool
+                observation = tool.invoke(args)
+                # Add the observation to the list
+                if observation:
+                    observations.append(observation)
+            except Exception as e:
+                print(f'{{RED}}[NODE] [ERR]{{RESET}}', e) if DEBUG else None
+                traceback.print_exc() if DEBUG else None
+                # If the tool fails, skip it
+                continue
+
+            # <YOU_NEED_TO_CHANGE_THE_BELOW_CODE_ALWAYS>
+            # Change state keys
+            state['key to change'] = value
+            # Do something else
+            ...
+            # </YOU_NEED_TO_CHANGE_THE_ABOVE_CODE_ALWAYS>
+
+        # Add them to the state if needed
+        return {{'messages': [
+            ToolMessage(
+                content= observation,
+                name= tool_call['name'],
+                tool_call_id= tool_call['id']
+            ) for observation in observations
+        ]}}
+
+    except Exception as e:
+        print(f'{{RED}}[NODE] [ERR]{{RESET}}', e) if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+
+        return state
+```
+
 
 ## Provided Functions
 All provided functions/constants are included in the `utils/utils.py` file. You are free to use them in your implementation.

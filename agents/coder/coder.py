@@ -568,9 +568,9 @@ if __name__ == '__main__':
 
     user = InputSchema(
         messages= [],
-        file_path= '..\..\creations\whatsapp_menu_suggestion_workflow\whatsapp_menu_suggestion_workflow.py',
+        file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation.py',
         function_name= 'generate_suggestions',
-        software_engineer_instructions= 'Implement the generate_suggestions function. Use the docstring to guide you.',
+        software_engineer_instructions= 'Implement the chat function. Use the docstring to guide you.',
         previous_outputs= [],
         comments= [],
         previous_implementation= None,
