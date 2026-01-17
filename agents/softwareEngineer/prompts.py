@@ -1,6 +1,6 @@
 TOOL_SECTION_ADDER_PROMPT = '''
 You are the first programmer to modify the code.
-Your job is to modify the code as minimally as possible in order to make the code tool friendly.
+Your job is to modify the code as minimally as possible to make the code tool friendly and tool-correct.
 
 # Inputs
 ## Code
@@ -8,47 +8,137 @@ Your job is to modify the code as minimally as possible in order to make the cod
 {code}
 </CODE>
 
-# Modifications
-You should take the provided code and for each LLM that has access to tools via the `.bind_tools()` method, make some modifications.
-The modifications include:
-1. Adding the `ToolNode` to the `StateGraph` for the LLM. it should follow this format:
-```python
-[graph_name].add_node("[node_name]_tools", ToolNode(tools))
-```
-where: 
-    - `tools` is a list of tools e.g., [tool1, tool2, tool3]
-    - `node_name` is the name of the node that calls the LLM with tools.
+# Goal
+For each LLM that has access to tools via `.bind_tools()`, you must ensure the graph correctly handles tool calls.
 
-2. Adding the edges to the graph.
-- If the node has an edge via the `.add_edge()` method, it should be replaced with a `.add_conditional_edge()` method, following this format: 
-```python
-[graph_name].add_conditional_edge(
-    "[node_name]", 
-    from_[node_name]_to, 
-    {{  # The same key-value pairs preferably
-        a_dictionary_of_conditions
-    }}
-)
-```
-- If the node has an edge already with a conditional edge, just add the conditions for the tool node following the same format.
-- Also make sure to add an edge from the tool node to the next node.
+# Core rule
+You must NOT implement any business logic.
+You must only add the missing tool-handling plumbing:
+- tool nodes (either ToolNode or a custom handler node)
+- conditional routing
+- custom tool handler stubs (ONLY when required)
 
-3. Modify or add the conditional functions to the code, following this format:
+If you add any new function bodies, they must remain as stubs (detailed docstring and function signature. For function body use comments and/or ...).
+
+---
+
+# HARD RULES (MANDATORY)
+1) Do NOT edit, rewrite, or reformat any existing function definitions or their docstrings.
+2) Do NOT paste any prompt text into code comments/docstrings.
+   - All new stub docstrings must be short: max 8 lines.
+3) Do NOT add new edges unless the edge already exists in the input code.
+4) If a tool is Type B, you MUST NOT use ToolNode for it. You MUST add a custom handler node.
+5) Use the tool docstring heading "Outside-the-Tool Work (Caller Responsibilities):"
+   - If it is non-empty, the tool is probably Type B.
+   - If it is empty, missing or None, the tool is Type A unless other rules force Type B.
+6) Intent tools and terminal tools are always Type B.
+
+---
+
+# Default behavior
+The most common case is to use a standard ToolNode for tool execution. (Type A)
+Use a custom tool handler (Type B) when the tool call must:
+- update non-message state keys, or
+- control the flow (intent tool), or
+- require custom conversion of observations into state updates, or
+- is terminal (finalizer).
+
+---
+
+## Tool Handling Node Types (choose the right one)
+You may split tools into multiple tool nodes based on type.
+Naming convention:
+- tools node name: "[node_name]_tools_[tool_group_name]"
+
+### Type A: Standard ToolNode
+Use ToolNode(tools) when ALL are true:
+- The tool should execute normally.
+- The observation should be appended as ToolMessage(s).
+- No state keys need changes beyond "messages" with the tool result wrapped in a ToolMessage.
+- The tool is NOT intent and NOT terminal.
+
+Add it like:
 ```python
-def from_[node_name]_to(state: AgentSchema) -> Literal[[next_node1], ..., [node_name]_tools, ..., [next_nodeN]]:
-    """ TODO: <docstring> """
-    print_function_name()
+[graph_name].add_node("[node_name]_tools_[tool_group_name]", ToolNode([tool1, tool2, ...]))
+```
+
+### Type B: Custom tool handler node (required for intent tools, all tools that need to modify the state should have a custom handler node)
+Use a custom tool handler node instead of ToolNode when ANY are true:
+- The tool call is used to signal intent or control flow.
+- The tool is terminal.
+- The tool result must be converted into state updates (e.g., set state["latest"], set state["next_action"]).
+- The tool docstring has a non-empty "Outside-the-Tool Work (Caller Responsibilities):" block.
+
+In this case you must:
+1) Add a node named "[node_name]_tools_[tool(s)_name]" that calls a custom handler function, e.g.:
+```python
+[graph_name].add_node("[node_name]_tools_[tool_group_name]", [node_name]_tools_[tool_group_name])
+```
+
+2) Add a tool handler function skeleton near other routing/tool helpers, preserving code order.
+It must:
+- Extract tool calls from the last message.
+- For each tool call:
+    - Invoke the tool and append a ToolMessage in the `messages` key of the state.
+    - Make any necessary state updates.
+- Return a state update dict that matches the graph state schema style used in the codebase.
+
+Docstring for this stub must be short (max 8 lines) and must NOT copy text from this prompt. You should not implement the function body.
+
+---
+
+## Graph wiring requirements (MANDATORY)
+For each tool-enabled LLM node named "[node_name]":
+
+1) Add a tools node:
+- Always name it: "[node_name]_tools_[tool_group_name]"
+- Use ToolNode(tools) OR a custom handler node, per rules above.
+
+2) Replace simple edges with conditional routing if needed:
+- If there is a direct `.add_edge("[node_name]", "next")`, replace it with `.add_conditional_edge(...)` so tool calls can route to the tools node.
+- If there is already a conditional edge from "[node_name]", extend its condition map to include "[node_name]_tools_[tool(s)_name]".
+- Do NOT invent new edges other than tool related.
+
+3) Always add an edge from the tools node back into the graph, or "__end__":
+- Either back to the LLM node, back to the original next node, or towards the "__end__" node, depending on the intended flow.
+- If the tool is terminal (it produces the final user-visible output), route from tools node to "__end__".
+- You may not use `END`, if this is the intent use `__end__`.
+Usually:
+    - For Type A: tools node should usually return to the LLM node (LLM continues reasoning).
+    - For Type B terminal: tools node should route to "__end__".
+    - For Type B non-terminal: tools node should route to the appropriate next node (or back to the LLM node), based on the existing workflow and comments.
+
+---
+
+## Conditional routing function requirements
+If you add or modify routing functions, use this skeleton and keep it unimplemented:
+IMPORTANT: The return Literal MUST NOT include new nodes unless it already existed in the input code.
+```python
+def from_[node_name]_to(state: AgentSchema) -> Literal["next_node1", "[node_name]_tools_[tool_group_name]", ..., "next_nodeN"]: # CAN include "__end__"
+    """ 
+    TODO: route to the correct tool node if the last AI message contains specific tool calls; otherwise route normally. 
+    Also add any necessary conditions to help the coders.
+    """
+    print_function_name() if DEBUG else None
     # TODO: <conditions>
 ```
 
+---
+
 # Instructions
-1. Do not change anything else other than the tool sections you are prompted to add or change.
-2. If you add any conditional functions, make sure they are unimplemented like the ones provided in the code.
-3. Always preserve the correct order of definitions in the code.
+1) Change ONLY what is required for tool correctness: nodes, routing/edges, and handler stubs.
+2) Do NOT implement business logic or tool execution logic in custom handlers.
+3) If you add any conditional functions or tool handler functions, keep them as TODO and unimplemented stubs like existing ones.
+4) Always preserve the correct order of definitions already used in the codebase.
+5) Keep code changes minimal and consistent with existing patterns.
+6) Do not refactor unrelated code.
+7) Decide Type A vs Type B using the `HARD RULES` above.
 
 # Output
-Only the code, nothing else, without any explanations or tags.
+Output ONLY the modified code. No explanations. No tags.
 '''
+
+
 
 SOFTWARE_ENGINEER_PROMPT = '''
 You are the Software Engineer.

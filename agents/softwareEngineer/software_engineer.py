@@ -284,7 +284,7 @@ def approve_function_code(file_path: str, function_name: str) -> str:
         return f'[ERROR] The coder for function {function_name} does not exist.'
     
     # Check if the coder has an implementation
-    previous_code: str = coders[function_name].code
+    previous_code: str = coders[function_name].code.strip()
     if not previous_code:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not have a coder implementation.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not have a previous implementation.'
@@ -513,7 +513,7 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
 
                     if added_any:
                         idx = from_line_idx[module]
-                        lines[idx] = f'from {module} import {', '.join(existing_list)}'
+                        lines[idx] = f"from {module} import {', '.join(existing_list)}"
 
                     removed_from_global.append(raw)
                 else:
@@ -556,10 +556,10 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
                             existing_list.append(m)
                             existing_set.add(m)
 
-                    lines[target_i] = f'import {', '.join(existing_list)}'
+                    lines[target_i] = f"import {', '.join(existing_list)}"
                 else:
                     # no editable import line exists, append a minimal import line
-                    appended_lines.append(f'import {', '.join(missing)}')
+                    appended_lines.append(f"import {', '.join(missing)}")
 
                 removed_from_global.append(raw)
                 continue
@@ -692,6 +692,10 @@ def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
 
     global code_issues
 
+    if len(resolved_issues) == 0:
+        print(f'{BLUE}[TOOL] [INFO] [NO ISSUES]{RESET} No code to were resolved.') if DEBUG else None
+        return '[NO ISSUES] No code issues to resolved.'
+
     # Split the 'resolved' code issues into resolved and not resolved
     not_resolved_issues = []
     actually_resolved_issues = []
@@ -728,7 +732,7 @@ tools_by_name = {tool.name: tool for tool in tools}
 ''' LLM '''
 # The agent that adds the tool sections
 tool_adder = myChatOpenAI(
-    temperature= 0.1,
+    temperature= 0.4,
     model= 'mistralai/devstral-2512:free'
 )
 
@@ -741,8 +745,10 @@ software_engineer = myChatOpenAI(
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
     temperature= 0.6,
-    model= 'mistralai/devstral-2512:free'
+    model= 'google/gemma-3n-e2b-it:free'
 ).with_structured_output(CodeIssues)
+
+# TODO: add model to create necessary files. for files that require keys, insert [dummy data]
 
 
 
@@ -764,22 +770,30 @@ def clean_llm_output(code: str) -> str:
     # Remove possible tags or markdown special characters from the LLM's output
     while code[0] in ['<', '`']:
         # Removing tags
-        while code[0] == '<':
-            index = code.find('>\n')
+        while code.strip().startswith('<'):
+            # Remove the line
+            index = code.find('\n')
             code = code[index + 1:].strip()
-
-        while code.strip()[-1] == '>':
-            index = code.rfind('<')
-            code = code[:index].strip()
+            
+        while code.strip().endswith('>'):
+            for i, char in enumerate(reversed(code)):
+                if char == '<':
+                    index = len(code) - i
+                    code = code[:index].strip()
+                    break
 
         # Removing markdown ```
-        while code.startswith('```python\n'):
-            index = len('```python')
+        while code.strip().startswith('`'):
+            # Remove the line
+            index = code.find('\n')
             code = code[index + 1:].strip()
 
-        while code.strip()[-1] == '`':
-            index = code.rfind('`')
-            code = code[:index].strip()
+        while code.strip().endswith('`'):
+            for i, char in enumerate(reversed(code)):
+                if char == '`':
+                    index = len(code) - i - 1
+                    code = code[:index].strip()
+                    break
 
     return code.strip()
 
@@ -915,7 +929,7 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
 # The node where tools are executed. Gets called specially when the Software Engineer calls the approve_function_code, approve_function_proposals, add_imports tools
 def tool_node(state: InputSchema) -> InputSchema:
     '''
-    This node executes the tools, which are used to gather information from the web, or structure the thought process or information.
+    This node executes the tools, which change the contents of the file
     '''
     print_function_name() if DEBUG else None
     
@@ -929,6 +943,18 @@ def tool_node(state: InputSchema) -> InputSchema:
             from_kwargs = True
             tool_calls = last_message.additional_kwargs.get('tool_calls', [])
 
+        # Check whether add_imports was called during the last 3 messages
+        add_imports_called_before = False
+        last_5_messages = state['messages'][-5:]
+        for message in last_5_messages:
+            if (
+                (hasattr(message, 'tool_calls') and message.tool_calls) or
+                (hasattr(message, 'additional_kwargs') and message.additional_kwargs.get('tool_calls', False))
+            ):
+                for tool_call in message.tool_calls:
+                    if tool_call['name'] == 'add_imports':
+                        add_imports_called_before = True
+
         print(json.dumps(tool_calls, indent= 4)) if DEBUG else None
 
         # Execute all tool calls
@@ -937,6 +963,12 @@ def tool_node(state: InputSchema) -> InputSchema:
             # Get the tool and arguments
             if from_kwargs:
                 tool_call = tool_call['function']
+
+            # Skip add_imports if it was called before
+            if tool_call['name'] == 'add_imports' and add_imports_called_before:
+                err_msg = '[ERR] You cannot add imports because add_imports was called shorty before'
+                observations.append((err_msg, tool_call['name'], tool_call['id']))
+
             tool = tools_by_name[tool_call['name']]
 
             args = tool_call.get('args', {}) or tool_call.get('arguments', {})
@@ -952,7 +984,7 @@ def tool_node(state: InputSchema) -> InputSchema:
                 observation = tool.invoke(args)
                 # Add the observation to the list
                 if observation:
-                    observations.append(observation)
+                    observations.append((observation, tool_call['name'], tool_call['id']))
             except Exception as e:
                 print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
                 traceback.print_exc() if DEBUG else None
@@ -965,11 +997,11 @@ def tool_node(state: InputSchema) -> InputSchema:
         return {'messages': [
             ToolMessage(
                 content= observation,
-                name= tool_call['name'],
-                tool_call_id= tool_call['id']
-            ) for observation in observations
+                name= name,
+                tool_call_id= id_
+            ) for (observation, name, id_) in observations
         ]}
-
+    
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
@@ -1082,9 +1114,8 @@ software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
-# software_engineer_graph.add_edge(START, 'add_tool_sections')
-# software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
-software_engineer_graph.add_edge(START, 'software_engineer_node')
+software_engineer_graph.add_edge(START, 'add_tool_sections')
+software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
     after_software_engineer,
@@ -1138,7 +1169,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(file_path= '..\..\creations\whatsapp_menu_suggestion_workflow\whatsapp_menu_suggestion_workflow.py')
+    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py')
     response = software_engineer_app.invoke(user, config= config)
 
     # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
