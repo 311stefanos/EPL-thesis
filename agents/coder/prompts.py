@@ -164,7 +164,7 @@ tool_msg: ToolMessage = ToolMessage(content= tool_message, name= tool_call['name
 When you have to implement a tool handler, you should follow these rules:
 - Extract tool calls from the last message.
 - For each tool call, dispatch by tool name.
-- Invoke the tool and update state keys.
+- Invoke the tool and update state keys. You MUST invoke the tool.
 - Append ToolMessage(s) when a tool was invoked.
 - Return a state update dict that matches the graph state schema style used in the codebase.
 
@@ -202,7 +202,7 @@ def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
 
             try:
                 observation = None
-                # Execute the tool
+                # Execute the tool **MUST**
                 observation = tool.invoke(args)
                 # Add the observation to the list
                 if observation:
@@ -223,9 +223,9 @@ def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
         # Add them to the state if needed
         return {{'messages': [
             ToolMessage(
-                content= observation,
-                name= tool_call['name'],
-                tool_call_id= tool_call['id']
+                content= observation, # All 3 arguments are necessary.
+                name= tool_call['name'], # All 3 arguments are necessary.
+                tool_call_id= tool_call['id'] # All 3 arguments are necessary.
             ) for observation in observations
         ]}}
 
@@ -246,6 +246,7 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
     A class that extends the ChatOpenAI class, that automatically inputs some parametres such as the API KEY, and model (internally)
 5. `safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
     A function that invokes an LLM and handles most errors. After max_retries it wil raise an error. It returns the result of the LLM invocation.
+6. `def parse_tool_arguments(args) -> dict`: A function that parses the tool arguments, because they may be in different formats. Not required to use as the LLM responses are always in the correct format.
 
 ## Provided Prompts
 All provided prompts are meant to be used with the `.format` method of python. You can format it however you see fit and the prompt engineering team will make the best prompt for you.
@@ -266,7 +267,7 @@ You should not call tavily_search more than once.
         - function_arguments: [{{name, type}}]
         - output: return type
         - justification: why it's necessary now
-    - `imports` (Optional[List[str]]) **NOT** a string: a list of imports you need, do not import on the code key! You should not request an import that is already imported in the import section of the code.
+    - `imports` (Optional[List[str]]) **NOT** a string: a list of imports you need, do not import on the code key! You should not request an import that is already imported in the import section of the code. All imports must containt the `import` keyword.
 '''
 
 PREV = '''

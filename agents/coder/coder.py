@@ -68,7 +68,7 @@ from langgraph.prebuilt import ToolNode
 
 # Schema imports
 from typing import Literal, List, Optional, Annotated, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from operator import add
 
 # General imports
@@ -146,6 +146,16 @@ class OutputSchema(BaseModel):
     proposals: Optional[List[FunctionProposal]] = Field(description= 'The requested proposals.', default= None)
     imports: Optional[List[str]] = Field(description= 'The requested imports that dont already exist. Every string should correspond to a line of `from * import *` or `import *`.', default= None)
 
+    # Validate that imports at least contain the `import` keyword
+    @field_validator('imports')
+    @classmethod
+    def validate_mood(cls, value):
+        if value:
+            for import_line in value:
+                if not 'import' in import_line:
+                    raise ValidationError("imports should contain the `import` keyword")
+                
+        return value
 
 
 ''' Tools '''
@@ -205,7 +215,7 @@ coder = myChatOpenAI(
 
 reviewer = myChatOpenAI(
     temperature= 0.2,
-    model= 'google/gemma-3n-e2b-it:free'
+    model= 'mistralai/devstral-2512:free'
 )
 
 
@@ -540,10 +550,10 @@ coder_app = coder_graph.compile(checkpointer= MemorySaver())
 
 ''' Testing '''
 if __name__ == '__main__':
-    from IPython.display import Image
+    from IPython.display import Image as GraphImage
 
     # Visualize the graph
-    Image(coder_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+    GraphImage(coder_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
     parent_dir = Path(__file__).resolve().parent
     if not os.path.exists(parent_dir / 'graphs'):
         os.makedirs(parent_dir / 'graphs')
