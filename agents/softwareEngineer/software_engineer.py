@@ -615,54 +615,6 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
         traceback.print_exc()
         return f'[ERROR] {e}'
 
-# Creates an external file
-@tool
-def create_file(file_path: str, contents: str) -> str:
-    '''
-    `create_file` creates a file with the given contents.
-
-    `Args:`
-        file_path (str): The relative path to the file to create.
-        contents (str): The contents of the file to create.
-
-    `Returns:`
-        (str) Either a success message or an error message
-    '''
-    print_function_name(colour= MAGENTA) if DEBUG else None
-    try:
-        # Should be under the Path(__file__).resolve().parent.parent directory
-        base_dir = Path(__file__).resolve().parent.parent
-        target = Path(file_path).resolve()
-
-        # Ensure target is a child of base_dir
-        try:
-            is_child = target.is_relative_to(base_dir)
-        except AttributeError:
-            # Python < 3.9 fallback
-            is_child = os.path.commonpath([str(target), str(base_dir)]) == str(base_dir)
-
-        if not is_child:
-            print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be inside {base_dir}.') if DEBUG else None
-            return f'[ERROR] The file {file_path} must be a child of {base_dir}.'
-
-        # Ensure parent directory exists
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-        if target.exists():
-            print(f'{RED}[TOOL] [ERR]{RESET} The file {target} already exists.') if DEBUG else None
-            return f'[ERROR] The file {target} already exists.'
-
-        with open(target, 'w', encoding='utf-8') as f:
-            f.write(contents)
-
-        print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Created the file {target} successfully.') if DEBUG else None
-        return f'[SUCCESS] Created the file {target} successfully.'
-
-    except Exception as e:
-        print(f'{RED}[TOOL] [ERR]{RESET}', e) if DEBUG else None
-        traceback.print_exc()
-        return f'[ERROR] {e}'
-
 # A tool used to submit the final code
 @tool
 def submit_final_code(file_path: str) -> None:
@@ -721,7 +673,6 @@ tools = [
     approve_function_code, 
     approve_function_proposals, 
     add_imports, 
-    create_file, 
     submit_final_code, 
     code_issue_resolved
 ]
@@ -745,7 +696,7 @@ software_engineer = myChatOpenAI(
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
     temperature= 0.6,
-    model= 'google/gemma-3n-e2b-it:free'
+    model= 'mistralai/devstral-2512:free'
 ).with_structured_output(CodeIssues)
 
 # TODO: add model to create necessary files. for files that require keys, insert [dummy data]
@@ -815,6 +766,7 @@ def read_state_file(state: InputSchema) -> str:
 
 
 ''' Nodes '''
+# This nodes is called first, and the agent tries to make the file tool compatible.
 def add_tool_sections(state: InputSchema) -> InputSchema:
     '''
     Identifies which LLMs have access to tools and modifies the graph accordingly.
@@ -852,7 +804,6 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
     - approve_function_code
     - approve_function_proposals
     - add_imports
-    - create_file
     - submit_final_code
     - code_issue_resolved
     '''
@@ -1114,8 +1065,9 @@ software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
-software_engineer_graph.add_edge(START, 'add_tool_sections')
-software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
+# software_engineer_graph.add_edge(START, 'add_tool_sections')
+# software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
+software_engineer_graph.add_edge(START, 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
     after_software_engineer,
@@ -1143,10 +1095,10 @@ software_engineer_app = software_engineer_graph.compile()
 
 ''' Testing '''
 if __name__ == '__main__':
-    from IPython.display import Image
+    from IPython.display import Image as GraphImage
 
     # Visualize the graph
-    Image(software_engineer_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+    GraphImage(software_engineer_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
     parent_dir = Path(__file__).resolve().parent
     if not os.path.exists(parent_dir / 'graphs'):
         os.makedirs(parent_dir / 'graphs')

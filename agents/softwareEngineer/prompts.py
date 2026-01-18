@@ -303,20 +303,7 @@ Do not call multiple tools at the same time.
         - imports: the imports to add. Can be from the list above
         - file_path: must match {file_path}.
 
-7. def create_file(file_path: str, contents: str) -> str
-    `create_file` creates a new file.
-
-    Use it when:
-    - You want to create a new file. Either a utils file or files used in the main file. Can even do a mock (e.g., [Insert Key Here]) `.env` file.
-    - If you do a file that requires user data, just add a comment section explaining the intended format, do not add mock data.
-    - If you make a python file you want to implement, you can call `call_coder` on it, with the intended file path.
-    - You should make sure all accessed files of the project exist.
-
-    Args:
-        - file_path: Must be under the directory `./../../*`.
-        - contents: the contents of the new file.
-
-8. submit_final_code(file_path: str) -> None
+7. submit_final_code(file_path: str) -> None
     `submit_final_code` submits the final implementation to the Quality Assurance team.
 
     Use it only when:
@@ -326,7 +313,7 @@ Do not call multiple tools at the same time.
     Args:
         - file_path: must match {file_path}.
 
-9. def code_issue_resolved(resolved_issues: List[str]) -> str:
+8. def code_issue_resolved(resolved_issues: List[str]) -> str:
     `code_issue_resolved` resolves a code issue that was proposed by the Quality Assurance team.
 
     `Args:` 
@@ -352,8 +339,7 @@ Do not call multiple tools at the same time.
         - You may call `approve_function_proposals(...)` before or after approving/rejecting the coder's code.
     4. If there are any issues with the code, and you resolved it through a tool call, then call `code_issue_resolved(...)` to update the list of issues.
     5. You can use the tools `add_imports` to add new imports the coders asked to the file.
-    6. You can use the tool `create_file` to create new files. You should make sure all accessed files of the project exist.
-    7. Following, you may call `submit_final_code` if the file is complete and correct.
+    6. Following, you may call `submit_final_code` if the file is complete and correct.
 - **Do not always** call `call_coder` repeatedly on new functions without first evaluating and handling the previous coder output.
 - Use `replace_code` only for:
     - Minor fixes.

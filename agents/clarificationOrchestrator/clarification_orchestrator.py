@@ -210,10 +210,10 @@ clarification_orchestrator_app = clarification_orchestrator_graph.compile(checkp
 
 
 
-# from IPython.display import Image
+# from IPython.display import Image as GraphImage
 
 # # Visualize the graph
-# Image(clarification_orchestrator_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+# GraphImage(clarification_orchestrator_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
 # parent_dir = Path(__file__).resolve().parent
 # if not os.path.exists(parent_dir / 'graphs'):
 #     os.makedirs(parent_dir / 'graphs')

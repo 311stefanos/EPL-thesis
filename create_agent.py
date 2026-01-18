@@ -138,10 +138,10 @@ llm = myChatOpenAI(
 
 ''' Testing '''
 if __name__ == '__main__':
-    from IPython.display import Image
+    from IPython.display import Image as GraphImage
 
     # Visualize the graph
-    Image({agent_name}_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
+    GraphImage({agent_name}_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
     parent_dir = Path(__file__).resolve().parent
     if not os.path.exists(parent_dir / 'graphs'):
         os.makedirs(parent_dir / 'graphs')
