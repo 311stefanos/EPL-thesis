@@ -67,7 +67,7 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Annotated, Union
+from typing import Literal, List, Optional, Annotated, Tuple, Union
 from pydantic import BaseModel, Field, ValidationError, field_validator
 from operator import add
 
@@ -159,6 +159,8 @@ class OutputSchema(BaseModel):
 
 
 ''' Tools '''
+# TODO: Can add tool to request docs
+
 tavily_search = TavilySearch(
     tavily_api_key= os.getenv('TAVILY_API_KEY'),
     search_depth= "advanced",
@@ -249,6 +251,25 @@ def was_tavily_called(state: InputSchema) -> bool:
     '''
     return any([mes.tool_name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage)])
 
+def get_schema_type(state: InputSchema) -> Tuple[str, str]:
+    '''
+    `get_schema_type` returns the schema type of the state.
+    
+    `Args:`
+        state (InputSchema): The state of the agent. Must have the key 'messages'.
+
+    `Returns:`
+        (Tuple[str, str]): The schema type of the state, and how it should be called.
+    '''
+    code = read_state_file(state)
+    if 'AgentSchema(BaseModel):' in code:
+        return ('`BaseModel`', '`state.key_name`')
+    
+    elif 'AgentSchema(MessagesState):' in code:
+        return ('`MessagesState`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
+    
+    return ('`TypedDict`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
+
 
 
 ''' Nodes '''
@@ -311,13 +332,17 @@ def coder_node(state: InputSchema) -> InputSchema:
             reviewer_comments= state['reviewer_comments']
         ) if state['previous_implementation'] else ''
 
+        type_, how = get_schema_type(state)
+
         prompt = prompts.CODE_PROMPT.format(
             code= read_state_file(state),
             function_name= state['function_name'],
             special_instructions= state['software_engineer_instructions'],
             history= history,
             tool_history= '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])]),
-            prev= prev
+            prev= prev,
+            agent_schema_type= type_,
+            schema_call= how
         )
 
         # call the LLM
@@ -391,13 +416,17 @@ def review_node(state: InputSchema) -> InputSchema:
     
     try:
         # prompt
+        type_, how = get_schema_type(state)
+
         prompt = prompts.REVIEW_PROMPT.format(
             code= read_state_file(state),
             additional_imports= state['previous_implementation'].imports,
             function_name= state['function_name'],
             special_instructions= state['software_engineer_instructions'],
             previous_implementation= state['previous_implementation'].code,
-            issues= state['reviewer_comments']
+            issues= state['reviewer_comments'],
+            agent_schema_type= type_,
+            schema_call= how
         )
 
         # call the LLM

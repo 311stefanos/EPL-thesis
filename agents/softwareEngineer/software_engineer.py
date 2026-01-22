@@ -29,7 +29,7 @@ response = software_engineer_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage, BaseMessage
 from langchain_core.tools import tool
 
 # Langgraph imports
@@ -38,7 +38,7 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Dict, Set, Tuple
+from typing import Literal, List, Optional, Dict, Set, Tuple, Union
 from pydantic import BaseModel, Field
 
 # General imports
@@ -102,13 +102,30 @@ class CodeIssues(BaseModel):
         issue: str = Field(description= 'The code issue.')
         comment: Optional[str] = Field(description= 'The comment for the software engineer to read. Can be ommited', default= None)
 
+        def __eq__(self, value: str) -> bool:
+            return self.issue == value
+        
+        def __str__(self) -> str:
+            return f'{self.issue}\n{self.comment}\n'
+
     general_comments: Optional[str] = Field(description= 'General comments for the whole code base.', default= None)
     issues: List[Issue] = Field(description= 'A list of the code issues.', default= [])
+
+    def __contains__(self, value: str) -> bool:
+        return any(issue == value for issue in self.issues)
+    
+    def __str__(self):
+        issues = '\n'.join([str(issue) for issue in self.issues])
+        return f'{self.general_comments}\n\n{issues}'
+    
+    def remove(self, value: str) -> None:
+        self.issues = [issue for issue in self.issues if issue != value]
 
 ''' Input Schema '''
 # The input schema for the software engineer, only the file path is required
 class InputSchema(MessagesState):
     file_path: str = Field(description= 'The path to the file.')
+    times_reviewed: int = Field(description= 'The number of times the code has been reviewed.', default= 0)
 
 
 
@@ -225,6 +242,18 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         traceback.print_exc()
     
     print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
+
+    # Remove requested imports that are already imported
+    if response['imports']:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            import_section = f.read()
+
+        start_idx = code.find("''' Imports '''")
+        end_idx = code.find("''' Constants '''")
+        import_section = import_section[start_idx:end_idx]
+
+        response['imports'] = [import_ for import_ in response['imports'] if import_ not in import_section]
+
     # Save the coder's output
     coders[function_name] = CoderSchema(code= response['code'], proposals= response['proposals'], imports= response['imports'], approved= False, disapproved= False)
 
@@ -426,7 +455,8 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
     global imports
     
     try:
-        code = read_state_file({'file_path': file_path})
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code = f.read()
 
         start_marker = "''' Imports '''"
         end_marker = "''' Constants '''"
@@ -593,14 +623,15 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
 
         new_code = code[:start_idx] + new_import_block + code[end_idx:]
 
-        print(f'{BLUE}[TOOL] [OLD SECTION]{RESET}\n{import_block}') if DEBUG else None
-        print(f'{BLUE}[TOOL] [NEW SECTION]{RESET}\n{new_import_block}') if DEBUG else None
+        # print(f'{BLUE}[TOOL] [OLD SECTION]{RESET}\n{import_block}') if DEBUG else None
+        # print(f'{BLUE}[TOOL] [NEW SECTION]{RESET}\n{new_import_block}') if DEBUG else None
 
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(new_code)
 
         # Best-effort removal from global `imports` (whatever its internal representation is)
         try:
+            global imports
             for item in removed_from_global:
                 if item in imports:
                     imports.remove(item)
@@ -655,15 +686,15 @@ def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
     for resolved_issue in resolved_issues:
         # Check if the code issue exists
         if resolved_issue not in code_issues:
-            print(f'{RED}[TOOL] [ERROR] [RESOLVE]{RESET} The code issue {resolved_issue} does not exist.') if DEBUG else None
+            print(f'{RED}[TOOL] [ERROR] [RESOLVE]{RESET} The code issue `{resolved_issue}` does not exist.') if DEBUG else None
             not_resolved_issues.append(resolved_issue)
         
-        elif resolved_issue in code_issues:
-            code_issues.issues.remove(resolved_issue)
+        else:
+            code_issues.remove(resolved_issue)
             actually_resolved_issues.append(resolved_issue)
 
-    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {actually_resolved_issues}') if DEBUG else None
-    print(f'{RED}[TOOL] [FAIL] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG else None
+    print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {actually_resolved_issues}') if DEBUG and len(actually_resolved_issues) > 0 else None
+    print(f'{RED}[TOOL] [FAIL] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG and len(not_resolved_issues) > 0 else None
     return f'[SUCCESS] Resolved the coder\'s code issues: {actually_resolved_issues}\n[FAIL] The following code issues were not resolved (due to not exact wording): {not_resolved_issues}'
 
 tools = [
@@ -699,8 +730,6 @@ code_validator = myChatOpenAI(
     model= 'mistralai/devstral-2512:free'
 ).with_structured_output(CodeIssues)
 
-# TODO: add model to create necessary files. for files that require keys, insert [dummy data]
-
 
 
 ''' Helpful Functions '''
@@ -715,6 +744,7 @@ def clean_llm_output(code: str) -> str:
     `Returns:`
         code: str
     '''
+    code = code.strip()
     if not code:
         return code
 
@@ -763,6 +793,49 @@ def read_state_file(state: InputSchema) -> str:
         code = f.read()
     return code
 
+# Returns the schema type of the state
+def get_schema_type(state: InputSchema) -> Tuple[str, str]:
+    '''
+    `get_schema_type` returns the schema type of the state.
+    
+    `Args:`
+        state (InputSchema): The state of the agent. Must have the key 'messages'.
+
+    `Returns:`
+        (Tuple[str, str]): The schema type of the state, and how it should be called.
+    '''
+    code = read_state_file(state)
+    if 'AgentSchema(BaseModel):' in code:
+        return ('`BaseModel`', '`state.key_name`')
+    
+    elif 'AgentSchema(MessagesState):' in code:
+        return ('`MessagesState`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
+    
+    return ('`TypedDict`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
+
+# Checks if the add_imports tool was called in the last messages
+def add_imports_called(last_messages: List[BaseMessage]) -> bool:
+    '''
+    `add_imports_called` returns True if the add_imports tool was called in the last messages.
+    
+    `Args:`
+        last_messages (List[BaseMessage]): The last messages of the conversation.
+
+    `Returns:`
+        add_imports_called: bool
+    '''
+    for message in last_messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        if not hasattr(message, 'name'):
+            continue
+
+        tool_name = getattr(message, 'name')
+        if tool_name == 'add_imports':
+            return True
+        
+    return False
+
 
 
 ''' Nodes '''
@@ -781,10 +854,16 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
 
         response = safe_invoke(tool_adder, prompt).content
 
-        cleaned_response = clean_llm_output(response)
+        think_process, code = response.split('# Code')
+        cleaned_code = clean_llm_output(code)
+
+        print(f'{BLUE}[NODE] [INFO] [THINK PROCESS]{RESET} {think_process}') if DEBUG else None
+
+        if len(cleaned_code) < 4 or cleaned_code.lower().strip() == 'none' or not cleaned_code.strip():
+            return state
 
         with open(state['file_path'], 'w', encoding='utf-8') as f:
-            f.write(cleaned_response)
+            f.write(cleaned_code)
 
         return state
     except Exception as e:
@@ -853,6 +932,9 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
 
         # Parse the imports
         parsed_imports = '\n'.join([f'- {f}' for f in imports])
+
+        # Get the schema type
+        type_, how = get_schema_type(state)
         
         prompt = prompts.SOFTWARE_ENGINEER_PROMPT.format(
             file_path= state['file_path'],
@@ -863,6 +945,8 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
             disapproved_functions= disapproved_functions,
             imports= parsed_imports,
             code_issues= code_issues_prompt,
+            agent_schema_type= type_,
+            schema_call= how
         ) + last_prompt
 
         # call the LLM
@@ -894,18 +978,9 @@ def tool_node(state: InputSchema) -> InputSchema:
             from_kwargs = True
             tool_calls = last_message.additional_kwargs.get('tool_calls', [])
 
-        # Check whether add_imports was called during the last 3 messages
-        add_imports_called_before = False
-        last_5_messages = state['messages'][-5:]
-        for message in last_5_messages:
-            if (
-                (hasattr(message, 'tool_calls') and message.tool_calls) or
-                (hasattr(message, 'additional_kwargs') and message.additional_kwargs.get('tool_calls', False))
-            ):
-                for tool_call in message.tool_calls:
-                    if tool_call['name'] == 'add_imports':
-                        add_imports_called_before = True
-
+        # Check whether add_imports was called during the last 5 messages
+        add_imports_called_before = add_imports_called(state['messages'][-6:-1])
+    
         print(json.dumps(tool_calls, indent= 4)) if DEBUG else None
 
         # Execute all tool calls
@@ -917,8 +992,9 @@ def tool_node(state: InputSchema) -> InputSchema:
 
             # Skip add_imports if it was called before
             if tool_call['name'] == 'add_imports' and add_imports_called_before:
-                err_msg = '[ERR] You cannot add imports because add_imports was called shorty before'
+                err_msg = '[ERR] You cannot add imports because add_imports was called shorty before. If you want to add imports, call the add_imports tool again after 5 messages. Make sure you are not calling the add_imports tool in a loop or with the same arguments.'
                 observations.append((err_msg, tool_call['name'], tool_call['id']))
+                continue
 
             tool = tools_by_name[tool_call['name']]
 
@@ -968,8 +1044,12 @@ def last_check(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
+        type_, how = get_schema_type(state)
+
         prompt = prompts.LAST_CHECK_PROMPT.format(
-            code= read_state_file(state).split('if __name__ ==')[0]
+            code= read_state_file(state).split('if __name__ ==')[0],
+            agent_schema_type= type_,
+            schema_call= how
         )
 
         # call the LLM and update the code issues
@@ -977,7 +1057,7 @@ def last_check(state: InputSchema) -> InputSchema:
         code_issues = safe_invoke(code_validator, [SystemMessage(content= prompt)])
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {code_issues}') if DEBUG else None
 
-        return state
+        return {'times_reviewed': state['times_reviewed'] + 1}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -1052,6 +1132,9 @@ def passed_last_check(state: InputSchema) -> Literal['software_engineer_node', '
     if not code_issues.issues:
         return '__end__'
     
+    if state['times_reviewed'] >= 2:
+        return '__end__'
+    
     return 'software_engineer_node' 
 
 
@@ -1065,9 +1148,10 @@ software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
-# software_engineer_graph.add_edge(START, 'add_tool_sections')
-# software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
-software_engineer_graph.add_edge(START, 'software_engineer_node')
+software_engineer_graph.add_edge(START, 'add_tool_sections')
+# software_engineer_graph.add_edge('add_tool_sections', END)
+software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
+# software_engineer_graph.add_edge(START, 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
     after_software_engineer,
@@ -1113,7 +1197,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
-        'recursion_limit': 100, # TODO: change
+        'recursion_limit': 150, # TODO: change
         'configurable': {
             'user_id': 'softwareEngineer',
             'run_name': 'softwareEngineer',
@@ -1121,7 +1205,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py')
+    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py', times_reviewed= 0)
     response = software_engineer_app.invoke(user, config= config)
 
     # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

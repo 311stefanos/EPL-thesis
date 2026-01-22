@@ -1,6 +1,3 @@
-# TODO: maybe add to follow the docstrings
-
-
 SOLUTION_BRAINSTORM_PROMPT = '''
 You are a master at thinking about code. 
 Your job is to
@@ -41,6 +38,68 @@ Special instructions: {special_instructions}
 <IMPLEMENTATION_HISTORY_START>
 {history}
 </IMPLEMENTATION_HISTORY_END>
+
+# Basic Information
+## What is a Tool
+A **tool** is a real function in your code that the model can ask you to execute when it needs information or side effects it cannot produce by itself
+(for example: file I/O, HTTP requests, database queries, running other agents).
+
+Each tool has:
+- A **name**.
+- A clearly typed **signature**: arguments must be simple JSON-serializable types (str, int, float, bool, lists, dicts) with short, precise descriptions.
+- A **return value** that you pass back into the model as context.
+
+The model never runs the code directly. Instead:
+1. The model decides which tool to call and with which arguments.
+2. You execute the corresponding function in your environment.
+3. You feed the result back to the model as a tool message so it can continue reasoning.
+
+When you want to call a tool, you should follow these rules:
+- Tools with the `@tool` decorator cannot be called directly as they are not Callable.
+- Tools with the `@tool` decorator have the `.invoke` method. The invoke method takes the same arguments as the tool definition, however, they are passed in a dictionary. The invoke method returns the result of the tool.
+
+When you have to suggest an implementation for a tool handler, you should follow these rules:
+- Extract tool calls from the last message.
+- For each tool call, dispatch by tool name.
+- Invoke the tool and update state keys. You MUST invoke the tool.
+- Append ToolMessage(s) when a tool was invoked.
+- Return a state update dict that matches the graph state schema style used in the codebase.
+
+You should focus on the state update, and suggest ways to update the state. Use instructions for the other parts as well.
+
+---
+
+## Provided Functions
+All provided functions/constants are included in the `utils/utils.py` file. You are free to use them in your recommendations.
+1. `USER_APPROVALS`: a list of strings that are considered positive answers by the user
+2. `print_function_name(colour= 'yellow in unicode')`: a function that prints the name of the function that is being executed in the provided colour.
+3. `will_tool_call(messages: list[BaseMessage]) -> bool`: a function that checks if the last message will call a tool.
+4. `myChatOpenAI(base_url: str = 'https://openrouter.ai/api/v1', api_key: str|None = None, model: str|None = None, temperature: float = 0.7)`:
+    A class that extends the ChatOpenAI class, that automatically inputs some parametres such as the API KEY, and model (internally)
+5. `safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
+    A function that invokes an LLM and handles most errors. After max_retries it wil raise an error. It returns the result of the LLM invocation.
+6. `def parse_tool_arguments(args) -> dict`: A function that parses the tool arguments, because they may be in different formats. Not required to use as the LLM responses are always in the correct format.
+
+## Provided Prompts
+All provided prompts are meant to be used with the `.format` method of python. You can format it however you see fit and the prompt engineering team will make the best prompt for you.
+If you deem that the prompt needs a dynamic extension (e.g. if condition1: prompt += prompt1 else: prompt += prompt2), you may use any prompt you want, just keep the naming convention consistent.
+Any used prompt must be included and accessed by the `prompts` file.
+### Careful Conditions
+Do not do both:
+- Format the prompt with all messages list AND append the messages list in `safe_invoke` function. Choose none or one.
+
+# Correct Implementation Rules for Coders - Do not suggest an implementation that violates these rules
+In order to make a correct implementation, you must checklist the following:
+- The function should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+        - tool invocations can only be on tool handler functions, never in LLM nodes.
+    - no major security issues.
+    - no inline imports.
+    - no major performance issues.
+    - if there is a `safe_invoke` method, make sure it doesn't get overloaded with the messages twice. This happens when the messages are formatted into the prompt and passed into the safe_invoke method.
+    - if the schema type is not respected. This mean if the type is BaseModel the key access should be made via `schema.key_name`, otherwise it should be `schema['key_name']` or `schema.get('key_name', default)`.
 
 # Output Format
 <OUTPUT_START>
@@ -114,12 +173,14 @@ Your job is to
 8) You should use type annotations to make the code more readable and maintainable.
 9) You should understand how to access the `state` dictionary. If the state is `BaseModel`, you can access it like `state.key`, otherwise (TypedDict, MessagesState) you should `state['key']`
 10) You should not change the docstring, except if you make adjustments, or add new information.
-11) Any external files you will need, should be located under the same directory as the code.
+11) Any external files you will need, should be located under the same directory as the code. When using external files, check the other functions to see if the same file is accessed elsewhere in the code. If so use the same file path.
 
 # Catastrophic Failure Condition
 1. You may not import anything on the code you provide.
 2. You may not use the `tavily_search` tool more than once.
-3. You have to respect the class of the schemas. For `BaseModel`, you can access it like `state.key`, otherwise (TypedDict, MessagesState) you should `state['key']`
+3. You may not use the `tool.invoke` method outside of a tool handler node.
+
+---
 
 # Basic Information
 ## What is a Tool
@@ -154,10 +215,10 @@ def my_tool(arg1: str, arg2: int) -> str:
 
 response = safe_invoke(llm, _) # Called a tool
 ... # fetch the tool call and tool name
-tool_message: str = my_tool.invoke(tool_call)
+tool_message: str = my_tool.invoke(tool_call) # You can only invoke a tool in a tool handler function, **NEVER** in a node that calls tools.
 # or
 tool_message: str = my_tool.invoke({{'arg1': arg1, 'arg2': arg2}})
-# can be parsed into a TollMessage
+# can be parsed into a ToolMessage
 tool_msg: ToolMessage = ToolMessage(content= tool_message, name= tool_call['name'], tool_call_id= tool_call['id'])
 ```
 
@@ -168,10 +229,12 @@ When you have to implement a tool handler, you should follow these rules:
 - Append ToolMessage(s) when a tool was invoked.
 - Return a state update dict that matches the graph state schema style used in the codebase.
 
-You may use this reference shape to guide your implementation (do not copy/paste it, it need some changes):
+You may use the provided reference tool handler code to guide your implementation.
+Take extra consideration in the tool_call extraction (because tool calls can be in different formats).
+Tool calls can be under either the `tool_calls` key or the `additional_kwargs` key.
 ```python
 def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
-        print_function_name() if DEBUG else None
+    print_function_name() if DEBUG else None
     
     try:
         # Get the last message, and extract the tool calls
@@ -213,7 +276,10 @@ def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
                 # If the tool fails, skip it
                 continue
 
-            # <YOU_NEED_TO_CHANGE_THE_BELOW_CODE_ALWAYS>
+            # If needed :<YOU_NEED_TO_CHANGE_THE_BELOW_CODE_ALWAYS>
+            # Can add conditions based on tool called
+            # if tool_call['name'] == 'tool_name':
+            #   ...
             # Change state keys
             state['key to change'] = value
             # Do something else
@@ -236,6 +302,7 @@ def [node_name]_tools_[tool(s)_name](state: AgentSchema) -> AgentSchema:
         return state
 ```
 
+---
 
 ## Provided Functions
 All provided functions/constants are included in the `utils/utils.py` file. You are free to use them in your implementation.
@@ -252,6 +319,9 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
 All provided prompts are meant to be used with the `.format` method of python. You can format it however you see fit and the prompt engineering team will make the best prompt for you.
 If you deem that the prompt needs a dynamic extension (e.g. if condition1: prompt += prompt1 else: prompt += prompt2), you may use any prompt you want, just keep the naming convention consistent.
 Any used prompt must be included and accessed by the `prompts` file.
+### Careful Conditions
+Do not do both:
+- Format the prompt with all messages list AND append the messages list in `safe_invoke` function. Choose none or one.
 
 # Available Tools
 You have the following tools available to you:
@@ -267,7 +337,21 @@ You should not call tavily_search more than once.
         - function_arguments: [{{name, type}}]
         - output: return type
         - justification: why it's necessary now
-    - `imports` (Optional[List[str]]) **NOT** a string: a list of imports you need, do not import on the code key! You should not request an import that is already imported in the import section of the code. All imports must containt the `import` keyword.
+    - `imports` (Optional[List[str]]) **NOT** a string: a list of imports you need, do not import on the code key! You should not request an import that is already imported in the provided code. All imports must containt the `import` keyword.
+
+# Correct Implementation
+In order to make a correct implementation, you must checklist the following:
+- The function should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+        - tool invocations can only be on tool handler functions, never in LLM nodes.
+    - no major security issues.
+    - no inline imports.
+    - no major performance issues.
+    - if there is a `safe_invoke` method, make sure it doesn't get overloaded with the messages twice. This happens when the messages are formatted into the prompt and passed into the safe_invoke method.
+    - if the schema type is not respected. This mean if the type is BaseModel the key access should be made via `schema.key_name`, otherwise it should be `schema['key_name']` or `schema.get('key_name', default)`.
+        - In this file the AgentSchema is a {agent_schema_type} and it should be called like {schema_call}. 
 '''
 
 PREV = '''
@@ -330,15 +414,35 @@ You should **NEVER** report an issue that has already been reported here.
 - Any not implemented features
 4. You should not be very strict. You should report any real issue that could cause bugs, security risk, or mismatch with requirements, not jsut simple errors.
 5. Do not report issues that would be catched by a pydantic validation.
+    - This means, if an LLM is with `.with_structured_output()` or `.bind_tools()`, the arguments are already validated by pydantic schemas.
+6. You should report only the issues that are worth reporting.
+7. Treat state as a correct AgentSchema that is always not None.
+8. Treat tool argument inputs as already validated through pydantic's validation.
+9. Do not report any issues with imports.
+10. Max 5 issues, so choose the most important ones.
+
+# Correct Coder Implementation
+In order to approve a coder's implementation, you must checklist the following:
+- The function should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+        - **tool invocations can only be on tool handler functions, never in LLM nodes.**
+    - no major security issues.
+    - no inline imports.
+    - no major performance issues.
+    - if there is a `safe_invoke` method, make sure it doesn't get overloaded with the messages twice. This happens when the messages are formatted into the prompt and passed into the safe_invoke method.
+    - if the schema type is not respected. This mean if the type is BaseModel the key access should be made via `schema.key_name`, otherwise it should be `schema['key_name']` or `schema.get('key_name', default)`.
+        - In this file the AgentSchema is a {agent_schema_type} and it should be called like {schema_call}.
 
 # Output rules (STRICT)
 Return either:
 1) An empty string if there are no issues worth reporting.
 OR
-2) A numbered list of issues, following the format below.
+2) A numbered list of issues (max 5), following the format below.
 
 # Issue List Format
-Follow when reporting issues:
+Follow when reporting issues (max 5):
 [index]. Title (short)
 - Where: point to the exact line(s) or snippet from <IMPLEMENTATION_START>
 - Why it matters: 1 to 2 sentences

@@ -32,6 +32,7 @@ If you add any new function bodies, they must remain as stubs (detailed docstrin
    - If it is non-empty, the tool is probably Type B.
    - If it is empty, missing or None, the tool is Type A unless other rules force Type B.
 6) Intent tools and terminal tools are always Type B.
+7) Routing functions MUST NOT return the same node (no self-loop), unless that self-loop edge already exists in the input code.
 
 ---
 
@@ -62,6 +63,14 @@ Add it like:
 [graph_name].add_node("[node_name]_tools_[tool_group_name]", ToolNode([tool1, tool2, ...]))
 ```
 
+HARD RULE (Type A):
+- If you use ToolNode(...), you **MUST NOT** create any custom handler function stub for that tools node. All implementation is handled by ToolNode.
+- The tools node is the ToolNode itself. No extra `def chat_tools_*` function is allowed for Type A.
+- Not all Type A tools should be under the same ToolsNode. You can have multiple ToolsNodes, under different names if needed.
+    - Sometimes a tool is Type A, but needs to route to a different next node after invoking that the rest, so it can have a different ToolsNode, which then routes to the appropriate next node.
+
+---
+
 ### Type B: Custom tool handler node (required for intent tools, all tools that need to modify the state should have a custom handler node)
 Use a custom tool handler node instead of ToolNode when ANY are true:
 - The tool call is used to signal intent or control flow.
@@ -75,7 +84,7 @@ In this case you must:
 [graph_name].add_node("[node_name]_tools_[tool_group_name]", [node_name]_tools_[tool_group_name])
 ```
 
-2) Add a tool handler function skeleton near other routing/tool helpers, preserving code order.
+2) Add a tool handler function skeleton near other routing/tool helpers, preserving code order. ONLY for Type B.
 It must:
 - Extract tool calls from the last message.
 - For each tool call:
@@ -133,9 +142,30 @@ def from_[node_name]_to(state: AgentSchema) -> Literal["next_node1", "[node_name
 5) Keep code changes minimal and consistent with existing patterns.
 6) Do not refactor unrelated code.
 7) Decide Type A vs Type B using the `HARD RULES` above.
+8) Create a tool handler for each Type B tool. 
+9) **DO NOT** create a tool handler for Type A tools, ToolNode is sufficient.
+10) Do not add edges that do not exist and are unrelated to tools, especially when they are self-loops.
+
+---
+
+# Thinking Process (ALLOWED)
+You MAY add a "thinking process" section before the code output to explain why you chose each type for each tool.
+You should include a todo list of what you need to do next, especially what functions you will define.
+If you do, it MUST be separated from the code by an exact heading line:
+`# Code`
+Rules:
+1) The thinking process must be plain text only.
+2) It must NOT include any code blocks or pseudo-code.
+3) It must NOT include prompt text copied into comments/docstrings.
+4) The code output must start immediately after the "# Code" heading.
+5) Under "# Code", output ONLY the modified code (no explanations, no tags).
+6) If no change is needed, output under the "# Code" heading exactly 'None'.
 
 # Output
-Output ONLY the modified code. No explanations. No tags.
+Output ONLY the optional "thinking process" and `# Code` heading, followed by the modified code.
+The code output must start immediately after the "# Code" heading.
+If you add any tool handler nodes, add a heading `\'\'\' Tool Handlers \'\'\'` before them.
+Tool Handlers must go after the `\'\'\' Conditional Functions \'\'\'` section.
 '''
 
 
@@ -215,6 +245,13 @@ When you create tools, follow these rules:
 - Keep them as side-effect-safe as possible, and document the side effects they do have.
 - Validate inputs and handle errors gracefully.
 - Return a compact, structured result (ideally a dict or Pydantic model) that is easy for the model to read, reason about, and use in the next steps.
+
+The tools are functions that do not belong in the graph:
+- They are invoked through the graph using the method `.invoke({{args}})`.
+- They can be invoked explicitly or automatically.
+- When explicit, the code must have a node function implemented to invoke the tool.
+- When not, the graph should have a node as a ToolNode - inside this given node, the tool is invoked automatically. There is no need to create a custom node for tools that are used within a ToolNode.
+- You should generally trust the graph and the defined nodes. Already a team of graph builders reviewed the graph and tool handlers (might be custom nodes or ToolNodes).
 
 # Available Tools
 You have access to the following tools. You may call any of them whenever needed,
@@ -388,6 +425,23 @@ You may use these functions, or instruct the coders to use them.
 - def will_tool_call(messages: list[BaseMessage], instruction_texts: list[str] = [], actually_called: bool= False) -> bool: 
     - A function that returns True if the tool will be called, False otherwise.
 
+# Correct Coder Implementation
+In order to approve a coder's implementation using the `approve_function_code` tool, you must checklist the following:
+- The function should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+        - tool invocations can only be on tool handler functions, never in LLM nodes.
+    - no major security issues.
+    - no inline imports # In this case you may call both `approve_function_code`, `add_imports` and `replace_code` to remove the imports.
+    - no major performance issues.
+    - if there is a `safe_invoke` method, make sure it doesn't get overloaded with the messages twice. This happens when the messages are formatted into the prompt and passed into the safe_invoke method.
+    - if the schema type is not respected. This mean if the type is BaseModel the key access should be made via `schema.key_name`, otherwise it should be `schema['key_name']` or `schema.get('key_name', default)`.
+        - In this file the AgentSchema is a {agent_schema_type} and it should be called like {schema_call}. 
+
+If a function is mostly correct with a few simple lines of code to change, you can use `replace_code` to fix it, rather than a full `disapprove_and_comment_on_coder_code` and `call_coder`.
+    
+
 # Completion Criteria
 - The file at {file_path} should:
     - Be syntactically correct and importable.
@@ -406,7 +460,6 @@ CODE_ISSUES_SECTION = '''
 
 
 
-# TODO: maybe add a `# Previous identified issues` section
 LAST_CHECK_PROMPT = '''
 You are the last coder reviewing a single Python file produced by a team.
 
@@ -442,10 +495,12 @@ Check for issues that can realistically break the program or create risk:
     - `from creations.* import *_prompts as prompts`
 Are defined and ready to use. 
 - You may not report any issue about `prompts.*_PROMPT`.
-- You may not report any issue about the functions `myChatOpenAI`, `safe_invoke`, `print_function_name`.
+- You may not report any issue about the functions `myChatOpenAI`, `safe_invoke`, `print_function_name`, `parse_tool_arguments`, `will_tool_call`.
 2) Treat `.with_structured_output(SomeSchema)` as structured-output enforcement.
    - Do NOT raise issues about “LLM might not follow schema” when `.with_structured_output` is used.
 3) Understand `.bind_tools(...)` and `.with_structured_output(...)` well enough to avoid false positives.
+4) A tool when invoked, the invoke method gets a dictionary as an argument.
+5) The functions provided by the utils.utils module are safe to call.
 
 # Ignore rules
 1) Ignore anything below a section titled exactly `Testing`.
@@ -459,6 +514,31 @@ Are defined and ready to use.
 
 # Hard rules (internal)
 1) Follow the must report issues, assumptions given and ignore rules first, then reason about issues with the code.
+2) Do not report that a function is unimplemented when it is clearly implemented.
+
+# Correct Implementation
+In order to approve the implementation, you must checklist the following:
+- All functions should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+        - tool invocations can only be on tool handler functions, never in LLM nodes.
+    - no major security issues.
+    - no inline imports.
+    - no major performance issues.
+    - if there is a `safe_invoke` method, make sure it doesn't get overloaded with the messages twice. This happens when the messages are formatted into the prompt and passed into the safe_invoke method.
+        - If the messages are formatted into the prompt, the safe_invoke method should probably be called with a single message.
+    - In this file the AgentSchema is a {agent_schema_type} and it should be called like {schema_call}. If the state is accessed by another way, report an issue.
+- Functions that are allowed to invoke a tool are **ONLY** tool handler functions. No other functions should invoke a tool.
+- The file should be:
+    - syntactically correct.
+    - logically correct.
+    - langgraph compatible.
+    - correct routing
+    - correct imports
+
+If anything does not comply with these requirements, find the errors and report them.
+If you report an incorrect issue, the file will be implemented incorrectly, so be careful.
 
 # Output Format
 You must output a JSON object that conforms to the `CodeIssues` schema below.
