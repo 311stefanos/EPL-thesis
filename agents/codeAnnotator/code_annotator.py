@@ -60,7 +60,7 @@ import os
 import re
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, USER_APPROVALS
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, USER_APPROVALS, read_state_file
 from agents.workflowRefiner.workflow_refiner import WorkflowBundle
 from agents.codeAnnotator import prompts
 
@@ -261,21 +261,6 @@ tool_or_output_generator = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-# Reads the contents of state['file_path']
-def _read_state_file(state: InputSchema) -> str:
-    '''
-    `_read_state_file` reads the contents of state['file_path']
-    
-    `Args:`
-        state (InputSchema): The state of the agent. Must have the key 'file_path'.
-
-    `Returns:`
-        code: str
-    '''
-    with open(state['file_path'], 'r', encoding='utf-8') as f:
-        code = f.read()
-    return code
-
 # To get the correct section of the code
 def _slice_section(code: str, start_label: str, end_labels: list[str]) -> str:
     q = r'["\']{3}'
@@ -318,7 +303,7 @@ def generate_docstrings(state: InputSchema) -> InputSchema:
         prompt = prompts.ANNOTATE_NODES_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= _read_state_file(state),
+            code_structure= read_state_file(state),
             history= history
         )
 
@@ -416,7 +401,7 @@ def propose_schemas(state: InputSchema) -> InputSchema:
         prompt = prompts.PROPOSE_SCHEMAS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= _read_state_file(state),
+            code_structure= read_state_file(state),
             history= history
         )
 
@@ -487,7 +472,7 @@ def propose_helpful_functions(state: InputSchema) -> InputSchema:
         prompt = prompts.ADD_HELPFUL_FUNCTIONS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= _read_state_file(state),
+            code_structure= read_state_file(state),
             history= history
         )
 
@@ -552,7 +537,7 @@ def propose_tool_functions(state: InputSchema) -> InputSchema:
         prompt = prompts.ADD_TOOL_FUNCTIONS_PROMPT.format(
             clarified_user_input= state['clarified_user_input'],
             workflow= state['workflow'],
-            code_structure= _read_state_file(state),
+            code_structure= read_state_file(state),
             history= history
         )
 
@@ -613,7 +598,7 @@ def propose_llm_modifiers(state: InputSchema) -> InputSchema:
     try:
         # prompt
         history = '\n\n---\n\n'.join([mes.pretty_repr() for mes in state.get('messages', [])])
-        code_structure = _read_state_file(state)
+        code_structure = read_state_file(state)
         # Get the LLM definitions
         llm_section = _slice_section(code_structure, 'LLM',   ['Helpful Functions', 'Nodes'])
         llm_definitions = [line.split(' = ')[0] for line in re.findall(r'(\w+) = myChatOpenAI\(', llm_section)]

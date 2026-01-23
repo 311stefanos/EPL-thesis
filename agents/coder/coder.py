@@ -79,7 +79,7 @@ import json
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, USER_APPROVALS
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, USER_APPROVALS ,read_state_file
 from agents.coder import prompts
 
 
@@ -223,21 +223,6 @@ reviewer = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-# Reads the contents of state['file_path']
-def read_state_file(state: InputSchema) -> str:
-    '''
-    `read_state_file` reads the contents of state['file_path']
-    
-    `Args:`
-        state (InputSchema): The state of the agent. Must have the key 'file_path'.
-
-    `Returns:`
-        code: str
-    '''
-    with open(state['file_path'], 'r', encoding='utf-8') as f:
-        code = f.read()
-    return code
-
 # Returns true when the agent already called the tavily tool
 def was_tavily_called(state: InputSchema) -> bool:
     '''

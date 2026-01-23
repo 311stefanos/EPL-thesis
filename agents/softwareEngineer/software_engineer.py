@@ -49,7 +49,7 @@ import json
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, clean_llm_output, read_state_file
 from agents.softwareEngineer import prompts
 from agents.coder.coder import (
     InputSchema as CoderInputSchema,
@@ -733,66 +733,6 @@ code_validator = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-# Remove heading and trailing tags or markdown special characters
-def clean_llm_output(code: str) -> str:
-    '''
-    `clean_llm_output` removes heading and trailing tags or markdown special characters from the LLM's output
-
-    `Args:`
-        code (str): The LLM's output
-
-    `Returns:`
-        code: str
-    '''
-    code = code.strip()
-    if not code:
-        return code
-
-    # Remove possible tags or markdown special characters from the LLM's output
-    while code[0] in ['<', '`']:
-        # Removing tags
-        while code.strip().startswith('<'):
-            # Remove the line
-            index = code.find('\n')
-            code = code[index + 1:].strip()
-            
-        while code.strip().endswith('>'):
-            for i, char in enumerate(reversed(code)):
-                if char == '<':
-                    index = len(code) - i
-                    code = code[:index].strip()
-                    break
-
-        # Removing markdown ```
-        while code.strip().startswith('`'):
-            # Remove the line
-            index = code.find('\n')
-            code = code[index + 1:].strip()
-
-        while code.strip().endswith('`'):
-            for i, char in enumerate(reversed(code)):
-                if char == '`':
-                    index = len(code) - i - 1
-                    code = code[:index].strip()
-                    break
-
-    return code.strip()
-
-# Reads the contents of state['file_path']
-def read_state_file(state: InputSchema) -> str:
-    '''
-    `read_state_file` reads the contents of state['file_path']
-    
-    `Args:`
-        state (InputSchema): The state of the agent. Must have the key 'file_path'.
-
-    `Returns:`
-        code: str
-    '''
-    with open(state['file_path'], 'r', encoding='utf-8') as f:
-        code = f.read()
-    return code
-
 # Returns the schema type of the state
 def get_schema_type(state: InputSchema) -> Tuple[str, str]:
     '''

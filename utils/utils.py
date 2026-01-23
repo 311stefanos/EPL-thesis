@@ -26,6 +26,8 @@ DEBUG = os.getenv('DEBUG')
 USER_APPROVALS = ['y', 'ye', 'yea', 'yes', 'ok', 'okay', 'k', '', 'true', 'True']
 
 
+
+
 ''' Helpful General Functions '''
 # Print the name of the function that is being executed
 def print_function_name(colour: str= '\033[93m') -> None:
@@ -97,6 +99,68 @@ def parse_tool_arguments(args):
         s2 = re.sub(r'\\(?![\\/"bfnrtu])', r'\\\\', s)
         return json.loads(s2)  # will raise again if truly broken
     
+# Remove heading and trailing tags or markdown special characters
+def clean_llm_output(code: str) -> str:
+    '''
+    `clean_llm_output` removes heading and trailing tags or markdown special characters from the LLM's output
+
+    `Args:`
+        code (str): The LLM's output
+
+    `Returns:`
+        code: str
+    '''
+    code = code.strip()
+    if not code:
+        return code
+
+    # Remove possible tags or markdown special characters from the LLM's output
+    while code[0] in ['<', '`']:
+        # Removing tags
+        while code.strip().startswith('<'):
+            # Remove the line
+            index = code.find('\n')
+            code = code[index + 1:].strip()
+            
+        while code.strip().endswith('>'):
+            for i, char in enumerate(reversed(code)):
+                if char == '<':
+                    index = len(code) - i
+                    code = code[:index].strip()
+                    break
+
+        # Removing markdown ```
+        while code.strip().startswith('`'):
+            # Remove the line
+            index = code.find('\n')
+            code = code[index + 1:].strip()
+
+        while code.strip().endswith('`'):
+            for i, char in enumerate(reversed(code)):
+                if char == '`':
+                    index = len(code) - i - 1
+                    code = code[:index].strip()
+                    break
+
+    return code.strip()
+
+# Reads the contents of state['file_path']
+def read_state_file(state) -> str:
+    '''
+    `read_state_file` reads the contents of state['file_path']
+    
+    `Args:`
+        state: The state of the agent. Must have the key 'file_path'.
+
+    `Returns:`
+        code: str
+    '''
+    with open(state['file_path'], 'r', encoding='utf-8') as f:
+        code = f.read()
+    return code
+
+
+
 
 
 ''' Helpful LLM Classes/Functions '''
@@ -119,6 +183,8 @@ class myChatOpenAI(ChatOpenAI):
         kwargs['model'] = model or os.getenv('MODEL_NAME')
         kwargs['temperature'] = temperature
         super().__init__(*args, **kwargs)
+
+
 
 
 
