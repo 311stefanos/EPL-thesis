@@ -26,19 +26,16 @@ response = prompt_engineer_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
+from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, HumanMessage
 from langchain_core.tools import tool
 
 # Langgraph imports
-from langgraph.graph import StateGraph, MessagesState
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
-from langgraph.prebuilt import ToolNode
+from langgraph.graph import StateGraph
 
 # Schema imports
-from typing import TypedDict, Literal, List, Optional, Annotated, Dict, Union
+from typing import Tuple, TypedDict, Literal, List, Optional, Dict
 from pydantic import BaseModel, Field
-from operator import add
 
 # General imports
 from dotenv import load_dotenv
@@ -50,7 +47,7 @@ import os
 import re
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, USER_APPROVALS, read_state_file, clean_llm_output
 from agents.promptEngineer import prompts
 
 
@@ -58,7 +55,7 @@ from agents.promptEngineer import prompts
 ''' Constants '''
 load_dotenv(dotenv_path= Path(__file__).resolve().parent.parent.parent / '.env')
 
-# MEMORY_PATH = Path(__file__).resolve().parent / 'memory.json'
+
 
 DEBUG = os.getenv('DEBUG')
 
@@ -78,15 +75,40 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Prompt Engineer') if DEBUG else 
 ''' General Schemas '''
 class Format(BaseModel):
     format_dict: Dict = Field(description= 'The dictionary used to format the prompt.')
+    non_format_messages_list: List[BaseMessage] = Field(description= 'The list of non-format messages.', default= [])
 
 class Prompt(BaseModel):
     prompt_name: str = Field(description= 'The name of the prompt.')
     suggested_prompt: str = Field(description= 'The suggested prompt.', default= '')
+    necessary_code_changes: List[Tuple[str, str]] = Field(description= 'The necessary code changes.', default= [])
 
     format: Format = Field(description= 'The format of the prompt.', default= Format(format_dict= {}))
 
     user_comments: List[str] = Field(description= 'The user comments.', default= [])
     latest_response: str = Field(description= 'The latest response.', default= '')
+
+    prompt_reviews: int = Field(description= 'The number of LLM reviews for the prompt.', default= 0)
+    response_reviews: int = Field(description= 'The number of LLM reviews for the response.', default= 0)
+
+    def reviewed(self, what: Literal['prompt', 'response']) -> None:
+        if what == 'prompt':
+            self.prompt_reviews += 1
+        elif what == 'response':
+            self.response_reviews += 1
+
+    def reset_reviews(self, what: Literal['prompt', 'response']) -> None:
+        if what == 'prompt':
+            self.prompt_reviews = 0
+        elif what == 'response':
+            self.response_reviews = 0
+
+    def can_review(self, what: Literal['prompt', 'response']) -> bool:
+        prompt_max: int = 2
+        response_max: int = 2
+        if what == 'prompt':
+            return self.prompt_reviews < prompt_max
+        elif what == 'response':
+            return self.response_reviews < response_max
 
     def set_format(self, format: Format) -> None:
         self.format = format
@@ -102,14 +124,14 @@ class Prompt(BaseModel):
         last_comment = last_comment.replace('Review by Expert Reviewer: ', '')
         last_comment = last_comment.replace('Review by User: ', '')
 
-        return not any(c.strip() not in USER_APPROVALS for c in last_comment.split())
+        return not any(c.strip() not in USER_APPROVALS for c in last_comment.split('\n'))
     
     def filter_comments(self) -> List[str]:
         comments: List[str] = []
         for comment in self.user_comments:
             clear_comment: str = comment.replace('Review by Expert Reviewer: ', '')
             clear_comment = clear_comment.replace('Review by User: ', '')
-            if any(c.strip() not in USER_APPROVALS for c in clear_comment.split()):
+            if any(c.strip() not in USER_APPROVALS for c in clear_comment.split('\n')):
                 comments.append(comment)
 
         return comments
@@ -120,114 +142,23 @@ class InputSchema(TypedDict):
     prompt_list: Optional[List[Prompt]] = Field(description= 'The list of prompts.')
     active_prompt_index: Optional[int] = Field(description= 'The active prompt index of the prompt list.')
 
+    error: Optional[bool] = Field(description= 'If there was an error.')
+
     mode: Literal['llm', 'user', 'both'] = Field(description= 'The mode of the agent.')
-    # tool_call: Optional[List[BaseMessage]] = Field(description= 'The tool call message.')
-
-''' Intermediate Schemas '''
-
-''' Output Schema '''
-
-
-
-# ''' Tools '''
-# # A tool to create a new entry in the long term memory of the agent, by the agent
-# def new_memory(new_memory: str) -> str:
-#     '''
-#     `new_memory` inserts a new memory into the long term memory. 
-#         This memory corresponds to the correct techniques to create a prompt.
-    
-#     `Args:`
-#         new_memory (str): The new memory.
-
-#     `Returns:`
-#         (str): A message.
-#     '''
-#     print_function_name(colour= MAGENTA) if DEBUG else None
-
-#     try:
-#         with open(MEMORY_PATH, 'w+', encoding='utf-8') as f:
-#             memory: dict = json.load(f)
-#             max_key = max([int(k) for k in memory.keys()])
-#             memory[str(max_key + 1)] = new_memory
-#             json.dump(memory, f, indent= 4)
-
-#         print(f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory created successfully.') if DEBUG else None
-#         return f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory created successfully.'
-
-#     except Exception as e:
-#         print(f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to create memory: {e}') if DEBUG else None
-#         return f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to create memory: {e}'
-
-# # A tool to update the long term memory of the agent, by the agent
-# def change_a_memory(memory_index: Union[str,int], new_memory: str) -> str:
-#     '''
-#     `change_a_memory` changes a memory entry of the long term memory. 
-#         This memory corresponds to the correct techniques to create a prompt.
-    
-#     `Args:`
-#         memory_index (Union[str,int]): The memory index. Has to be a number in int or str format.
-#         new_memory (str): The new memory.
-
-#     `Returns:`
-#         (str): A message.
-#     '''
-#     print_function_name(colour= MAGENTA) if DEBUG else None
-
-#     try:
-#         with open(MEMORY_PATH, 'w+', encoding='utf-8') as f:
-#             memory: dict = json.load(f)
-#             memory[str(memory_index)] = new_memory
-#             json.dump(memory, f, indent= 4)
-
-#         print(f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory updated successfully.') if DEBUG else None
-#         return f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory updated successfully.'
-
-#     except Exception as e:
-#         print(f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to update memory: {e}') if DEBUG else None
-#         return f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to update memory: {e}'
-
-# # A tool to delete an entry in the long term memory of the agent, by the agent
-# def delete_a_memory(memory_index: Union[str,int]) -> str:
-#     '''
-#     `delete_a_memory` deletes a memory entry of the long term memory. 
-#         This memory corresponds to the correct techniques to create a prompt.
-    
-#     `Args:`
-#         memory_index (Union[str,int]): The memory index. Has to be a number in int or str format.
-
-#     `Returns:`
-#         (str): A message.
-#     '''
-#     print_function_name(colour= MAGENTA) if DEBUG else None
-
-#     try:
-#         with open(MEMORY_PATH, 'w+', encoding='utf-8') as f:
-#             memory: dict = json.load(f)
-#             del memory[str(memory_index)]
-#             json.dump(memory, f, indent= 4)
-
-#         print(f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory deleted successfully.') if DEBUG else None
-#         return f'{BLUE}[NODE] [INFO] [UPDATE MEMORY]{RESET} Memory deleted successfully.'
-
-#     except Exception as e:
-#         print(f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to delete memory: {e}') if DEBUG else None
-#         return f'{RED}[NODE] [ERROR] [UPDATE MEMORY]{RESET} Failed to delete memory: {e}'
-
-# prompt_engineer_tools = [new_memory, change_a_memory, delete_a_memory]
 
 
 
 ''' LLM '''
 prompt_engineer = myChatOpenAI(
     temperature= 0.4
-)#.bind_tools(prompt_engineer_tools)
+)
 
 prompt_reviewer = myChatOpenAI(
     temperature= 0.25
 )
 
 formater = myChatOpenAI(
-    temperature= 0.1
+    temperature= 0.8
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(
@@ -241,21 +172,6 @@ response_reviewer = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-# Reads the contents of state['file_path']
-def read_state_file(state: InputSchema) -> str:
-    '''
-    `read_state_file` reads the contents of state['file_path']
-    
-    `Args:`
-        state (InputSchema): The state of the agent. Must have the key 'file_path'.
-
-    `Returns:`
-        code: str
-    '''
-    with open(state['file_path'], 'r', encoding='utf-8') as f:
-        code = f.read()
-    return code
-
 # Reads the contents of file in 'file_path' and returns the prompts names
 def get_prompt_names(file_path: str) -> List[str]:
     '''
@@ -269,7 +185,7 @@ def get_prompt_names(file_path: str) -> List[str]:
     '''
     # Capture the prompt name after `prompts.`
     # * = prompts.* # Can be in multiple lines.
-    pattern = re.compile(r'^\s*\w+\s*=\s*prompts\.([A-Z][A-Z0-9_]*)\b', re.MULTILINE)
+    pattern = re.compile(r'^\s*\w+:?\s*\w+?\s*=\s*prompts\.([A-Z][A-Z0-9_]*)\b', re.MULTILINE)
 
     with open(file_path, 'r', encoding='utf-8') as f:
         code = f.read()
@@ -319,18 +235,60 @@ def get_active_prompt(state: InputSchema) -> Optional[Prompt]:
     
     return state['prompt_list'][state['active_prompt_index']]
 
-# # Returns the memory of the agent
-# def get_memory() -> str:
-#     '''
-#     `get_memory` returns the memory of the agent.
+# splits the LLMs response into sections
+def split_prompt(content: str) -> Tuple[str, str, List[Tuple[str, str]]]:
+    '''
+    `split_prompt` splits the LLMs response into sections.
     
-#     `Returns:`
-#         str: The memory of the agent formatted.
-#     '''
-#     with open(MEMORY_PATH, 'r') as f:
-#         memory: dict = json.load(f)
+    `Args:`
+        content (str): The content to split. Should be formatted as:
+        ```
+        # Thinking Process
+        ...
+        # Prompt
+        ...
+        # Code Changes
+        ## Change {{index}}
+        ### Old Code
+        ...
+        ### New Code
+        ...
+        ```
 
-#     return '\n'.join([f'{k}. {v}\n' for k, v in memory.items()])
+    `Returns:`
+        Tuple[str, str, List[str]]: The prompt, response, and comments.
+    '''
+    # Split it into sections
+    thinking_process, other = content.split('# Prompt\n')
+    prompt, changes = other.split('# Code Changes\n')
+
+    # If no changes are needed, remove the changes section
+    if clean_llm_output(changes.lower()) == 'none':
+        changes = ''
+    
+    # If there are changes, split them
+    if changes:
+        changes = [c for c in changes.split('## Change') if c]
+
+        # Parse them into old, new tuples
+        changes = [
+            (
+                c.split('### Old Code\n')[1].split('### New Code\n')[0],
+                c.split('### New Code\n')[1]
+            )
+            for c in changes
+        ]
+
+    # Clean the output and return
+    return (
+        clean_llm_output(thinking_process),
+        clean_llm_output(prompt),
+        [
+            (clean_llm_output(old_code), clean_llm_output(new_code)) 
+            for old_code, new_code in changes
+            if old_code != new_code
+        ] if changes else []
+    )
 
 
 
@@ -342,14 +300,17 @@ def extract_prompts(state: InputSchema) -> InputSchema:
     print_function_name() if DEBUG else None
 
     try:
+        # Extract the prompts from the code
         prompts: List[str] = get_prompt_names(state['file_path'])
 
         print(f'{BLUE}[NODE] [INFO] [PROMPTS]{RESET} {prompts}') if DEBUG else None
 
+        # Create the prompts
         prompt_list: List[Prompt] = [Prompt(prompt_name= p) for p in prompts]
         return {
             'prompt_list': prompt_list,
-            'active_prompt_index': 0 
+            'active_prompt_index': 0,
+            'error': False
         }
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -365,40 +326,57 @@ def generate_prompt(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
-        comments: List[str] = get_active_prompt(state).filter_comments()
-        
-        prev = prompts.PREV_PROMPT.format(
-            previous_prompt= get_active_prompt(state).suggested_prompt,
-            user_comments= '\n'.join([f'- {c}' for c in comments]),
-        ) if get_active_prompt(state).suggested_prompt else ''
-
         prompt = prompts.GENERATE_PROMPT_PROMPT.format(
             prompt_name= get_active_prompt(state).prompt_name,
-            prev= prev,
-            # memory= get_memory(),
             code= read_state_file(state)
         )
 
-        response = safe_invoke(prompt_engineer, [SystemMessage(content= prompt)])
+        # Create messages to send
+        # An AIMess with the latest prompt
+        # A HumanMessage with the comments on the latest prompt
+        comments: List[str] = get_active_prompt(state).filter_comments()
+        messages: List[BaseMessage] = [SystemMessage(content= prompt)]
+        # Add the prompt
+        if get_active_prompt(state).suggested_prompt:
+            messages.append(AIMessage(content= get_active_prompt(state).suggested_prompt))
+        # Add the comments
+        if comments:
+            # Parse the comments into a readbale string
+            comment_content = '\n\n---\n\n'.join([
+                f'- What lacks with the prompt (follow strictly):\n<COMMENT_START>\n{c}\n</COMMENT_END>\n' 
+                for c in comments
+            ])
+            messages.append(HumanMessage(content= comment_content))
+        # Add latest instructions
+        if len(messages) > 1:
+            messages[0].content +=  prompts.NEXT_MESSAGES_PROMPT
 
-        # if will_tool_call([response]):
-        #     return {'tool_call': [response]}
+        # Invoke and parse
+        response = safe_invoke(prompt_engineer, messages= messages).content
+        thinking_process, suggested_prompt, code_changes = split_prompt(response)
 
-        generated_prompt = response.content
-        draft_prompt: str = generated_prompt.split('<DRAFT_PROMPT_START>')[1].split('</DRAFT_PROMPT_END>')[0].strip()
-        final_prompt: str = generated_prompt.split('<FINAL_PROMPT_START>')[1].split('</FINAL_PROMPT_END>')[0].strip()
+        # Print
+        code_changes_to_print = '\n'.join([
+            f'## Change {i}\n### Old Code\n{old_code}\n### New Code\n{new_code}'
+            for i, (old_code, new_code) in enumerate(code_changes)
+        ]) if DEBUG else None
+        print(f'{BLUE}[NODE] [INFO] [THINKING PROCESS]{RESET} {thinking_process}') if DEBUG else None
+        print(f'{BLUE}[NODE] [INFO] [PROMPT]{RESET} {suggested_prompt}') if DEBUG else None
+        print(f'{BLUE}[NODE] [INFO] [CODE CHANGES]{RESET} {code_changes_to_print}') if DEBUG else None
 
-        print(f'{GREEN}[NODE] [INFO] [DRAFT PROMPT]{RESET} {get_active_prompt(state).prompt_name} - DRAFT:\n{draft_prompt}') if DEBUG else None
-        print(f'{GREEN}[NODE] [INFO] [FINAL PROMPT]{RESET} {get_active_prompt(state).prompt_name} - FINAL:\n{final_prompt}') if DEBUG else None
+        # Update the state with the new prompt
+        get_active_prompt(state).suggested_prompt = suggested_prompt
+        get_active_prompt(state).necessary_code_changes = code_changes
 
-        get_active_prompt(state).suggested_prompt = final_prompt
-
-        return {'tool_call': None}
+        # No error
+        state['error'] = False
+        return state
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc()
 
-        return {'tool_call': None}
+        # Error
+        return {'error': True}
 
 def review_prompt(state: InputSchema) -> InputSchema:
     '''
@@ -411,7 +389,7 @@ def review_prompt(state: InputSchema) -> InputSchema:
         comments: str = ''
 
         # Get the LLM to review the prompt
-        if mode('llm', state):
+        if mode('llm', state) and get_active_prompt(state).can_review('prompt'):
             # prompt
             all_comments: List[str] = get_active_prompt(state).filter_comments()
             prompt = prompts.REVIEW_PROMPT_PROMPT.format(
@@ -421,20 +399,25 @@ def review_prompt(state: InputSchema) -> InputSchema:
                 prompt= get_active_prompt(state).suggested_prompt,
             )
             # Ask the LLM to give a sample input for the prompt
-            llm_answer: str = safe_invoke(prompt_reviewer, [SystemMessage(content= prompt)]).content
+            llm_answer: str = safe_invoke(prompt_reviewer, messages= [SystemMessage(content= prompt)]).content
             print(f'{BLUE}[NODE] [INFO] [PROMPT REVIEW]{RESET} {get_active_prompt(state).prompt_name}:\n{llm_answer}') if DEBUG else None
 
+            # Add the comments of the LLM
             if llm_answer.split('# Issues')[-1].strip():
                 comments += f'Review by Expert Reviewer: {llm_answer}\n\n'
 
+            # Increase the prompt review counter
+            get_active_prompt(state).reviewed('prompt')
+
         # Get the user to review the prompt
         if mode('user', state):
+            # Just ask the user
             user_answer: str = input(f'{GREEN}[NODE] [INFO] [INPUT] Please either accept or reject the prompt by giving a reason (y/reason) >{RESET} ')
-        
+            # Add the comments
             if user_answer:
                 comments += f'Review by User: {user_answer}\n\n'
         
-        # Add the comments
+        # Add the comments to the state
         get_active_prompt(state).add_comments(comments)
 
         return state
@@ -450,19 +433,24 @@ def get_response(state: InputSchema) -> InputSchema:
     try:
         # prompt
         prompt = prompts.FORMAT_PROMPT.format(
-            prompt= get_active_prompt(state).suggested_prompt,
+            code= read_state_file(state),
+            prompt= get_active_prompt(state).suggested_prompt
         )
         # Ask the LLM to give a sample input for the prompt
-        to_format: Format = safe_invoke(formater, [SystemMessage(content= prompt)])
+        to_format: Format = safe_invoke(formater, messages= [SystemMessage(content= prompt)])
         get_active_prompt(state).set_format(to_format)
-        print(f'{GREEN}[NODE] [INFO] [FORMAT]{RESET} {get_active_prompt(state).prompt_name}:\n{to_format}')
+        print(f'{GREEN}[NODE] [INFO] [FORMAT]{RESET} {get_active_prompt(state).prompt_name}:\n{json.dumps(to_format.format_dict, indent= 4)}')
 
         # Format the suggested prompt and invoke a response
         llm_prompt: str = get_active_prompt(state).suggested_prompt.format(**to_format.format_dict)
         llm_prompt += prompts.TESTER_PROMPT
-        llm_response: str = safe_invoke(tester, [SystemMessage(content= llm_prompt)]).content
+        llm_response: str = safe_invoke(tester, messages= [SystemMessage(content= llm_prompt)]).content
 
+        # Add the response
         get_active_prompt(state).add_response(llm_response)
+
+        # Reset the prompt reviews
+        get_active_prompt(state).reset_reviews('prompt')
 
         return state
     except Exception as e:
@@ -479,7 +467,7 @@ def review_response(state: InputSchema) -> InputSchema:
         comments: str = ''
 
         # Get the LLM to review the prompt
-        if mode('llm', state):
+        if mode('llm', state) and get_active_prompt(state).can_review('response'):
             # prompt
             prompt = prompts.REVIEW_RESPONSE_PROMPT.format(
                 code= read_state_file(state),
@@ -488,15 +476,21 @@ def review_response(state: InputSchema) -> InputSchema:
                 llm_response= get_active_prompt(state).latest_response,
             )
             # Ask the LLM to give a sample input for the prompt
-            llm_answer: str = safe_invoke(response_reviewer, [SystemMessage(content= prompt)]).content
+            llm_answer: str = safe_invoke(response_reviewer, messages= [SystemMessage(content= prompt)]).content
             print(f'{BLUE}[NODE] [INFO] [RESPONSE REVIEW]{RESET} {get_active_prompt(state).prompt_name}:\n{llm_answer}') if DEBUG else None
         
+            # Add the comments
             if llm_answer.split('# Issues')[-1].strip():
                 comments += f'Review by Expert Reviewer: {llm_answer}\n\n'
 
+            # Increase the response review counter
+            get_active_prompt(state).reviewed('response')
+
         # Get the user to review the prompt
         if mode('user', state):
+            # Just ask the user
             user_answer = input(f'{GREEN}[NODE] [INFO] [INPUT] Please either accept or reject the response by giving a reason (y/reason) >{RESET} ')
+            # Add the comments 
             if user_answer:
                 comments += f'Review by User: {user_answer}\n\n'
 
@@ -523,16 +517,43 @@ def next_prompt(state: InputSchema) -> InputSchema:
 
         return state
 
+def paste_prompts(state: InputSchema) -> InputSchema:
+    print_function_name() if DEBUG else None
 
+    try:
+        # Format the prompts into a string
+        prompts_str: str = '\n\n\n'.join([f'{prompt.prompt_name} = """\n{prompt.suggested_prompt}\n"""' for prompt in state['prompt_list']])
+        
+        prompt_file_path: str = state['file_path'].replace('.py', '_prompts.py')
+        with open(prompt_file_path, 'w', encoding='utf-8') as f:
+            f.write(prompts_str)
+
+        # Make the code changes
+        code: str = read_state_file(state)
+        for prompt in state['prompt_list']:
+            for (old, new) in prompt.necessary_code_changes:
+                code = code.replace(old, new)
+            
+        with open(state['file_path'], 'w', encoding='utf-8') as f:
+            f.write(code)
+        
+        return state
+    except Exception as e:
+        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        traceback.print_exc()
+
+        return state
 
 ''' Conditional Functions '''
-# def tool_or_review(state: InputSchema) -> Literal['tool', 'review_prompt']:
-#     print_function_name() if DEBUG else None
+def generate_prompt_successfully(state: InputSchema) -> Literal['generate_prompt', 'review_prompt']:
+    print_function_name() if DEBUG else None
 
-#     if state['tool_call']:
-#         return 'tool'
-
-#     return 'review_prompt'
+    # Prompt did not generate
+    if state['error']:
+        return 'generate_prompt'
+    
+    # Prompt generated, go to review
+    return 'review_prompt'
 
 def after_prompt_review(state: InputSchema) -> Literal['generate_prompt', 'get_response']:
     print_function_name() if DEBUG else None
@@ -544,7 +565,7 @@ def after_prompt_review(state: InputSchema) -> Literal['generate_prompt', 'get_r
     # Otherwise, get a response
     return 'get_response'
     
-def after_response_review(state: InputSchema) -> Literal['generate_prompt', 'next_prompt', '__end__']:
+def after_response_review(state: InputSchema) -> Literal['generate_prompt', 'next_prompt', 'paste_prompts']:
     print_function_name() if DEBUG else None
 
     # If the response is not approved, go back and generate a new prompt
@@ -554,7 +575,7 @@ def after_response_review(state: InputSchema) -> Literal['generate_prompt', 'nex
     # If all good with the response, go to the next prompt
     # If there are no more prompts, end
     if state['active_prompt_index'] == len(state['prompt_list']) - 1:
-        return '__end__'
+        return 'paste_prompts'
 
     return 'next_prompt'
 
@@ -563,24 +584,22 @@ prompt_engineer_graph = StateGraph(InputSchema) # TODO: change
 
 prompt_engineer_graph.add_node('extract_prompts', extract_prompts)
 prompt_engineer_graph.add_node('generate_prompt', generate_prompt)
-# prompt_engineer_graph.add_node('tool', ToolNode(prompt_engineer_tools, messages_key= 'tool_call'))
 prompt_engineer_graph.add_node('review_prompt', review_prompt)
 prompt_engineer_graph.add_node('get_response', get_response)
 prompt_engineer_graph.add_node('review_response', review_response)
 prompt_engineer_graph.add_node('next_prompt', next_prompt)
+prompt_engineer_graph.add_node('paste_prompts', paste_prompts)
 
 prompt_engineer_graph.add_edge(START, 'extract_prompts')
 prompt_engineer_graph.add_edge('extract_prompts', 'generate_prompt')
-prompt_engineer_graph.add_edge('generate_prompt', 'review_prompt')
-# prompt_engineer_graph.add_conditional_edges(
-#     'generate_prompt',
-#     tool_or_review,
-#     {
-#         'tool': 'tool',
-#         'review_prompt': 'review_prompt'
-#     }
-# )
-# prompt_engineer_graph.add_edge('tool', 'generate_prompt')
+prompt_engineer_graph.add_conditional_edges(
+    'generate_prompt',
+    generate_prompt_successfully,
+    {   # Not needed, just for clarity
+        'generate_prompt': 'generate_prompt',
+        'review_prompt': 'review_prompt'
+    }
+)
 prompt_engineer_graph.add_conditional_edges(
     'review_prompt',
     after_prompt_review,
@@ -596,10 +615,11 @@ prompt_engineer_graph.add_conditional_edges(
     {   # Not needed, just for clarity
         'generate_prompt': 'generate_prompt',
         'next_prompt': 'next_prompt',
-        '__end__': END
+        'paste_prompts': 'paste_prompts'
     }
 )
 prompt_engineer_graph.add_edge('next_prompt', 'generate_prompt')
+prompt_engineer_graph.add_edge('paste_prompts', END)
 
 prompt_engineer_app = prompt_engineer_graph.compile()
 
@@ -634,12 +654,12 @@ if __name__ == '__main__':
     }
 
     user = {
-        'file_path': '../../creations/fitness_program_generator/fitness_program_generator.py',
+        'file_path': '../../creations/menu_recommendation_workflow/menu_recommendation_workflow.py',
         'mode': 'both'
     }
     response = prompt_engineer_app.invoke(user, config= config)
 
-    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    if DEBUG:
-        for key, value in response.items():
-            print(f'    {key}: {value}')
+    # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
+    # if DEBUG:
+    #     for key, value in response.items():
+    #         print(f'    {key}: {value}')

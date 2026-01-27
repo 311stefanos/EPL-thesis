@@ -1,58 +1,3 @@
-# TODO: to beware of coflicting rules
-
-#           sections of tools
-# under prev
-# ## Long Term Memory - You can change it with tools. Follow strictly.
-# <MEMORY_START>
-# {memory}
-# <MEMORY_END>
-
-# under what is a tool
-# ## Available Tools
-# You have access to the following tools. All tools assosiate with your long term memory.
-# You are allowed to call exactly one tool at a time, in order to avoid conflicts.
-# <TOOL_LIST_START>
-# 1. def new_memory(new_memory: str) -> str:
-#     `new_memory` inserts a new memory into the long term memory.
-#    
-#     `Args:`
-#         new_memory (str): The new memory.
-#
-#     `Returns:`
-#         (str): A message.
-#
-# 2. def change_a_memory(memory_index: Union[str,int], new_memory: str) -> str:
-#     `change_a_memory` changes a memory entry of the long term memory. 
-#         This memory corresponds to the correct techniques to create a prompt.
-#    
-#     `Args:`
-#         memory_index (Union[str,int]): The memory index. Has to be a number in int or str format.
-#         new_memory (str): The new memory.
-#
-#     `Returns:`
-#         (str): A message.
-#
-# 3. def delete_a_memory(memory_index: Union[str,int]) -> str:
-#     `delete_a_memory` deletes a memory entry of the long term memory. 
-#         This memory corresponds to the correct techniques to create a prompt.
-#    
-#     `Args:`
-#         memory_index (Union[str,int]): The memory index. Has to be a number in int or str format.
-#
-#     `Returns:`
-#         (str): A message.
-# </TOOL_LIST_END>
-
-# under output
-# *OR*
-# Tool calls:
-# 1) `new_memory(new_memory: str) -> str`
-# 2) `change_a_memory(memory_index: Union[str,int], new_memory: str) -> str`
-# 3) `delete_a_memory(memory_index: Union[str,int]) -> str`
-# To update yout long term memory, in order to remember the correct techniques to create a prompt.
-
-
-
 GENERATE_PROMPT_PROMPT = '''
 You are the prompt engineer.
 Your job is to generate the prompt named: `{prompt_name}`, from the code given below.
@@ -64,33 +9,24 @@ Your prompt will be used by an agent. It is a crucial part of the pipeline.
 {code}
 </CODE_END>
 
-## Previous prompt and feedback (HIGHEST PRIORITY)
-{prev}
+---
 
 # Instructions
-You must produce TWO versions of the prompt:
+1) You must follow the strict output format below.
+2) You may show your thinking process.
+3) You may suggest code changes, concentrated on the `.format(...)` method.
+4) You should change the previous prompt using the provided feedback.
 
-1) Draft prompt (first pass)
-- Write the full prompt quickly.
-- It may contain small mistakes that will be fixed in the second pass.
-
-2) Final prompt (second pass)
-- Start from your draft.
-- Fix mistakes.
-- Ensure all user comments are implemented.
-- Ensure the prompt matches the code.
-
-You must follow the output format exactly. Do not output anything else.
-
-## Second pass checklist (must all be true)
-A) User comments coverage
-- Treat user comments as hard requirements.
-- Every user comment must be addressed in the final prompt.
+## Strict Checklist for the Prompt (must all be true)
+A) User & Reviewer comments coverage (If provided under the System Message)
+- Treat user and reviewer comments as hard requirements.
+- Every user and reviewer comment must be addressed in the final prompt.
 - If two comments conflict, follow the latest comment.
-- If a comment conflicts with the code constraints, adjust the prompt to match code and add a short clarification inside the final prompt (for example under Rules or Rare Exceptions). Do not write meta commentary.
+- If a comment conflicts with the code constraints, adjust the prompt to match code and add a short clarification inside the final prompt (for example under Rules or Rare Exceptions). Do not write meta commentary in the prompt, you may add it in the thinking process.
+- You should **ALWAYS** make changes to the prompt based on user and reviewer comments, even if they are not explicitly stated in the prompt. If the user or reviewer comments cannot be implemented in the code, provide the minimal code changes in the section below the prompt.
 
 B) Compatibility with Python `.format(...)`
-- Placeholders use single braces only, like `{{variable_name}}`.
+- Placeholders use single braces only, like `{{variable_name}}`. Under the `# Inputs` section, use single braces only, like `{{variable_name}}`.
 - Any literal brace in normal text must be escaped as `{{{{` and `}}}}`.
 - If you include dict or JSON examples, escape their braces with `{{{{` and `}}}}` so `.format` will not break.
 
@@ -100,144 +36,180 @@ C) Match the code
 - Do not invent tools, schemas, fields, or constraints that are not supported by the code.
 
 D) Output cleanliness
-- No extra commentary.
-- No reasoning.
-- Only the two prompts inside the required tags.
+- Follow the strict output format below.
+
+## If Successful
+If you follow all the instructions, and specifically the user and reviewer comments, the prompt will pass the screening test.
+If so, the prompt will be updated in the `prompts` file. So you do not have to change the code to include the prompt.
+Your code changes must always realte to your prompt. They should cocentrate on adding or removing format arguments, or adding slight code blocks to structure the placeholder values.
 
 ## What is a Tool
 A tool is a real function in the code that the model can call when it needs information or side effects it cannot produce by itself.
 
+---
+
 # Output (STRICT)
-You must output exactly TWO prompts for the same `{prompt_name}`:
-1) Draft (first pass).
-2) Final corrected (second pass).
-Do not include any other text.
+You must output EXACTLY these sections, in this exact order:
+1) `# Thinking Process`
+- Write your reasoning here. You should explain:
+1. How you came up with the prompt.
+2. How to format the curly braces in the prompt.
+3. Whether to include each section.
+4. If you reason about code changes, write the reasoning here.
+5. If there are any complex schemas, write here which they are and how to explain them.
+6. Treat it as a TODO list for you to implement in the prompt.
+
+2) `# Prompt`
+- Write the final prompt text here. Keep in mind all rules and instructions above.
+Keep the prompt readable and organised, don't just append rules and instructions to the prompt.
+
+3) `# Code Changes`
+- Under you either write `None`, if no code changes are needed.
+- OR list one or more changes using the format below.
+
+The system will apply each change with:
+`code.replace(old_code, new_code)`
+
+So your `Old Code` must match the code EXACTLY (character for character).
+For perfomance reasons, the old_code must be as small as possible.
+
+You may ONLY edit:
+- `.format(...)` arguments (add missing placeholders/keys)
+- the code that initializes/fetches those arguments before formatting
+
+Do NOT:
+- refactor functions.
+- change logic unrelated to formatting inputs.
+- rewrite large code blocks.
+- provide overlapping code changes, wither split them so they are not overlapping, or merge them into one bigger change.
+
+Use `# Code Changes` mainly to add missing `.format(...)` inputs and the small code needed to compute them.
+
+## Change format (repeat for each change)
+`
+## Change [index]
+### Old Code
+- Paste the smallest exact snippet from the current code that will be replaced.
+
+### New Code
+- Paste the updated snippet that should replace the old snippet.
+`
+
+Notes:
+- Keep each `Old Code` snippet as short as possible, but still unique enough to match safely.
+- Do not change anything outside what is needed for `.format(...)` inputs and their initialization.
+- Do not have overlapping changes.
 
 # Output Format (STRICT)
-<DRAFT_PROMPT_START>
-[Draft version of the `{prompt_name}` prompt]
-</DRAFT_PROMPT_END>
-
-<FINAL_PROMPT_START>
-[Final corrected version of the `{prompt_name}` prompt]
-</FINAL_PROMPT_END>
+```
+# Thinking Processes
+...
+# Prompt
+...
+# Code Changes
+None
+   `or`
+## Change [index]
+### Old Code
+...
+### New Code
+...
+...
+```
 
 # Output Rules (VERY STRICT)
-1) Output only the two tagged sections above.
-2) Do not add any other text outside those tags.
+1) Output only the sections stated above.
+2) Do not add any other section or text other than the above sections.
 3) Brace rule:
-   - Placeholders: `{{name}}` only.
+   - Placeholders: `{{name}}` only. Remember to use it whenever you need values from outside the prompt. Mainly used under the `# Inputs` section.
    - Literal braces: `{{{{` and `}}}}` only.
 4) If you output any single `{{` or `}}` that is not part of a valid placeholder, the template may break.
+5) Do not use the names of the headers in your response.
+   - Header names: `# Prompt`, `# Thinking Process`, `# Code Changes`, `## Change [index]`, `### Old Code`, `### New Code`.
 
 # Prompt-writing reference (you may use these headers inside the generated prompts)
 <POSSIBLE_HEADERS_START>
-- Role
-    - Should clearly state the role of the agent, in a short and concise manner.
+# Role
+- Should clearly state the role of the agent, in a short and concise manner.
 
-- Objective
-    - Should clearly state the objective of the agent, in a short and concise manner.
+# Objective
+Should clearly state the objective of the agent, in a short and concise manner.
 
-- Inputs
-    - Should have the input variables of the agent, in an unambiguous and clear manner. Can seperate them with `-`, `##`, `1.`, etc.
-    Could and most of the times should include a description of each input variable, with <[INPUT/CATEGORY_NAME]_START>{{[input_name]}}...<[INPUT/CATEGORY_NAME]_END> format, clearly stating the [input_name] while being short and descritpive.
-    For multiple simple inputs, such as varibles to take into consideration, should be grouped together within the same tag to keep it readable and organised.
-    If the inputs should be followed strictly you may add `(As strict sources of truth)` or any other comments.
+# Inputs
+Should have the input variables of the agent, in an unambiguous and clear manner. Can seperate them with `-`, `##`, `1.`, etc.
+Could and most of the times should include a description of each input variable, with <[INPUT/CATEGORY_NAME]_START>{{[input_name]}}...<[INPUT/CATEGORY_NAME]_END> format, clearly stating the [input_name] while being short and descritpive.
+For multiple simple inputs, such as varibles to take into consideration, should be grouped together within the same tag to keep it readable and organised.
+If the inputs should be followed strictly you may add `(As strict sources of truth)` or any other comments.
+- Remember to make them actual placeholders. An actual placeholder is: `{{placeholder_name}}`, not `placeholder_name`.
+- **DO NOT** include any examples in the inputs.
 
-- Instructions
-    - Can be in natural language, or a list of bullet points. Should be detailed and clear, so the agent can understand what to do.
+# Instructions
+Can be in natural language, or a list of bullet points. Should be detailed and clear, so the agent can understand what to do.
 
-- Hard Instructions
-    - Instructions that should be strictly followed, even if the agent is not sure of them.
+# Hard Instructions
+Instructions that should be strictly followed, even if the agent is not sure of them.
 
-- Rules
-    - Can be in natural language, or a list of bullet points. Should be detailed and clear, so the agent can understand what to do.
+# Rules
+Can be in natural language, or a list of bullet points. Should be detailed and clear, so the agent can understand what to do.
 
-- Hard Rules
-    - Rules that should be strictly followed, even if the agent is not sure of them.
+# Hard Rules
+Rules that should be strictly followed, even if the agent is not sure of them.
 
-- Methodology
-    - If the agent should reason or act in a specific way, it should be detailed here.
+# Methodology
+If the agent should reason or act in a specific way, it should be detailed here.
 
-- Guidelines
-    - To guide the agent's behavior, it should be detailed here.
+# Guidelines
+To guide the agent's behavior, it should be detailed here.
 
-- Reasoning Guidelines
-    - To guide the agent's reasoning, it should be detailed here.
+# Reasoning Guidelines
+To guide the agent's reasoning, it should be detailed here.
 
-- Rare Exceptions
-    - If there are edge cases where the agent should act differently - even going against specific guidelines, it should be detailed here.
-    If there is a clash between the guidelines and the rare exceptions, the rare exception should be prioritized. Should be clearly stated in the prior section that a rare exception exists and follows.
+# Rare Exceptions
+If there are edge cases where the agent should act differently - even going against specific guidelines, it should be detailed here.
+If there is a clash between the guidelines and the rare exceptions, the rare exception should be prioritized. Should be clearly stated in the prior section that a rare exception exists and follows.
 
-- What Is A Tool
-    - A premade prompt section that should be used when the agent has tool access. As follows:
-    ```## What is a Tool
-    A **tool** is a real function in your code that the model can ask you to execute when it needs information or side effects it cannot produce by itself
-    (for example: file I/O, HTTP requests, database queries, running other agents).
+# Available Tools
+Clearly state the tools the agent can use. Should follow the `.bind_tools(...)` method. Should follow the following format:
+```1. tool_name(arg1: type1, ...) -> return_type
+`tool_name` clear description.
 
-    Each tool has:
-    - A **name**.
-    - A clearly typed **signature**: arguments must be simple JSON-serializable types (str, int, float, bool, lists, dicts) with short, precise descriptions.
-    - A **return value** that you pass back into the model as context.
+Use this for/when:
+- ...
 
-    The model never runs the code directly. Instead:
-    1. The model decides which tool to call and with which arguments.
-    2. You execute the corresponding function in your environment.
-    3. You feed the result back to the model as a tool message so it can continue reasoning.
+Args:
+- `arg1: type1`: clear description of arg1. If its complex, explain the format in the same way as under the section `# Output Format`.
+- ...
 
-    When you create tools, follow these rules:
-    - Make them small and single-purpose: each tool should do one clear thing.
-    - Keep them as side-effect-safe as possible, and document the side effects they do have.
-    - Validate inputs and handle errors gracefully.
-    - Return a compact, structured result (ideally a dict or Pydantic model) that is easy for the model to read, reason about, and use in the next steps.```
+Returns:
+- `return_type`: clear description of return_type.
+```
 
-- Available Tools
-    - Clearly state the tools the agent can use. Should follow the `.bind_tools(...)` method. Should follow the following format:
-    ```1. tool_name(arg1: type1, ...) -> return_type
-    `tool_name` clear description.
+# Possible Responses
+A list of possible responses that the agent can choose from. Clearly state their prerequisites, actions, and consequences.
 
-    Use this for/when:
-    - ...
+# Output
+A clear description of the expected output of the agent. Should respect the `.with_structured_output(...)` method.
+Use this section more of a output guideline rather than asserting output rules.
 
-    Args:
-    - `arg1: type1`: clear description of arg1.
-    - ...
+# Output Rules
+Where you assert output rules.
 
-    Returns:
-    - `return_type`: clear description of return_type.```
+# Output Format
+Where you assert output format, must be used when `.with_structured_output` is used, clearly state the output schema.
+Should not include values, but just types and optional comments.
 
-- Possible Responses
-    - A list of possible responses that the agent can choose from. Clearly state their prerequisites, actions, and consequences.
-
-- Output
-    - A clear description of the expected output of the agent. Should respect the `.with_structured_output(...)` method.
-    Use this section more of a output guideline rather than asserting output rules.
-
-- Output Rules
-    - Where you assert output rules.
-
-- Output Format
-    - Where you assert output format, must be used when `.with_structured_output` is used, clearly state the output schema.
-    Should not include values, but just types and optional comments.
-
-- Examples
-    - A one shot or few shot example of how the agent should respond.
+# Examples
+A one shot or few shot example of how the agent should respond.
 </POSSIBLE_HEADERS_END>
 '''
 
-PREV_PROMPT = '''
-<PREVIOUS_PROMPT_START>
-{previous_prompt}
-</PREVIOUS_PROMPT_END>
+NEXT_MESSAGES_PROMPT = '''
+# Following Messages
+1. The first message is your suggested prompt.
+2. The second message is the comments on the prompt, by the user and the reviewer.
 
-<USER_COMMENTS_START>
-{user_comments}
-</USER_COMMENTS_END>
-
-Hard rule:
-- Every user comment above must be implemented in the FINAL prompt.
-- If comments conflict, follow the latest comment.
-'''
+# What to Do Next
+Follow the instructions below to generate the next prompt.'''
 
 
 
@@ -267,12 +239,16 @@ You should **NEVER** report an issue that has already been reported here.
 
 # Your job
 Review the prompt template and report only the MOST IMPORTANT issues that could realistically cause:
-- wrong output format or schema,
-- ambiguity that changes behavior,
-- missing constraints needed to satisfy an explicit requirement,
-- Python `.format(...)` fragility (placeholders or literal braces),
-- tool or schema mismatch (only if tools/schemas exist in code).
-- **NEVER** report issues that have already been reported above.
+- Wrong output format or schema.
+- Ambiguity that changes behavior.
+- Missing constraints needed to satisfy an explicit requirement.
+- Python `.format(...)` fragility (placeholders or literal braces).
+- Under the `# Inputs` section, it should have actual placeholders. A placeholder is defined as {{placeholder_name}}, not `placeholder_name`. If not, then report it.
+   - Make sure you understand whether the pormpt is referencing towards the input section with just a name, or whether the prompt actually requires a placeholder.
+- Tool or schema mismatch (only if tools/schemas exist in code). Mismatch means: 1) Not detailed enough, 2) Not clear enough, 3) Not in the right place, 4) Missing.
+   - Not reporting the tools under the `# Available Tools` section.
+   - Not reporting the structured output schema under the `# Output Format` section.
+- You can only report once, make it count.
 
 # Do not Report - Rules
 1) You should not report any issue that has to do with validation.
@@ -282,10 +258,12 @@ Review the prompt template and report only the MOST IMPORTANT issues that could 
 5) Do not report issues on possible responses of the LLM, the prompt cannot know what the LLM will do at any given time.
 6) Do not focus on edge cases and minor or medium details, you should focus on major issues.
 7) **NEVER** report issues that have already been reported above.
+8) About prompt injection.
+9) About the workflow flow.
 
 # Triage rules (IMPORTANT)
 1) Focus on root causes.
-   - If 10 symptoms come from 1 missing rule, report ONE issue: the missing rule.
+   - If some symptoms come from 1 missing rule, report ONE issue: the missing rule.
 2) Do NOT report minor wording/style improvements.
 3) Do NOT report theoretical edge cases unless they are likely.
 4) If an issue is not clearly linked to a real failure mode, do NOT report it.
@@ -300,11 +278,13 @@ Output only:
 
 # Issues
 either:
-- okay
+- exactly `okay`
 or a numbered list (max 5 items).
 
 Each issue must be written as:
+- Simple title (clear, short and concise).
 - What went wrong (1 sentence).
+- Why did you report it (1 sentence). You may report multiple reasons.
 - Where it comes from in the prompt (quote a short phrase or refer to a section name).
 - The minimal change needed to fix it (1 sentence).
 '''
@@ -314,6 +294,11 @@ Each issue must be written as:
 FORMAT_PROMPT = '''
 You work along side the Prompt Engineer.
 Your job is to provide a dictionary of key-value pairs that will be used to format the prompt, using the `.format(...)` method on the prompt given below.
+
+# Code
+<CODE_START>
+{code}
+</CODE_END>
 
 # Prompt
 <PROMPT_START>
@@ -326,6 +311,13 @@ Your job is to provide a dictionary of key-value pairs that will be used to form
     - A placeholder name is anything between `{{` and `}}`.
 3) The dictionary keys must be strings according to the placeholder names.
 4) The dictionary values must be simple JSON-serializable types that respect the placeholder's type.
+5) The placeholder values should make sense from the codebase.
+6a) If the prompt requires the messages key, it only accepts a lsit of `BaseMessage` objects. 
+6b) If the messages are not formatted into the prompt but are passed into the safe_invoke method, you should pass the messages list into the `non_format_messages_list` key of the output.
+   
+# Possible Messages Key
+You should understand how the messages are created from the codebase, in order to simulate a realistic scenario.
+e.g., [HumanMessage(content="..."), AIMessage(content="...", tool_calls=[...]), ToolMessage(content="...", tool_name="..."), AIMessage(content="..."), HumanMessage(content="..."), ...].
 
 # Output
 You should return a dictionary of the form:
@@ -334,8 +326,10 @@ You should return a dictionary of the form:
         'placeholder1_name': value1,
         'placeholder2_name': value2,
         ...
-    }}
+    }},
+    'non_format_messages_list': [message1, message2, ...]
 }}
+You may not provide a dictionary containing empty values.
 '''
 
 
@@ -348,8 +342,14 @@ Hard rules:
 1) If the prompt requires a specific output format, output ONLY that format.
 2) Do not add any other text (no explanations, no headings, no notes).
 3) Do not wrap the output in markdown code fences.
+4) If you want to call a specified tool, call it using the tool-calling mechanism.
 
-If tools are available, call them using the tool-calling mechanism. Do not fake tool calls in plain text.
+# Tool Calling Format
+tool_name: <tool_name>
+arguments: 
+   <arguments>
+
+# Now produce a mock response to the prompt.
 """
 
 
@@ -391,6 +391,11 @@ Your job:
 4) Do not report issues that depend on human factor to calculate.
 5) Do not report issues that are not directly related to the prompt.
 
+# Main Aspect to Review
+You should give priority to review whether the LLM acts according to the prompt and its environment (through the formatting inputs and messages).
+The main review aspect is how the LLM acted.
+If the LLM does not act logically, you should report the issue.
+
 # Hard Rules (STRICT)
 1) Only report issues about the PROMPT, not the response.
 2) Only report issues that are one of:
@@ -425,7 +430,9 @@ either:
 or a numbered list of prompt issues.
 
 Each issue must be written as:
+- Simple title (clear, short and concise).
 - What went wrong (1 sentence).
+- Why did you report it (1 sentence).
 - Where it comes from in the prompt (quote a short phrase or refer to a section name).
 - The minimal change needed to fix it (1 sentence).
 '''
