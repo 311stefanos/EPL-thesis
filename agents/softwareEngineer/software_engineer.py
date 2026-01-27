@@ -714,20 +714,17 @@ tools_by_name = {tool.name: tool for tool in tools}
 ''' LLM '''
 # The agent that adds the tool sections
 tool_adder = myChatOpenAI(
-    temperature= 0.4,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.4
 )
 
 # The Software Engineer that orchestrates the tools
 software_engineer = myChatOpenAI(
-    temperature= 0.4,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.4
 ).bind_tools(tools)
 
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
-    temperature= 0.6,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.6
 ).with_structured_output(CodeIssues)
 
 
@@ -792,7 +789,7 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
 
         prompt = prompts.TOOL_SECTION_ADDER_PROMPT.format(code= code)
 
-        response = safe_invoke(tool_adder, prompt).content
+        response = safe_invoke(tool_adder, messages= [SystemMessage(content= prompt)]).content
 
         think_process, code = response.split('# Code')
         cleaned_code = clean_llm_output(code)
@@ -890,7 +887,7 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
         ) + last_prompt
 
         # call the LLM
-        response = safe_invoke(software_engineer, [SystemMessage(content= prompt)])
+        response = safe_invoke(software_engineer, messages= [SystemMessage(content= prompt)])
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
 
         return {'messages': [response]}
@@ -994,7 +991,7 @@ def last_check(state: InputSchema) -> InputSchema:
 
         # call the LLM and update the code issues
         global code_issues
-        code_issues = safe_invoke(code_validator, [SystemMessage(content= prompt)])
+        code_issues = safe_invoke(code_validator, messages= [SystemMessage(content= prompt)])
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {code_issues}') if DEBUG else None
 
         return {'times_reviewed': state['times_reviewed'] + 1}

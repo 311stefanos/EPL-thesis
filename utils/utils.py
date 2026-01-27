@@ -115,7 +115,7 @@ def clean_llm_output(code: str) -> str:
         return code
 
     # Remove possible tags or markdown special characters from the LLM's output
-    while code[0] in ['<', '`']:
+    while code[0] in ['<', '`'] or code[-1] in ['>', '`']:
         # Removing tags
         while code.strip().startswith('<'):
             # Remove the line
@@ -171,15 +171,18 @@ class myChatOpenAI(ChatOpenAI):
     '''
     def __init__(
             self, 
-            base_url: str = 'https://openrouter.ai/api/v1', 
+            provider: str|None = None,
+            base_url: str|None = None, 
             api_key: str|None = None,
             model: str|None = None,
             temperature: float = 0.7,
             *args,
             **kwargs
         ):
-        kwargs['base_url'] = base_url
-        kwargs['api_key'] = api_key or os.getenv('OPENROUTER_API_KEY')
+        provider = provider or os.getenv('PROVIDER')
+        provider = provider.upper()
+        kwargs['base_url'] = base_url or os.getenv(f'{provider}_BASE_URL')
+        kwargs['api_key'] = api_key or os.getenv(f'{provider}_API_KEY')
         kwargs['model'] = model or os.getenv('MODEL_NAME')
         kwargs['temperature'] = temperature
         super().__init__(*args, **kwargs)
@@ -199,12 +202,13 @@ class Invokable(Protocol):
     def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
 
 # A function that invokes an LLM and handles errors
-def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage:
+def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage:
     '''
     `safe_invoke` is a function that invokes an LLM and handles errors
 
     `Args:`
         llm (Invokable): The LLM to invoke
+        messages (list[BaseMessage]): The messages to pass to the LLM
         *args (Any): The arguments to pass to the LLM
         retry_interval (int) = 5: The number of seconds to wait between retries
         max_retries (int) = 5: The maximum number of retries
@@ -220,7 +224,7 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
     retry_counter = 0
     while retry_counter < max_retries:
         try:
-            return llm.invoke(*args)
+            return llm.invoke(messages, *args)
         
         # Nothing to do, just raise the error
         except (AuthenticationError,) as e:
@@ -266,6 +270,10 @@ def safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int
 
         except ValueError as e:
             error_dict: dict = e.args[0] if e.args else None
+            if isinstance(error_dict, str):
+                print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
+                retry_counter += 1
+                sleep(retry_interval)
             if error_dict.get('code', -1) == 500 and error_dict.get('message', '') == 'Internal Server Error':
                 print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
                 retry_counter += 1

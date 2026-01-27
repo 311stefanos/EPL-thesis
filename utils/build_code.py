@@ -151,13 +151,14 @@ def build_workflow(bundle) -> str:
             (str) The node
         '''
         if 'LLM' in node['description'] or 'SUBGRAPH' in node['description']:
-            invokation = f'safe_invoke({node["name"]}_llm, [SystemMessage(content= prompt), ...])' if not node.get('subgraph_id') else f'{node["subgraph_id"]}_app.invoke([SystemMessage(content= prompt), ...])'
+            invokation = f'safe_invoke({node["name"]}_llm, messages= [SystemMessage(content= prompt), ...])' if not node.get('subgraph_id') else f'{node["subgraph_id"]}_app.invoke(...)'
             node_function = '\n'.join([
                 f'def {node["name"]}(state: AgentSchema) -> AgentSchema:',
                 f'    """ {node["description"]} """',
                  '    print_function_name()',
                  '    try:',
                  '        # TODO: <preprocess>',
+                 '        ... # TODO: <make format arguments readable>',
                 f'        prompt = prompts.{node["name"].upper()}_PROMPT.format(...) # TODO: <formatting>',
                 f'        result = {invokation} # TODO: <inputs>',
                  '        # TODO: <postprocess>',

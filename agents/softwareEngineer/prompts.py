@@ -418,7 +418,7 @@ Do not call multiple tools at the same time.
 You may use these functions, or instruct the coders to use them.
 - myChatOpenAI(base_url: str = 'https://openrouter.ai/api/v1', api_key: str|None = None, model: str|None = None, temperature: float = 0.7):
     - A wrapper method of the ChatOpenAI class from langchain. It assigns the base_url, api_key, and model to the class.
-- safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage: 
+- safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage: 
     - A wrapper method that ensures the `.invoke` method is called in a try-except block, and all possible exceptions are caught.
 - print_function_name(colour: str= '\033[93m') -> None: 
     - A decorator that prints the name of the function being executed. For debugging purposes.

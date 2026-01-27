@@ -308,7 +308,7 @@ def generate_docstrings(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        docstring_proposal: Docstrings = safe_invoke(docstring_generator, [SystemMessage(content= prompt)])
+        docstring_proposal: Docstrings = safe_invoke(docstring_generator, messages= [SystemMessage(content= prompt)])
 
         # Ask the user to confirm
         print(f'{GREEN}[NODE] [DOCSTRING PROPOSAL]{RESET} {docstring_proposal if docstring_proposal.docstrings else "None"}')
@@ -406,7 +406,7 @@ def propose_schemas(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        schemas_proposal: Schemas = safe_invoke(schema_generator, [SystemMessage(content= prompt)])
+        schemas_proposal: Schemas = safe_invoke(schema_generator, messages= [SystemMessage(content= prompt)])
 
         # Ask the user to confirm
         print(f'{GREEN}[NODE] [SCHEMAS PROPOSAL]{RESET} {schemas_proposal if schemas_proposal.schemas else "None"}')
@@ -477,7 +477,7 @@ def propose_helpful_functions(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        helpful_functions_proposal: HelpfulFunctions = safe_invoke(helpful_function_generator, [SystemMessage(content= prompt)])
+        helpful_functions_proposal: HelpfulFunctions = safe_invoke(helpful_function_generator, messages= [SystemMessage(content= prompt)])
 
         # Ask the user to confirm
         print(f'{GREEN}[NODE] [HELPFUL FUNCTIONS PROPOSAL]{RESET} {helpful_functions_proposal if helpful_functions_proposal.helpful_functions else "None"}')
@@ -542,7 +542,7 @@ def propose_tool_functions(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        tool_functions_proposal: ToolFunctions = safe_invoke(tool_function_generator, [SystemMessage(content= prompt)])
+        tool_functions_proposal: ToolFunctions = safe_invoke(tool_function_generator, messages= [SystemMessage(content= prompt)])
 
         # Ask the user to confirm
         print(f'{GREEN}[NODE] [TOOL FUNCTIONS PROPOSAL]{RESET} {tool_functions_proposal if tool_functions_proposal.tool_functions else "None"}')
@@ -621,7 +621,7 @@ def propose_llm_modifiers(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        llm_method_proposals: LLMProposalList = safe_invoke(tool_or_output_generator, [SystemMessage(content= prompt)])
+        llm_method_proposals: LLMProposalList = safe_invoke(tool_or_output_generator, messages= [SystemMessage(content= prompt)])
 
         # Check if the proposed LLMs match the LLMs in the code
         proposed_llms = llm_method_proposals.get_all_llm_names()

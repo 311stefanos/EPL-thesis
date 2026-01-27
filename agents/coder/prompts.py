@@ -76,7 +76,7 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
 3. `will_tool_call(messages: list[BaseMessage]) -> bool`: a function that checks if the last message will call a tool.
 4. `myChatOpenAI(base_url: str = 'https://openrouter.ai/api/v1', api_key: str|None = None, model: str|None = None, temperature: float = 0.7)`:
     A class that extends the ChatOpenAI class, that automatically inputs some parametres such as the API KEY, and model (internally)
-5. `safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
+5. `safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
     A function that invokes an LLM and handles most errors. After max_retries it wil raise an error. It returns the result of the LLM invocation.
 6. `def parse_tool_arguments(args) -> dict`: A function that parses the tool arguments, because they may be in different formats. Not required to use as the LLM responses are always in the correct format.
 
@@ -311,7 +311,7 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
 3. `will_tool_call(messages: list[BaseMessage]) -> bool`: a function that checks if the last message will call a tool.
 4. `myChatOpenAI(base_url: str = 'https://openrouter.ai/api/v1', api_key: str|None = None, model: str|None = None, temperature: float = 0.7)`:
     A class that extends the ChatOpenAI class, that automatically inputs some parametres such as the API KEY, and model (internally)
-5. `safe_invoke(llm: Invokable, *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
+5. `safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interval: int = 6, max_retries: int = 7, raise_pydantic= False) -> BaseMessage`:
     A function that invokes an LLM and handles most errors. After max_retries it wil raise an error. It returns the result of the LLM invocation.
 6. `def parse_tool_arguments(args) -> dict`: A function that parses the tool arguments, because they may be in different formats. Not required to use as the LLM responses are always in the correct format.
 
@@ -319,6 +319,7 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
 All provided prompts are meant to be used with the `.format` method of python. You can format it however you see fit and the prompt engineering team will make the best prompt for you.
 If you deem that the prompt needs a dynamic extension (e.g. if condition1: prompt += prompt1 else: prompt += prompt2), you may use any prompt you want, just keep the naming convention consistent.
 Any used prompt must be included and accessed by the `prompts` file.
+Before passing arguments to the prompt, you should make sure they are in a readable format.
 ### Careful Conditions
 Do not do both:
 - Format the prompt with all messages list AND append the messages list in `safe_invoke` function. Choose none or one.

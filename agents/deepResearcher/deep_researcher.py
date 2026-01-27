@@ -156,7 +156,7 @@ def breakdown_research_topic(state: InputSchema) -> InputSchema:
         )
         
         # call the LLM
-        results: StructuredOutput = safe_invoke(deep_researcher, [SystemMessage(content= prompt)])
+        results: StructuredOutput = safe_invoke(deep_researcher, messages= [SystemMessage(content= prompt)])
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
@@ -269,7 +269,7 @@ def summarise(state: InputSchema) -> OutputSchema:
         )
 
         # call the LLM
-        summary = safe_invoke(summariser, [SystemMessage(content= prompt)]).content
+        summary = safe_invoke(summariser, messages= [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO] [SUMMARY]{RESET} {summary}') if DEBUG else None
 

@@ -243,7 +243,7 @@ def do_research(state: InputSchema) -> InputSchema:
             topic= state['research_topic']
         )
         # call the LLM
-        results = safe_invoke(researcher, [SystemMessage(content= prompt)] + state['messages'])
+        results = safe_invoke(researcher, messages= [SystemMessage(content= prompt)] + state['messages'])
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
@@ -373,7 +373,7 @@ def summarise(state: InputSchema) -> OutputSchema:
         )
 
         # call the LLM
-        summary = safe_invoke(summariser, SystemMessage(content= prompt))
+        summary = safe_invoke(summariser, messages= [SystemMessage(content= prompt)])
 
         print(f'{BLUE}[NODE] [INFO] [SUMMARY]{RESET} {summary}') if DEBUG else None
 

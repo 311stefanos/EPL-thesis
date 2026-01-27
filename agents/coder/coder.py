@@ -206,18 +206,15 @@ tools_by_name = {tool.name: tool for tool in tools + [output_tool]}
 
 ''' LLM '''
 brainstormer = myChatOpenAI(
-    temperature= 0.8,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.8
 )
 
 coder = myChatOpenAI(
-    temperature= 0.5,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.5
 ).bind_tools(tools + [output_tool])
 
 reviewer = myChatOpenAI(
-    temperature= 0.2,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.2
 )
 
 
@@ -282,7 +279,7 @@ def solution_brainstorm_node(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        results = safe_invoke(brainstormer, [SystemMessage(content= prompt)]).content
+        results = safe_invoke(brainstormer, messages= [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO] [RESULTS]{RESET} {results}') if DEBUG else None
 
@@ -331,7 +328,7 @@ def coder_node(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        response = safe_invoke(coder, [SystemMessage(content= prompt)])
+        response = safe_invoke(coder, messages= [SystemMessage(content= prompt)])
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
 
         # return
@@ -415,7 +412,7 @@ def review_node(state: InputSchema) -> InputSchema:
         )
 
         # call the LLM
-        response = safe_invoke(reviewer, [SystemMessage(content= prompt)]).content
+        response = safe_invoke(reviewer, messages= [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
 

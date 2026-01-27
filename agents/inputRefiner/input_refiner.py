@@ -181,20 +181,17 @@ tavily_search = TavilySearch(
 ''' LLM '''
 # The LLM used to correct the user's input
 correcter =  myChatOpenAI(
-    temperature= 0,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0
 )
 
 # The LLM used to clarify the user's input with questions and assumptions
 clarifier = myChatOpenAI(
-    temperature= 0.8,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.8
 ).bind_tools([tavily_search])
 
 # The LLM used to refine the user's input
 refiner = myChatOpenAI(
-    temperature= 0.7,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.7
 )
 
 
@@ -258,7 +255,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             clarifications= '\n\n'.join([f'Question: {qna[0]}\nAnswer: {qna[1]}' for qna in state['qna']])
         )
         # call the LLM
-        clarification = safe_invoke(clarifier, [SystemMessage(content= prompt)])
+        clarification = safe_invoke(clarifier, messages= [SystemMessage(content= prompt)])
 
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
 
@@ -334,9 +331,9 @@ def refine_user_input(state: IntermediateSchema) -> IntermediateSchema:
             history= '\n---\n\n'.join(history),
             refinements_and_requests= '\n---\n\n'.join(refinements_and_requests)
         )
-
+        # TODO: Test by giving a list of messages rather than formatting a string
         # call the LLM to refine
-        refined = safe_invoke(refiner, [SystemMessage(content= prompt)]).content
+        refined = safe_invoke(refiner, messages= [SystemMessage(content= prompt)]).content
 
         print(f'{BLUE}[NODE] [INFO]{RESET} Refined: {refined}') if DEBUG else None
 

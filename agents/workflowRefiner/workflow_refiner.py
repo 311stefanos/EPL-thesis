@@ -221,13 +221,11 @@ tavily_search = TavilySearch(
 
 ''' LLM '''
 clarifier = myChatOpenAI(
-    temperature= 0.7,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.7
 ).bind_tools([tavily_search])
 
 workflow_engineer = myChatOpenAI(
-    temperature= 0.7,
-    model= 'mistralai/devstral-2512:free'
+    temperature= 0.7
 ).with_structured_output(WorkflowBundle)
 
 
@@ -251,7 +249,7 @@ def clarify(state: InputSchema) -> InputSchema:
         )
         
         # call the LLM
-        clarification = safe_invoke(clarifier, [SystemMessage(content= prompt)])
+        clarification = safe_invoke(clarifier, messages= [SystemMessage(content= prompt)])
         print(f'{GREEN}[NODE] [LLM RESPONSE]{RESET} {clarification}') if DEBUG else None
 
         # If no further clarifications are needed, wrap it in an AIMessage
@@ -319,7 +317,7 @@ def create_workflow(state: InputSchema) -> OutputSchema:
             )
             
             try:
-                workflow: WorkflowBundle = safe_invoke(workflow_engineer, [SystemMessage(content= prompt)])
+                workflow: WorkflowBundle = safe_invoke(workflow_engineer, messages= [SystemMessage(content= prompt)])
             except ValueError as e:
                 continue
 

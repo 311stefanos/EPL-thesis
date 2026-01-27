@@ -136,7 +136,7 @@ def answer_question(state: InputSchema) -> InputSchema:
         prompt = prompts.ANSWER_QUESTION_PROMPT.format(memory= memory)
 
         # call the LLM
-        response: CoordinatorSchema = safe_invoke(coordinator, [SystemMessage(content= prompt), HumanMessage(content= state['question'])], raise_pydantic= True)
+        response: CoordinatorSchema = safe_invoke(coordinator, messages= [SystemMessage(content= prompt), HumanMessage(content= state['question'])], raise_pydantic= True)
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None
 
         # If the score is low, ask the user for input
