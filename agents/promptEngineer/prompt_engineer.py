@@ -104,7 +104,7 @@ class Prompt(BaseModel):
 
     def can_review(self, what: Literal['prompt', 'response']) -> bool:
         prompt_max: int = 2
-        response_max: int = 2
+        response_max: int = 3
         if what == 'prompt':
             return self.prompt_reviews < prompt_max
         elif what == 'response':
@@ -158,7 +158,8 @@ prompt_reviewer = myChatOpenAI(
 )
 
 formater = myChatOpenAI(
-    temperature= 0.8
+    temperature= 0.8,
+    model= 'meta-llama/llama-3.3-70b-instruct:free'
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(
@@ -243,11 +244,11 @@ def split_prompt(content: str) -> Tuple[str, str, List[Tuple[str, str]]]:
     `Args:`
         content (str): The content to split. Should be formatted as:
         ```
-        # Thinking Process
+        #> Thinking Process
         ...
-        # Prompt
+        #> Prompt
         ...
-        # Code Changes
+        #> Code Changes
         ## Change {{index}}
         ### Old Code
         ...
@@ -259,11 +260,11 @@ def split_prompt(content: str) -> Tuple[str, str, List[Tuple[str, str]]]:
         Tuple[str, str, List[str]]: The prompt, response, and comments.
     '''
     # Split it into sections
-    thinking_process, other = content.split('# Prompt\n')
-    prompt, changes = other.split('# Code Changes\n')
+    thinking_process, other = content.split('#> Prompt\n')
+    prompt, changes = other.split('#> Code Changes\n')
 
     # If no changes are needed, remove the changes section
-    if clean_llm_output(changes.lower()) == 'none':
+    if '### old code' not in clean_llm_output(changes.lower()):
         changes = ''
     
     # If there are changes, split them

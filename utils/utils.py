@@ -274,7 +274,7 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
                 print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
                 retry_counter += 1
                 sleep(retry_interval)
-            if error_dict.get('code', -1) == 500 and error_dict.get('message', '') == 'Internal Server Error':
+            elif error_dict.get('code', -1) == 500 and error_dict.get('message', '') == 'Internal Server Error':
                 print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
                 retry_counter += 1
                 sleep(retry_interval)

@@ -50,7 +50,7 @@ A tool is a real function in the code that the model can call when it needs info
 
 # Output (STRICT)
 You must output EXACTLY these sections, in this exact order:
-1) `# Thinking Process`
+1) `#> Thinking Process`
 - Write your reasoning here. You should explain:
 1. How you came up with the prompt.
 2. How to format the curly braces in the prompt.
@@ -59,11 +59,11 @@ You must output EXACTLY these sections, in this exact order:
 5. If there are any complex schemas, write here which they are and how to explain them.
 6. Treat it as a TODO list for you to implement in the prompt.
 
-2) `# Prompt`
+2) `#> Prompt`
 - Write the final prompt text here. Keep in mind all rules and instructions above.
 Keep the prompt readable and organised, don't just append rules and instructions to the prompt.
 
-3) `# Code Changes`
+3) `#> Code Changes`
 - Under you either write `None`, if no code changes are needed.
 - OR list one or more changes using the format below.
 
@@ -102,11 +102,11 @@ Notes:
 
 # Output Format (STRICT)
 ```
-# Thinking Processes
+#> Thinking Processes
 ...
-# Prompt
+#> Prompt
 ...
-# Code Changes
+#> Code Changes
 None
    `or`
 ## Change [index]
@@ -124,8 +124,8 @@ None
    - Placeholders: `{{name}}` only. Remember to use it whenever you need values from outside the prompt. Mainly used under the `# Inputs` section.
    - Literal braces: `{{{{` and `}}}}` only.
 4) If you output any single `{{` or `}}` that is not part of a valid placeholder, the template may break.
-5) Do not use the names of the headers in your response.
-   - Header names: `# Prompt`, `# Thinking Process`, `# Code Changes`, `## Change [index]`, `### Old Code`, `### New Code`.
+5) Do not use the names of the headers in your response, and only use each header exactly once.
+   - Header names: `#> Prompt`, `#> Thinking Process`, `#> Code Changes`, `## Change [index]`, `### Old Code`, `### New Code`.
 
 # Prompt-writing reference (you may use these headers inside the generated prompts)
 <POSSIBLE_HEADERS_START>
@@ -245,9 +245,10 @@ Review the prompt template and report only the MOST IMPORTANT issues that could 
 - Python `.format(...)` fragility (placeholders or literal braces).
 - Under the `# Inputs` section, it should have actual placeholders. A placeholder is defined as {{placeholder_name}}, not `placeholder_name`. If not, then report it.
    - Make sure you understand whether the pormpt is referencing towards the input section with just a name, or whether the prompt actually requires a placeholder.
-- Tool or schema mismatch (only if tools/schemas exist in code). Mismatch means: 1) Not detailed enough, 2) Not clear enough, 3) Not in the right place, 4) Missing.
-   - Not reporting the tools under the `# Available Tools` section.
-   - Not reporting the structured output schema under the `# Output Format` section.
+- Tool mismatch (only if schemas exist in code). Mismatch means: 1) Not detailed enough, 2) Not clear enough, 3) Not in the right place, 4) Missing.
+   - Not explaining the tools under the `# Available Tools` section.
+- Structured output mismatch (only if schemas exist in code). Mismatch means: 1) Not detailed enough, 2) Not clear enough, 3) Not in the right place, 4) Missing.
+   - Not explaining the structured output schema under the `# Output Format` section.
 - You can only report once, make it count.
 
 # Do not Report - Rules
@@ -312,9 +313,10 @@ Your job is to provide a dictionary of key-value pairs that will be used to form
 3) The dictionary keys must be strings according to the placeholder names.
 4) The dictionary values must be simple JSON-serializable types that respect the placeholder's type.
 5) The placeholder values should make sense from the codebase.
-6a) If the prompt requires the messages key, it only accepts a lsit of `BaseMessage` objects. 
+6a) If the prompt requires the messages key, it only accepts a list of `BaseMessage` objects. 
 6b) If the messages are not formatted into the prompt but are passed into the safe_invoke method, you should pass the messages list into the `non_format_messages_list` key of the output.
-   
+   	- You must generate the messages list. Always simulate a realistic scenario of messages, so we can test the prompt in a real context.   
+
 # Possible Messages Key
 You should understand how the messages are created from the codebase, in order to simulate a realistic scenario.
 e.g., [HumanMessage(content="..."), AIMessage(content="...", tool_calls=[...]), ToolMessage(content="...", tool_name="..."), AIMessage(content="..."), HumanMessage(content="..."), ...].
@@ -350,6 +352,8 @@ arguments:
    <arguments>
 
 # Now produce a mock response to the prompt.
+You **must** follow the prompt above. If it specifies a specific output format, you **must** use that format.
+If you have a choice between multiple output formats, you **must** use one specified in the prompt, given the prompt and the context.
 """
 
 
