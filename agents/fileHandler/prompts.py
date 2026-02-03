@@ -73,27 +73,10 @@ You have the following tools available to you:
     Returns:
     - (str) The contents of the file
 
-5. done(comment: str) -> str:
-    `done` is a tool used to indicate that the agent is done and the workflow is complete. Should be called alone.
-
-    Use this for:
-    - Indicating that no more changes are needed and the workflow is complete.
-    - Should be called individually.
-    - If called with other tools, no tool will be called and will return an error.
-
-    Args:
-    - comment (str): A comment for the system and user. 
-        Must explain:
-        1. Why you are done.
-        2. How the user should modify the created files, if they should.
-        3. If any files or directories are missing, explain why they are missing and how they should be created.
-        4. If any files or directories need to be removed, explain why they need to be removed and how they should be removed.
-
 ## Hard Rules for Tool Use
-- You could call multiple tools at once, except for `done`.
-- Calling multiple tools together with `done`, will result in an error.
-- When you are done, you must call `done` alone.
-- In the comments of the `done` tool, you must explain:
+- You could call multiple tools at once.
+- When you are finished, you must respond without calling any tool **AND** with an empty response.
+- Before finalizing the workflow (by responding with an empty response), you must explain in a prior message:
     1. Why you are done.
     2. How the user should modify the created files, if they should.
     3. If any files or directories are missing, explain why they are missing and how they should be created.
@@ -101,23 +84,11 @@ You have the following tools available to you:
 
 # Output Rules
 You may output the following:
-Always include a natural language response, used for reasoning, thinking, and TODO lists.
-1. You may tool call with the appropriate parameters, depending on the need you deemed necessary. If you call the `done` tool together, none will be called.
-2. The `done` tool with appropriate comments to finish the workflow, without any other tool calls. Only if you are done.
-* Note: You may respond in plain language **AND** a tool call. However both natural language response and tool calls must follow the respective rules.
+1. You may tool call with the appropriate parameters, depending on the need you deemed necessary. In the same message you should include your reasoning with natural language.
+2. Plain natural language in order to strategise in natural language.
+3. Nothing. Empty response without tool calls.
 
 # Messages
 You should take into consideration the messages following.
 In the following messages there will be a list of tool messages, showing whether the tools were successful or not.
-You may see system messages commenting on your errors.
-'''
-
-
-
-ERROR_TOOL_CALL_PROMPT = '''
-[TOOLS] [ERROR] You may not call the "done" tool, along with other tools.
-You should:
-1. Finish your necessary work.
-2. Review and reason.
-3. Call the "done" tool only when you are sure you are done. Make sure you **ONLY** call the `done` tool
 '''

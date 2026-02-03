@@ -77,10 +77,6 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} File Handler') if DEBUG else Non
 class InputSchema(MessagesState):
     file_path: str
 
-''' Intermediate Schemas '''
-
-''' Output Schema '''
-
 
 ''' Global Variables '''
 # The project directory. Only under this directory can files be changed.
@@ -106,8 +102,7 @@ def create_directory(directory_path: str) -> str:
 
     try:
         global project_dir
-        target = resolve_under_project(directory_path)
-        after_creations = target.parts[target.parts.index('creations'):]
+        target, after_creations = resolve_under_project(directory_path)
 
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The directory {directory_path} must be under {project_dir}.') if DEBUG else None
@@ -146,8 +141,7 @@ def create_file(file_path: str, contents: str) -> str:
     print_function_name(colour= MAGENTA) if DEBUG else None
     try:
         global project_dir
-        target = resolve_under_project(file_path)
-        after_creations = target.parts[target.parts.index('creations'):]
+        target, after_creations = resolve_under_project(file_path)
 
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
@@ -189,8 +183,7 @@ def modify_file(file_path: str, file_changes: List[Tuple[str, str]]) -> str:
     try:
         global project_dir, immutable_files
 
-        target = resolve_under_project(file_path)
-        after_creations = target.parts[target.parts.index('creations'):]
+        target, after_creations = resolve_under_project(file_path)
         
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
@@ -237,8 +230,7 @@ def read_file(file_path: str) -> str:
     try:
         global project_dir
 
-        target = resolve_under_project(file_path)
-        after_creations = target.parts[target.parts.index('creations'):]
+        target, after_creations = resolve_under_project(file_path)
         
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
@@ -255,29 +247,12 @@ def read_file(file_path: str) -> str:
         traceback.print_exc()
         return f'[ERROR] {e}'
 
-@tool
-def done(comment: str) -> str:
-    '''
-    `done` is a tool used to indicate that the agent is done and the workflow is complete. Should be called alone.
-    
-    `Args:`
-        comment (str): A comment for the system and user.
-
-    `Returns:`
-        (str) Either a success message or an error message
-    '''
-    print_function_name(colour= MAGENTA) if DEBUG else None
-    print(f'{BLUE}[TOOL] [INFO] [DONE]{RESET} Done with the workflow. Comment: {comment}') if DEBUG else None
-
-    return f'[TOOL] [DONE] Done with the workflow. Comment: {comment}'
-
 tools = [
     create_directory,
     create_file,
     modify_file,
-    read_file,
-    done
-] # For delete_file, it should output within the done tool to let the user know
+    read_file
+]
 
 
 
@@ -289,7 +264,7 @@ file_handler = myChatOpenAI(
 
 
 ''' Helpful Functions '''
-def resolve_under_project(path: str) -> Optional[Path]:
+def resolve_under_project(path: str) -> Tuple[Optional[Path], Optional[Path]]:
     '''
     `resolve_under_project` resolves the path to be under the project directory.
 
@@ -308,9 +283,9 @@ def resolve_under_project(path: str) -> Optional[Path]:
         abs_path = path.resolve()
 
         if abs_path.is_relative_to(project):
-            return abs_path     
+            return abs_path, abs_path.parts[abs_path.parts.index('creations') + 1:]  
 
-        return None
+        return None, None
     
     parts = path.parts
 
@@ -322,9 +297,9 @@ def resolve_under_project(path: str) -> Optional[Path]:
     
     target = (project / Path(*parts)).resolve()
     if target.is_relative_to(project):
-        return target
+        return target, target.parts[target.parts.index('creations') + 1:]
     
-    return None
+    return None, None
 
 def format_contents(file_path: str, contents: Optional[str]= None) -> str:
     '''
@@ -450,50 +425,21 @@ def file_handler_node(state: InputSchema) -> InputSchema:
         traceback.print_exc()
         return state
     
-def error_call(state: InputSchema) -> InputSchema:
-    print_function_name() if DEBUG else None
-
-    latest_message: AIMessage = state['messages'][-1]
-    tool_calls = latest_message.tool_calls or latest_message.additional_kwargs.get('tool_calls', [])
-
-    error_tool_messages: List[ToolMessage] = []
-    for tool_call in tool_calls:
-        if 'function' in tool_call:
-            tool_call = tool_call['function']
-
-        error_tool_messages.append(ToolMessage(
-            name= tool_call['name'],
-            tool_call_id= tool_call['id'],
-            content= f'[TOOL] [ERR] Did not call tool named `{tool_call["name"]}` because multiple tools were called together with the `done` tool.'
-        ))
-
-    error_call_msg: str = prompts.ERROR_TOOL_CALL_PROMPT
-    return {'messages': [SystemMessage(content= error_call_msg)] + error_tool_messages}
-
 
 
 ''' Conditional Functions '''
 def should_end(state: InputSchema) -> Literal['file_handler_node', 'tools', 'error_call', '__end__']:
     print_function_name() if DEBUG else None
 
-    last_message: AIMessage = state['messages'][-1]
-    tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', [])
-
-    if (
-        len(tool_calls) == 1 and
-        tool_calls[0]['name'] == 'done'    
-    ):
-        return '__end__'
-    
-    if (
-        len(tool_calls) != 1 and
-        any(tool_call['name'] == 'done' for tool_call in tool_calls)
-    ):
-        return 'error_call'
-    
+    # Tool call
     if will_tool_call(state['messages']):
         return 'tools'
     
+    # Last message is empty and no tool call
+    if state['messages'][-1].content.strip() == '':
+        return '__end__'
+    
+    # Not empty message
     return 'file_handler_node'
 
 
@@ -505,7 +451,6 @@ file_handler_graph.add_node('get_project_dir', get_project_dir)
 file_handler_graph.add_node('get_immutable_files', get_immutable_files)
 file_handler_graph.add_node('file_handler_node', file_handler_node)
 file_handler_graph.add_node('tools', ToolNode(tools))
-file_handler_graph.add_node('error_call', error_call)
 
 file_handler_graph.add_edge(START, 'get_project_dir')
 file_handler_graph.add_edge('get_project_dir', 'get_immutable_files')
@@ -516,12 +461,10 @@ file_handler_graph.add_conditional_edges(
     {   # Not needed, for clarity
         'file_handler_node': 'file_handler_node',
         'tools': 'tools',
-        'error_call': 'error_call',
         '__end__': END
     }
 )
 file_handler_graph.add_edge('tools', 'file_handler_node')
-file_handler_graph.add_edge('error_call', 'file_handler_node')
 
 file_handler_app = file_handler_graph.compile()
 
@@ -560,7 +503,7 @@ if __name__ == '__main__':
     }
     response = file_handler_app.invoke(user, config= config)
 
-    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    if DEBUG:
-        for key, value in response.items():
-            print(f'    {key}: {value}')
+    # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
+    # if DEBUG:
+    #     for key, value in response.items():
+    #         print(f'    {key}: {value}')
