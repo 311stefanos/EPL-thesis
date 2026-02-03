@@ -124,8 +124,8 @@ class CodeIssues(BaseModel):
 ''' Input Schema '''
 # The input schema for the software engineer, only the file path is required
 class InputSchema(MessagesState):
-    file_path: str = Field(description= 'The path to the file.')
-    times_reviewed: int = Field(description= 'The number of times the code has been reviewed.', default= 0)
+    file_path: str # 'The path to the file.
+    times_reviewed: int # The number of times the code has been reviewed.
 
 
 

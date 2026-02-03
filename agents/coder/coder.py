@@ -130,12 +130,12 @@ class FunctionProposal(BaseModel):
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
-    file_path: str = Field(description= 'The path to the file.')
-    function_name: str = Field(description= 'The name of the function.')
-    software_engineer_instructions: str = Field(description= 'The instructions from the software engineer.')
+    file_path: str # The path to the file.
+    function_name: str # The name of the function.
+    software_engineer_instructions: str # The instructions from the software engineer.
 
-    previous_outputs: Annotated[List['OutputSchema'], add] = Field(description= 'The previous outputs you provided.')
-    comments: Annotated[List[str], add] = Field(description= 'The comments the software engineer provided.')
+    previous_outputs: Annotated[List['OutputSchema'], add] # The previous outputs you provided.
+    comments: Annotated[List[str], add] # The comments the software engineer provided.
 
     previous_implementation: Optional['OutputSchema']
     reviewer_comments: Optional[str]

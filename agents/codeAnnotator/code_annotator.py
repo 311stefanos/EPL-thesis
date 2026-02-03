@@ -222,10 +222,11 @@ class LLMProposalList(BaseModel): # Used by the tool_or_output_generator
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
-    file_path: str = Field(description= 'The current file path as given from the user.')
-    clarified_user_input: str = Field(description= 'The clarified user input as given from the clarifier.')
-    workflow: WorkflowBundle = Field(description= 'The proposed workflow as given from the workflow engineer.')
+    file_path: str # The current file path as given from the user.
+    clarified_user_input: str # The clarified user input as given from the clarifier.
+    workflow: WorkflowBundle # The proposed workflow as given from the workflow engineer.
 
+    # The step changes as given from the LLM
     step_changes: Union[    
         Docstrings,
         Schemas,
@@ -233,7 +234,7 @@ class InputSchema(MessagesState):
         ToolFunctions,
         LLMProposalList,
         None
-    ] = Field(description= 'The step changes as given from the LLM at each step.', default= None)
+    ]
 
 
 

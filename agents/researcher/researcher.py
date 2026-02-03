@@ -122,12 +122,10 @@ class ResearchResult(BaseModel):
 ''' Input Schema '''
 # The input schema
 class InputSchema(MessagesState):
-    research_topic: str = Field(
-        description='The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).'
-    )
-    results: Optional[List[ResearchResult]] = Field(description= 'The results of the research.', default_factory= List)
+    research_topic: str # The topic to research. Should be a single topic, and should be described in high detail (at least a paragraph).
+    results: Optional[List[ResearchResult]] # The results of the research.
     # If there was an error during the research
-    error_occurred: bool = Field(description= 'If there was an error during the research.', default= False)
+    error_occurred: bool
 
 
 ''' Output Schema '''

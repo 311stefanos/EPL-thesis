@@ -122,37 +122,21 @@ print(f'{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Input Refiner') if DEBUG else None
 ''' Input Schema '''
 class InputSchema(TypedDict):
     # If it should call the orchestrator to get the inputs
-    orchestrator: bool = Field(
-        description= 'If it should call the orchestrator to get the inputs.',
-        default= False
-    )
+    orchestrator: bool
     # The user's input as is
-    user_input: str = Field(
-        description= 'The user input to be clarified and refined.'
-    )
+    user_input: str
 
 ''' Intermediate Schema '''
 class IntermediateSchema(MessagesState): # A lit of the messages
     # If it should call the orchestrator to get the inputs
-    orchestrator: bool = Field(
-        description= 'If it should call the orchestrator to get the inputs.',
-        default= False
-    )
-    qna: List[Tuple[str, str]] = Field(
-        description= 'The user answers to the clarifying questions.'
-    )
+    orchestrator: bool
+    qna: List[Tuple[str, str]] # The user answers to the clarifying questions.
     # The user's input, grammatically corrected
-    corrected_original: str = Field(
-        description= 'The original request with grammar and spelling fixed, vocabulary unchanged.'
-    )
+    corrected_original: str # The original request with grammar and spelling fixed, vocabulary unchanged.'
     # The LLM refinement tries
-    refinements: Annotated[List[AIMessage], add_messages] = Field(
-        description= 'The LLM refinements, if any.'
-    )
+    refinements: Annotated[List[AIMessage], add_messages] # The LLM refinements, if any.
     # The user's requests to the LLM's refinements
-    user_requests: Annotated[List[HumanMessage], add_messages] = Field(
-        description= 'The user requests, if any.'
-    )
+    user_requests: Annotated[List[HumanMessage], add_messages] # The user requests, if any.
 
 ''' Output Schema '''
 class OutputSchema(BaseModel):

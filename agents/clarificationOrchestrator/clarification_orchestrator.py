@@ -109,7 +109,7 @@ class InputSchema(TypedDict):
 ''' Output Schema '''
 class OutputSchema(TypedDict):
     # The user input
-    qna: QnA = Field(description= 'The question and answer.')
+    qna: QnA # The question and answer.
 
 
 

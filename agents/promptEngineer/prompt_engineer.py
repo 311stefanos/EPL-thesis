@@ -138,13 +138,13 @@ class Prompt(BaseModel):
 
 ''' Input Schema '''
 class InputSchema(TypedDict):
-    file_path: str = Field(description= 'The path to the file.')
-    prompt_list: Optional[List[Prompt]] = Field(description= 'The list of prompts.')
-    active_prompt_index: Optional[int] = Field(description= 'The active prompt index of the prompt list.')
+    file_path: str # The path to the file.
+    prompt_list: Optional[List[Prompt]] # The list of prompts.
+    active_prompt_index: Optional[int] # The active prompt index of the prompt list.
 
-    error: Optional[bool] = Field(description= 'If there was an error.')
+    error: Optional[bool] # If there was an error.
 
-    mode: Literal['llm', 'user', 'both'] = Field(description= 'The mode of the agent.')
+    mode: Literal['llm', 'user', 'both'] # The mode of the agent.
 
 
 

@@ -108,14 +108,11 @@ class StructuredOutput(BaseModel):
 ''' Input Schema '''
 # The input schema
 class InputSchema(TypedDict):
-    research_topic: str = Field(description= 'The topic to be researched.')
-    not_yet_researched_questions: Optional[List[str]] = Field(description= 'The question to be researched.', default_factory= List)
-    researched_questions_answers: Optional[List[QnA]] = Field(
-        description= 'A list of questions and answers.',
-        default_factory= List
-    )
-    # If there was an error during the breakdown logic
-    error_occurred: bool = Field(description= 'If there was an error during the breakdown logic.')
+    research_topic: str # The topic to be researched.
+    not_yet_researched_questions: Optional[List[str]] # The question to be researched.
+    researched_questions_answers: Optional[List[QnA]] # A list of questions and answers.
+    
+    error_occurred: bool # If there was an error during the breakdown logic.
 
 ''' Output Schema '''
 # The output schema, just the final summary

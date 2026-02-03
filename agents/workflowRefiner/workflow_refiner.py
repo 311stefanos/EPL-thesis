@@ -186,17 +186,9 @@ class WorkflowBundle(BaseModel):
 
 ''' Input Schema '''
 class InputSchema(MessagesState):
-    # If it should call the orchestrator to get the inputs
-    orchestrator: bool = Field(
-        description= 'If it should call the orchestrator to get the inputs.',
-        default= False
-    )
-    user_input: str = Field(
-        description= 'The user input to be studied and made into a workflow.'
-    )
-    clarified_user_input: Optional[str] = Field(
-        description= 'The user input refined to be studied and made into a workflow.'
-    )
+    orchestrator: bool # If it should call the orchestrator to get the inputs.
+    user_input: str # The user input to be studied and made into a workflow.
+    clarified_user_input: Optional[str] # The user input refined to be studied and made into a workflow.
 
 ''' Output Schema '''
 class OutputSchema(BaseModel):
