@@ -38,7 +38,7 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Dict, Set, Tuple, Union
+from typing import Literal, List, Optional, Dict, Set, Tuple
 from pydantic import BaseModel, Field
 
 # General imports
@@ -52,9 +52,9 @@ import os
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, clean_llm_output, read_state_file
 from agents.softwareEngineer import prompts
 from agents.coder.coder import (
+    OutputSchema as CoderOutputSchema,
     InputSchema as CoderInputSchema,
     FunctionProposal,
-    OutputSchema as CoderOutputSchema,
     coder_app
 )
 
@@ -161,6 +161,7 @@ def replace_code(file_path: str, old_code: str, new_code: str) -> str:
     print_function_name(colour= MAGENTA) if DEBUG else None
 
     try:
+        # Clean the code given
         old_code = clean_llm_output(old_code)
         new_code = clean_llm_output(new_code)
 
@@ -183,7 +184,7 @@ def replace_code(file_path: str, old_code: str, new_code: str) -> str:
         return f'[ERROR] The file {file_path} could not be overwritten due to the error: {e}'
 
 # A tool used to call a coder agent.
-@tool
+@tool # TODO: Check it could be better to return just an error message rather than the whole schema
 def call_coder(function_name: str, special_instructions: str, file_path: str) -> Dict[str, CoderSchema]:
     '''
     `call_coder` calls a coder to implement the given function.
@@ -205,9 +206,11 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
     if f'def {function_name}(' not in code:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The definition of the function could not be found in the file hence a coder cannot complete the task. {function_name}') if DEBUG else None
         return {
-            'code': 'The definition of the function could not be found in the file hence a coder cannot complete the task. You should define the function first.', 
-            'proposals': None,
-            'imports': None
+            function_name: CoderSchema(
+                code= 'The definition of the function could not be found in the file hence a coder cannot complete the task. You should define the function first.', 
+                proposals= None, 
+                imports= None
+            ),
         }
 
     # If the coder does not exist in the coders dict, add it
@@ -217,21 +220,21 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
 
     # Call the coder
     args: CoderInputSchema = {
-        'messages': [],
-        'file_path': file_path,
-        'function_name': function_name,
-        'software_engineer_instructions': special_instructions,
-        'previous_outputs': [coders[function_name].code] if coders[function_name].code else [],
-        'comments': [comments[function_name].comment] if comments[function_name].comment else [],
-        'previous_implementation': None,
-        'reviewer_comments': None
+        'messages': [], # No new messages
+        'file_path': file_path, # The path to the file, same
+        'function_name': function_name, # The name of the function
+        'software_engineer_instructions': special_instructions, # The special instructions
+        'previous_outputs': [coders[function_name].code] if coders[function_name].code else [], # The previous outputs if they exist
+        'comments': [comments[function_name].comment] if comments[function_name].comment else [], # The comments of the software engineer
+        'previous_implementation': None, # No previous implementation (it is internal)
+        'reviewer_comments': None # No previous implementation to get reviews (it is internal)
     }
     config = {
         'recursion_limit': 100,
         'configurable': {
             'user_id': 'softwareEngineer',
             'run_name': 'softwareEngineer',
-            'thread_id': function_name, 
+            'thread_id': function_name, # The name of the function so it is unique
         }
     }
 
@@ -353,9 +356,6 @@ def approve_function_code(file_path: str, function_name: str) -> str:
     code = code.replace(code_section, previous_code)
     if '@tool\n@tool' in code:
         code = code.replace('@tool\n@tool', '@tool')
-
-    # print(f'{BLUE}[TOOL] [OLD SECTION]{RESET} {code_section}') if DEBUG else None
-    # print(f'{BLUE}[TOOL] [NEW SECTION]{RESET} {previous_code}') if DEBUG else None
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(code)
@@ -499,7 +499,7 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
                         import_line_idx[m] = i
 
                 # also track the line’s full list for extension (keyed by line index)
-                # We’ll store per-line lists using a synthetic key.
+                # We'll store per-line lists using a synthetic key.
                 key = f'__line__{i}'
                 if key not in import_mods:
                     import_mods[key] = mods[:]
@@ -661,7 +661,7 @@ def submit_final_code(file_path: str) -> None:
 
 # A tool used to resolve code issues
 @tool
-def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
+def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: check to add index rather than copy pasted issues
     '''
     `code_issue_resolved` resolves a code issue that was proposed by the Quality Assurance team.
 
@@ -675,6 +675,7 @@ def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
 
     global code_issues
 
+    # Check if the issues list is empty, return an error
     if len(resolved_issues) == 0:
         print(f'{BLUE}[TOOL] [INFO] [NO ISSUES]{RESET} No code to were resolved.') if DEBUG else None
         return '[NO ISSUES] No code issues to resolved.'
@@ -684,15 +685,16 @@ def code_issue_resolved(resolved_issues: List[str]) -> str: # TODO: add index
     actually_resolved_issues = []
 
     for resolved_issue in resolved_issues:
-        # Check if the code issue exists
-        if resolved_issue not in code_issues:
-            print(f'{RED}[TOOL] [ERROR] [RESOLVE]{RESET} The code issue `{resolved_issue}` does not exist.') if DEBUG else None
-            not_resolved_issues.append(resolved_issue)
-        
-        else:
+        # Check if the code issue exists in the issues list
+        if resolved_issue in code_issues:
             code_issues.remove(resolved_issue)
             actually_resolved_issues.append(resolved_issue)
+        # If not, add it to the not resolved list
+        else:
+            print(f'{RED}[TOOL] [ERROR] [RESOLVE]{RESET} The code issue `{resolved_issue}` does not exist.') if DEBUG else None
+            not_resolved_issues.append(resolved_issue)
 
+    # Print the resolved and not resolved code issues and return
     print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Resolved the coder\'s code issues: {actually_resolved_issues}') if DEBUG and len(actually_resolved_issues) > 0 else None
     print(f'{RED}[TOOL] [FAIL] [NOT RESOLVED]{RESET} The following code issues were not resolved: {not_resolved_issues}') if DEBUG and len(not_resolved_issues) > 0 else None
     return f'[SUCCESS] Resolved the coder\'s code issues: {actually_resolved_issues}\n[FAIL] The following code issues were not resolved (due to not exact wording): {not_resolved_issues}'
@@ -710,6 +712,8 @@ tools = [
 
 # Dictionary of tools: tool name -> tool
 tools_by_name = {tool.name: tool for tool in tools}
+
+
 
 ''' LLM '''
 # The agent that adds the tool sections
@@ -742,12 +746,15 @@ def get_schema_type(state: InputSchema) -> Tuple[str, str]:
         (Tuple[str, str]): The schema type of the state, and how it should be called.
     '''
     code = read_state_file(state)
+    # If the AgentSchema is a BaseModel
     if 'AgentSchema(BaseModel):' in code:
         return ('`BaseModel`', '`state.key_name`')
     
+    # If the AgentSchema is a MessagesState
     elif 'AgentSchema(MessagesState):' in code:
         return ('`MessagesState`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
     
+    # If the AgentSchema is a TypedDict
     return ('`TypedDict`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
 
 # Checks if the add_imports tool was called in the last messages
@@ -762,15 +769,18 @@ def add_imports_called(last_messages: List[BaseMessage]) -> bool:
         add_imports_called: bool
     '''
     for message in last_messages:
+        # Not a tool message
         if not isinstance(message, ToolMessage):
             continue
+        # Does not have a name
         if not hasattr(message, 'name'):
             continue
-
+        # Get the name and check if its add_imports
         tool_name = getattr(message, 'name')
         if tool_name == 'add_imports':
             return True
         
+    # If no add_imports tool was called
     return False
 
 
@@ -789,16 +799,20 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
 
         prompt = prompts.TOOL_SECTION_ADDER_PROMPT.format(code= code)
 
+        # call the LLM
         response = safe_invoke(tool_adder, messages= [SystemMessage(content= prompt)]).content
 
+        # Split the response
         think_process, code = response.split('# Code')
         cleaned_code = clean_llm_output(code)
 
         print(f'{BLUE}[NODE] [INFO] [THINK PROCESS]{RESET} {think_process}') if DEBUG else None
 
+        # Check if the code is empty
         if len(cleaned_code) < 4 or cleaned_code.lower().strip() == 'none' or not cleaned_code.strip():
             return state
 
+        # Write the code otherwise
         with open(state['file_path'], 'w', encoding='utf-8') as f:
             f.write(cleaned_code)
 
@@ -1069,9 +1083,11 @@ def passed_last_check(state: InputSchema) -> Literal['software_engineer_node', '
     if not code_issues.issues:
         return '__end__'
     
+    # If it exceeded 2 times reviewed, end
     if state['times_reviewed'] >= 2:
         return '__end__'
     
+    # Else, go back to the Software Engineer
     return 'software_engineer_node' 
 
 
@@ -1086,9 +1102,7 @@ software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
 software_engineer_graph.add_edge(START, 'add_tool_sections')
-# software_engineer_graph.add_edge('add_tool_sections', END)
 software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
-# software_engineer_graph.add_edge(START, 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
     after_software_engineer,
@@ -1134,7 +1148,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
-        'recursion_limit': 150, # TODO: change
+        'recursion_limit': 150,
         'configurable': {
             'user_id': 'softwareEngineer',
             'run_name': 'softwareEngineer',

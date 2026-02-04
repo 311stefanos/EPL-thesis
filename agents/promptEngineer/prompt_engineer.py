@@ -1,24 +1,42 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2025-12-24
-- `description:` # TODO: add
+- `description:` The prompt engineer agent is used to create prompts for LLMs. It first reads the python file and identifies the necessary prompts.
 
 ## How to use
 1. Import the app. (`from agents.promptEngineer.prompt_engineer import prompt_engineer_app`)
 2. Input a dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path to the file.
+    - `prompt_list: Optional[List[Prompt]]`: The list of prompts. Should be None.
+    - `active_prompt_index: Optional[int]`: The active prompt index of the prompt list. Should be None.
+    - `error: Optional[bool]`: If there was an error. Should be None.
+    - `mode: Literal['llm', 'user', 'both']`: The mode of the agent.
 3. Invoke the app.
 4. Get the output dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path to the file.
+    - `prompt_list: Optional[List[Prompt]]`: The list of prompts.
+    - `active_prompt_index: Optional[int]`: The active prompt index of the prompt list.
+    - `error: Optional[bool]`: If there was an error.
+    - `mode: Literal['llm', 'user', 'both']`: The mode of the agent.
+The output of this agent does not matter, its purpose is to create prompts.
 
 ## Usage
 ```python
 from agents.promptEngineer.prompt_engineer import prompt_engineer_app
-graph_input = { # TODO: add }
+graph_input = {
+    'file_path': '../../creations/menu_recommendation_workflow/menu_recommendation_workflow.py',
+    'mode': 'both'
+}
 
 response = prompt_engineer_app.invoke(graph_input)
 
-# response = { # TODO: add }
+# response = {
+#     'file_path': '../../creations/menu_recommendation_workflow/menu_recommendation_workflow.py',
+#     'prompt_list': [Prompt1(...), Prompt2(...), Prompt3(...)],
+#     'active_prompt_index': 3,
+#     'error': False,
+#     'mode': 'both'
+# }
 ```
 """
 
@@ -27,7 +45,6 @@ response = prompt_engineer_app.invoke(graph_input)
 ''' Imports '''
 # Langchain imports
 from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import tool
 
 # Langgraph imports
 from langgraph.constants import END, START
@@ -40,7 +57,6 @@ from pydantic import BaseModel, Field
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
-from time import sleep
 import traceback
 import json
 import os
@@ -73,8 +89,10 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Prompt Engineer') if DEBUG else 
 
 """ Schemas """
 ''' General Schemas '''
+# Used by the formater, so it outputs only a dictionary to use in the `prompt.format(**format_dict)` method.
 class Format(BaseModel):
     format_dict: Dict = Field(description= 'The dictionary used to format the prompt.')
+    # In case there are messages needed to be appended to the invocation
     non_format_messages_list: List[BaseMessage] = Field(description= 'The list of non-format messages.', default= [])
 
 class Prompt(BaseModel):
@@ -82,26 +100,32 @@ class Prompt(BaseModel):
     suggested_prompt: str = Field(description= 'The suggested prompt.', default= '')
     necessary_code_changes: List[Tuple[str, str]] = Field(description= 'The necessary code changes.', default= [])
 
+    # By the formatter
     format: Format = Field(description= 'The format of the prompt.', default= Format(format_dict= {}))
-
+    # User comments
     user_comments: List[str] = Field(description= 'The user comments.', default= [])
+    # The latest response gotten from an LLM
     latest_response: str = Field(description= 'The latest response.', default= '')
 
+    # Review counts
     prompt_reviews: int = Field(description= 'The number of LLM reviews for the prompt.', default= 0)
     response_reviews: int = Field(description= 'The number of LLM reviews for the response.', default= 0)
 
+    # Increase the review count
     def reviewed(self, what: Literal['prompt', 'response']) -> None:
         if what == 'prompt':
             self.prompt_reviews += 1
         elif what == 'response':
             self.response_reviews += 1
 
+    # Reset the review count
     def reset_reviews(self, what: Literal['prompt', 'response']) -> None:
         if what == 'prompt':
             self.prompt_reviews = 0
         elif what == 'response':
             self.response_reviews = 0
 
+    # Check if the prompt can be reviewed
     def can_review(self, what: Literal['prompt', 'response']) -> bool:
         prompt_max: int = 2
         response_max: int = 3
@@ -110,15 +134,19 @@ class Prompt(BaseModel):
         elif what == 'response':
             return self.response_reviews < response_max
 
+    # Set the format
     def set_format(self, format: Format) -> None:
         self.format = format
 
+    # Add a comment
     def add_comments(self, comments: str) -> None:
         self.user_comments.append(comments)
 
+    # Add a response
     def add_response(self, response: str) -> None:
         self.latest_response = response
 
+    # Check if the prompt is approved by checking the latest user comment
     def is_approved(self) -> bool:
         last_comment = self.user_comments[-1] if self.user_comments else ''
         last_comment = last_comment.replace('Review by Expert Reviewer: ', '')
@@ -126,6 +154,7 @@ class Prompt(BaseModel):
 
         return not any(c.strip() not in USER_APPROVALS for c in last_comment.split('\n'))
     
+    # Filter the comments, returning only the ones that are not approving the prompt
     def filter_comments(self) -> List[str]:
         comments: List[str] = []
         for comment in self.user_comments:
@@ -158,8 +187,7 @@ prompt_reviewer = myChatOpenAI(
 )
 
 formater = myChatOpenAI(
-    temperature= 0.8,
-    model= 'meta-llama/llama-3.3-70b-instruct:free'
+    temperature= 0.8
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(
@@ -191,6 +219,7 @@ def get_prompt_names(file_path: str) -> List[str]:
     with open(file_path, 'r', encoding='utf-8') as f:
         code = f.read()
 
+    # Extract the prompt names
     names_in_order = [m.group(1) for m in pattern.finditer(code)]
 
     # Keep unique names, preserve first-seen order
@@ -215,9 +244,11 @@ def mode(mode: Literal['llm', 'user'], state: InputSchema) -> bool:
     `Returns:`
         bool: Returns true if the mode is compatoble with the state.
     '''
+    # If the mode is either 'both' or the same as the state, return True
     if state['mode'] in [mode, 'both']:
         return True
     
+    # Else, return False
     return False
 
 # Returns the active prompt
@@ -231,9 +262,11 @@ def get_active_prompt(state: InputSchema) -> Optional[Prompt]:
     `Returns:`
         Prompt: The active prompt.
     '''
+    # If the active prompt index is greater than or equal to the length of the prompt list, return None
     if state['active_prompt_index'] >= len(state['prompt_list']):
         return None
     
+    # Else, return the active prompt from the prompt list
     return state['prompt_list'][state['active_prompt_index']]
 
 # splits the LLMs response into sections
@@ -294,6 +327,7 @@ def split_prompt(content: str) -> Tuple[str, str, List[Tuple[str, str]]]:
 
 
 ''' Nodes '''
+# Extracts the prompts needed
 def extract_prompts(state: InputSchema) -> InputSchema:
     '''
     This node extracts the prompts from the code that should be created.
@@ -313,12 +347,14 @@ def extract_prompts(state: InputSchema) -> InputSchema:
             'active_prompt_index': 0,
             'error': False
         }
+    
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc()
 
         return state
 
+# Generates the prompt
 def generate_prompt(state: InputSchema) -> InputSchema:
     '''
     This node generates the prompts.
@@ -379,6 +415,7 @@ def generate_prompt(state: InputSchema) -> InputSchema:
         # Error
         return {'error': True}
 
+# Review the prompt created
 def review_prompt(state: InputSchema) -> InputSchema:
     '''
     This node reviews the prompt.
@@ -427,8 +464,13 @@ def review_prompt(state: InputSchema) -> InputSchema:
         traceback.print_exc()
 
         return state
-    
+
+# Get a response from the created prompt
 def get_response(state: InputSchema) -> InputSchema:
+    '''
+    First it generates a dictionary to format the prompt.
+    Then it uses the prompt to invoke a response.
+    '''
     print_function_name() if DEBUG else None
 
     try:
@@ -459,8 +501,12 @@ def get_response(state: InputSchema) -> InputSchema:
         traceback.print_exc()
 
         return state
-    
+
+# Review the response created with the prompt
 def review_response(state: InputSchema) -> InputSchema:
+    '''
+    This node reviews the response generated from the previous node.
+    '''
     print_function_name() if DEBUG else None
 
     try:
@@ -505,7 +551,11 @@ def review_response(state: InputSchema) -> InputSchema:
 
         return state
 
+# Next Prompt
 def next_prompt(state: InputSchema) -> InputSchema:
+    '''
+    This node goes to the next prompt by updating the state's active_prompt_index.
+    '''
     print_function_name() if DEBUG else None
 
     try:
@@ -518,7 +568,11 @@ def next_prompt(state: InputSchema) -> InputSchema:
 
         return state
 
+# Paste the prompts into the prompt file
 def paste_prompts(state: InputSchema) -> InputSchema:
+    '''
+    This node pastes the prompts into the prompt file.
+    '''
     print_function_name() if DEBUG else None
 
     try:
@@ -546,7 +600,12 @@ def paste_prompts(state: InputSchema) -> InputSchema:
         return state
 
 ''' Conditional Functions '''
+# If generate_prompt was successful
 def generate_prompt_successfully(state: InputSchema) -> Literal['generate_prompt', 'review_prompt']:
+    '''
+    This conditional function gets called after the generate_prompt node. It checks if the prompt was generated successfully.
+    If not, it goes back to the generate_prompt node. Otherwise, it goes to the review_prompt node.
+    '''
     print_function_name() if DEBUG else None
 
     # Prompt did not generate
@@ -556,7 +615,12 @@ def generate_prompt_successfully(state: InputSchema) -> Literal['generate_prompt
     # Prompt generated, go to review
     return 'review_prompt'
 
+# After the review of the prompt
 def after_prompt_review(state: InputSchema) -> Literal['generate_prompt', 'get_response']:
+    '''
+    This conditional function gets called after the review_prompt node. It checks if the prompt was approved.
+    If not, it goes back to the generate_prompt node. Otherwise, it goes to the get_response node.
+    '''
     print_function_name() if DEBUG else None
 
     # If the prompt is not approved, go back and generate a new prompt
@@ -566,7 +630,12 @@ def after_prompt_review(state: InputSchema) -> Literal['generate_prompt', 'get_r
     # Otherwise, get a response
     return 'get_response'
     
+# After the review of the response
 def after_response_review(state: InputSchema) -> Literal['generate_prompt', 'next_prompt', 'paste_prompts']:
+    '''
+    This conditional function gets called after the review_response node. It checks if the response was approved.
+    If not, it goes back to the generate_prompt node. Otherwise, it goes to the next_prompt node.
+    '''
     print_function_name() if DEBUG else None
 
     # If the response is not approved, go back and generate a new prompt
@@ -659,8 +728,3 @@ if __name__ == '__main__':
         'mode': 'both'
     }
     response = prompt_engineer_app.invoke(user, config= config)
-
-    # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    # if DEBUG:
-    #     for key, value in response.items():
-    #         print(f'    {key}: {value}')

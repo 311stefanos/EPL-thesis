@@ -65,11 +65,9 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
-from time import sleep
 import traceback
 import json
 import os
-import re
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments
@@ -215,11 +213,12 @@ summariser = myChatOpenAI(
 ''' Helpful Functions '''
 # Get today's date in a human-readable format
 def get_today_str() -> str:
-    """Get current date formatted for display in prompts and outputs.
-    
-    Returns:
-        Human-readable date string in format like 'Mon Jan 15, 2024'
-    """
+    '''
+    `get_today_str` returns today's date in a human-readable format.
+
+    `Returns`
+        (str) A string representing today's date in a human-readable format.
+    '''
     now = datetime.now()
     return f"{now:%a} {now:%b} {now.day}, {now:%Y}"
 
@@ -401,11 +400,11 @@ def should_continue(state: InputSchema) -> Literal['tool_node', 'summarise', 'do
         # Get the last message and extract the tool calls
         last_message = state['messages'][-1]
 
-        # If last message has error code 400 because the context is too long, remove the first message
-        if hasattr(last_message, 'error') and str(last_message.error.code) == '400': 
-            if 'maximum context length is' in last_message.error['message']:
-                print(f'{RED}[NODE] [INFO] [CONTEXT TOO LONG]{RESET} Removed first message') if DEBUG else None
-                add_messages(state, RemoveMessage(state['messages'][0].id))
+        # # If last message has error code 400 because the context is too long, remove the first message
+        # if hasattr(last_message, 'error') and str(last_message.error.code) == '400': 
+        #     if 'maximum context length is' in last_message.error['message']:
+        #         print(f'{RED}[NODE] [INFO] [CONTEXT TOO LONG]{RESET} Removed first message') if DEBUG else None
+        #         add_messages(state, RemoveMessage(state['messages'][0].id))
 
         tool_calls = last_message.tool_calls or last_message.additional_kwargs.get('tool_calls', None)
 

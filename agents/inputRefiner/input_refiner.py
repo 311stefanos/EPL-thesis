@@ -233,6 +233,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
         
     try:
         # prompt
+        # TODO: test with a list of messages
         prompt = prompts.CLARIFICATION_PROMPT.format(
             user_input= state['corrected_original'],
             tool_calls= '\n---\n'.join([mess.content for mess in state['messages'][1:]]),
@@ -264,14 +265,15 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
                 }
             }
             user_input = clarification_orchestrator_app.invoke({'question': clarification.content}, config= orch_config)
-            # Wrap it in an AIMessage, and the answer in a HumanMessage
+            # Store the QnA in the state
             new_qna = (user_input['qna'].question, user_input['qna'].answer)
 
         else:
-            # Otherwise (just a clarification question), wrap it in an AIMessage, and ask the user for input
+            # Otherwise (just a clarification question) ask the user for input
             print(f'{GREEN}[NODE] [CLARIFICATION/ASSUMPTION QUESTION]{RESET} {clarification.content}')
             
-            user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ') 
+            user_input = input(f'\n{GREEN}[NODE] [INPUT] >{RESET} ')
+            # Store the QnA in the state 
             new_qna = (clarification.content, user_input)
 
         return {'qna': state['qna'] + [new_qna]}

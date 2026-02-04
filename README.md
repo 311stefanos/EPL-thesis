@@ -46,6 +46,11 @@ cd /agents/<agent_name> # Go to the agent folder
 python <agent_name>.py # Run the agent
 ```
 
+
+
+
+
+
 # Agents # TODO: Add a README.md to each agent
 # Workflow
 
@@ -54,8 +59,6 @@ python <agent_name>.py # Run the agent
 - Add a workflow diagram to each agent and here
 - add an overview here
 
-- test code_annotator on a more complex workflow
-- make a qa
 - make the main workflow
 
 - add a memory to all llms

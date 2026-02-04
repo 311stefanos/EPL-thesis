@@ -85,7 +85,6 @@ from langchain_tavily import TavilySearch
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
@@ -192,9 +191,7 @@ class InputSchema(MessagesState):
 
 ''' Output Schema '''
 class OutputSchema(BaseModel):
-    workflow: WorkflowBundle = Field(
-        description= 'The workflow created from the user input.'
-    )
+    workflow: WorkflowBundle = Field(description= 'The workflow created from the user input.')
 
 
 

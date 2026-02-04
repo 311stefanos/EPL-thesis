@@ -56,7 +56,7 @@ response = coder_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import SystemMessage, AIMessage, RemoveMessage, ToolMessage, BaseMessage
 from langchain_tavily import TavilySearch
 from langchain_core.tools import tool
 
@@ -67,8 +67,8 @@ from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Literal, List, Optional, Annotated, Tuple, Union
 from pydantic import BaseModel, Field, ValidationError, field_validator
+from typing import Literal, List, Optional, Annotated, Tuple, Union
 from operator import add
 
 # General imports
@@ -159,8 +159,6 @@ class OutputSchema(BaseModel):
 
 
 ''' Tools '''
-# TODO: Can add tool to request docs
-
 tavily_search = TavilySearch(
     tavily_api_key= os.getenv('TAVILY_API_KEY'),
     search_depth= "advanced",
@@ -197,8 +195,8 @@ def output_tool(code: str, proposals: Optional[Union[List[FunctionProposal],str]
 
     return OutputSchema(code= code, proposals= proposals, imports= imports)
 
-# List of tools
-tools = [tavily_search] # TODO:, github_tool, stackoverflow_tool
+# List of tools except the output tool
+tools = [tavily_search] # TODO:, github_tool, stackoverflow_tool, docs_request_tool
 # Dictionary of tools: tool name -> tool
 tools_by_name = {tool.name: tool for tool in tools + [output_tool]}
 
@@ -231,6 +229,7 @@ def was_tavily_called(state: InputSchema) -> bool:
     `Returns:`
         was_tavily_called: bool
     '''
+    # Check if the agent already called the tavily tool
     return any([mes.tool_name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage)])
 
 def get_schema_type(state: InputSchema) -> Tuple[str, str]:
@@ -244,12 +243,15 @@ def get_schema_type(state: InputSchema) -> Tuple[str, str]:
         (Tuple[str, str]): The schema type of the state, and how it should be called.
     '''
     code = read_state_file(state)
+    # If the AgentSchema is a BaseModel
     if 'AgentSchema(BaseModel):' in code:
         return ('`BaseModel`', '`state.key_name`')
     
+    # If the AgentSchema is a MessagesState
     elif 'AgentSchema(MessagesState):' in code:
         return ('`MessagesState`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
     
+    # If the AgentSchema is a TypedDict
     return ('`TypedDict`', '`state[\'key_name\']` or `schema.get(\'key_name\', default)`')
 
 
@@ -298,7 +300,8 @@ def coder_node(state: InputSchema) -> InputSchema:
     '''
     print_function_name() if DEBUG else None
 
-    last_message = state['messages'][-1]
+    # Just to show the previous tool message
+    last_message: BaseMessage = state['messages'][-1]
     if isinstance(last_message, ToolMessage):
         print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} {last_message}') if DEBUG else None
 
@@ -367,7 +370,7 @@ def parse_output_tool(state: InputSchema) -> InputSchema:
         args = tool_call.get('args', {}) or tool_call.get('arguments', {})
         # Parse the tool arguments if needed.
         if isinstance(args, str):
-            args = parse_tool_arguments(args)                
+            args = parse_tool_arguments(args)
 
         # Add the proposals key if the LLM skipped it.
         if 'proposals' not in args:

@@ -264,6 +264,17 @@ tool_or_output_generator = myChatOpenAI(
 ''' Helpful Functions '''
 # To get the correct section of the code
 def _slice_section(code: str, start_label: str, end_labels: list[str]) -> str:
+    '''
+    `_slice_section` slices the code between the start label and the end labels.
+
+    `Args`:
+        code (str): The code to slice.
+        start_label (str): The start label.
+        end_labels (list[str]): The end labels.
+
+    `Returns`:
+        str: The sliced code.
+    '''
     q = r'["\']{3}'
     ws = r'[ \t]*'
     nl = r'(?:\r?\n|$)'
@@ -283,6 +294,8 @@ def _slice_section(code: str, start_label: str, end_labels: list[str]) -> str:
         em = er.search(code, s)
         if em:
             e = min(e, em.start())
+    
+    # Slice
     return code[s:e]
 
 
@@ -387,6 +400,7 @@ def update_docstrings(state: InputSchema) -> InputSchema:
     remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     return {'messages': remove_messages, 'step_changes': None}
 
+
 ''' Schema Nodes '''
 # Proposes schemas
 def propose_schemas(state: InputSchema) -> InputSchema:
@@ -458,6 +472,7 @@ def update_schemas(state: InputSchema) -> InputSchema:
     remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     return {'messages': remove_messages, 'step_changes': None}
 
+
 ''' Helpful Functions Nodes '''
 # The node that reads the annotated code, and adds definitions and instructions for helpful functions
 def propose_helpful_functions(state: InputSchema) -> InputSchema:
@@ -523,6 +538,7 @@ def update_helpful_functions(state: InputSchema) -> InputSchema:
     remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     return {'messages': remove_messages, 'step_changes': None}
 
+
 ''' Tool Functions Nodes '''
 # The node that reads the annotated code, and adds definitions and instructions for tool functions
 def propose_tool_functions(state: InputSchema) -> InputSchema:
@@ -587,6 +603,7 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     # Remove all messages and step changes
     remove_messages = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     return {'messages': remove_messages, 'step_changes': None}
+
 
 ''' bind_tools or with_structured_output Functions '''
 # The node that reads the annotated code, and uses the necessary bind_tools or with_structured_output methods

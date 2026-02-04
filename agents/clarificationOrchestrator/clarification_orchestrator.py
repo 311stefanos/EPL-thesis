@@ -136,7 +136,11 @@ def answer_question(state: InputSchema) -> InputSchema:
         prompt = prompts.ANSWER_QUESTION_PROMPT.format(memory= memory)
 
         # call the LLM
-        response: CoordinatorSchema = safe_invoke(coordinator, messages= [SystemMessage(content= prompt), HumanMessage(content= state['question'])], raise_pydantic= True)
+        response: CoordinatorSchema = safe_invoke(
+            coordinator, 
+            messages= [SystemMessage(content= prompt), HumanMessage(content= state['question'])], 
+            raise_pydantic= True
+        )
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None
 
         # If the score is low, ask the user for input
@@ -207,15 +211,3 @@ clarification_orchestrator_graph.add_edge('answer_question', 'return_answer')
 clarification_orchestrator_graph.add_edge('return_answer', END)
 
 clarification_orchestrator_app = clarification_orchestrator_graph.compile(checkpointer= MemorySaver())
-
-
-
-# from IPython.display import Image as GraphImage
-
-# # Visualize the graph
-# GraphImage(clarification_orchestrator_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
-# parent_dir = Path(__file__).resolve().parent
-# if not os.path.exists(parent_dir / 'graphs'):
-#     os.makedirs(parent_dir / 'graphs')
-# with open(parent_dir / 'graphs/clarification_orchestrator_app.png', 'wb') as f:
-#     f.write(clarification_orchestrator_app.get_graph().draw_mermaid_png())
