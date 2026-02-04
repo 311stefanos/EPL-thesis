@@ -650,7 +650,7 @@ def after_response_review(state: InputSchema) -> Literal['generate_prompt', 'nex
     return 'next_prompt'
 
 ''' Graph '''
-prompt_engineer_graph = StateGraph(InputSchema) # TODO: change
+prompt_engineer_graph = StateGraph(InputSchema)
 
 prompt_engineer_graph.add_node('extract_prompts', extract_prompts)
 prompt_engineer_graph.add_node('generate_prompt', generate_prompt)
@@ -715,7 +715,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
-        'recursion_limit': 100, # TODO: change
+        'recursion_limit': 100,
         'configurable': {
             'user_id': 'promptEngineer',
             'run_name': 'promptEngineer',

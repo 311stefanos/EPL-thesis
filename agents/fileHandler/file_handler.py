@@ -539,7 +539,7 @@ if __name__ == '__main__':
     client = Client()
 
     config = {
-        'recursion_limit': 100, # TODO: change
+        'recursion_limit': 100,
         'configurable': {
             'user_id': 'fileHandler',
             'run_name': 'fileHandler',

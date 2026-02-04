@@ -1,7 +1,7 @@
 from typing import Callable
 import os
 
-CODE = """''' Imports '''
+_CODE = """''' Imports '''
 # Langchain imports
 from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
 from langchain_core.tools import tool
@@ -130,7 +130,7 @@ if __name__ == '__main__':
 """
 
 # A function that builds the workflow using langgraph
-def build_workflow(bundle) -> str:
+def _build_workflow(bundle) -> str:
     '''
     `build_workflow` is a function that builds the workflow using langgraph
 
@@ -319,7 +319,7 @@ def build_workflow(bundle) -> str:
             'edges': built['edges']
         }
 
-        code[graph['name']] = CODE.format(
+        code[graph['name']] = _CODE.format(
             root= bundle['root']['name'],
             directory_name= graph['name'], # To camelCase from snake_case
             agent_name= graph['name'],
@@ -333,6 +333,46 @@ def build_workflow(bundle) -> str:
 
     return code
 
+
+
+
+def _stringify_text_values(d):
+        result = {}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                # recursively convert nested dicts to stringified text
+                result[k] = _stringify_text_values(v)
+            elif isinstance(v, list):
+                # concatenate all list items (flatten into readable text)
+                combined = ""
+                for item in v:
+                    if isinstance(item, dict):
+                        combined += _stringify_text_values(item)
+                    else:
+                        combined += str(item).rstrip() + "\n"
+                result[k] = combined.strip() + "\n"
+            else:
+                result[k] = str(v).rstrip() + "\n"
+        return result
+
+def create_file(workflow_dict: dict) -> None:
+    '''
+    `create_file` is a function that creates the file
+
+    `Args:`
+        workflow_dict (dict): The workflow dictionary
+    '''
+    parsed = _build_workflow(workflow_dict)
+
+    code = _stringify_text_values(parsed)
+    parent_dir = dict_to_test['root']['name'].replace(' ', '_').lower()
+    if not os.path.exists(f'../creations/{parent_dir}'):
+        os.makedirs(f'../creations/{parent_dir}')
+    for k, v in code.items():
+        with open(f'../creations/{parent_dir}/{k}.py', 'w') as f:
+            f.write(v)
+        with open(f'../creations/{parent_dir}/{k}_prompts.py', 'w') as f:
+            f.write('')
 
 
 if __name__ == '__main__':
@@ -387,40 +427,9 @@ if __name__ == '__main__':
         "subgraphs": {}
     }
 
-    parsed = build_workflow(dict_to_test)
+    parsed = _build_workflow(dict_to_test)
 
-    def print_text_values(d, indent= 0):
-        for k, v in d.items():
-            if isinstance(v, dict):
-                print("  " * indent + f"{k}:")
-                print_text_values(v, indent + 1)
-            else:
-                print("  " * indent + f"{k}:")
-                print(v)
-                print()
-
-    def stringify_text_values(d):
-        result = {}
-        for k, v in d.items():
-            if isinstance(v, dict):
-                # recursively convert nested dicts to stringified text
-                result[k] = stringify_text_values(v)
-            elif isinstance(v, list):
-                # concatenate all list items (flatten into readable text)
-                combined = ""
-                for item in v:
-                    if isinstance(item, dict):
-                        combined += stringify_text_values(item)
-                    else:
-                        combined += str(item).rstrip() + "\n"
-                result[k] = combined.strip() + "\n"
-            else:
-                result[k] = str(v).rstrip() + "\n"
-        return result
-
-
-    # print_text_values(parsed)
-    code = stringify_text_values(parsed)
+    code = _stringify_text_values(parsed)
     parent_dir = dict_to_test['root']['name'].replace(' ', '_').lower()
     if not os.path.exists(f'../creations/{parent_dir}'):
         os.makedirs(f'../creations/{parent_dir}')
