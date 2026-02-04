@@ -1,24 +1,25 @@
 """
 - `author:` Stefanos Panteli
 - `date:` 2026-01-17
-- `description:` # TODO: add
+- `description:` This agent is called to create all necessary files so the created agent can run successfully.
 
 ## How to use
 1. Import the app. (`from agents.fileHandler.file_handler import file_handler_app`)
 2. Input a dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path to the file.
 3. Invoke the app.
 4. Get the output dict with the following keys:
-    - # TODO: add
+    - `file_path: str`: The path to the file.
+The output of this agent does not matter, its purpose is to create files.
 
 ## Usage
 ```python
 from agents.fileHandler.file_handler import file_handler_app
-graph_input = { # TODO: add }
+graph_input = { 'file_path': path/to/file.py" }
 
 response = file_handler_app.invoke(graph_input)
 
-# response = { # TODO: add }
+# response = { 'file_path': path/to/file.py" }
 ```
 """
 
@@ -26,29 +27,25 @@ response = file_handler_app.invoke(graph_input)
 
 ''' Imports '''
 # Langchain imports
-from langchain_core.messages import SystemMessage, AIMessage, BaseMessage, ToolMessage, HumanMessage
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
 
 # Langgraph imports
 from langgraph.graph import StateGraph, MessagesState
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import END, START
 from langgraph.prebuilt import ToolNode
 
 # Schema imports
-from typing import Tuple, TypedDict, Literal, List, Optional, Annotated
-from pydantic import BaseModel, Field
-from operator import add
+from typing import Tuple, Literal, List, Optional
 
 # General imports
 from dotenv import load_dotenv
 from pathlib import Path
-from time import sleep
 import traceback
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS, read_state_file, clean_llm_output
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, read_state_file
 from agents.fileHandler import prompts
 
 
@@ -81,6 +78,7 @@ class InputSchema(MessagesState):
 ''' Global Variables '''
 # The project directory. Only under this directory can files be changed.
 project_dir: Path = None
+# Files that existed before the agent was invoked. It should not change these files.
 immutable_files: List[str] = []
 
 
@@ -102,8 +100,10 @@ def create_directory(directory_path: str) -> str:
 
     try:
         global project_dir
+        # Resolve the given path under the project directory.
         target, after_creations = resolve_under_project(directory_path)
 
+        # If the path is not under the project directory, return an error message.
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The directory {directory_path} must be under {project_dir}.') if DEBUG else None
             return f'[ERROR] The directory {directory_path} must be a child of {project_dir}.'
@@ -111,10 +111,12 @@ def create_directory(directory_path: str) -> str:
         # Ensure parent directory exists
         target.parent.mkdir(parents= True, exist_ok= True)
 
+        # If the directory already exists, return an error message
         if target.exists():
             print(f'{RED}[TOOL] [ERR]{RESET} The directory {after_creations} already exists.') if DEBUG else None
             return f'[ERROR] The directory {after_creations} already exists.'
 
+        # Otherwise create the directory
         target.mkdir()
 
         print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Created the directory {after_creations} successfully.') if DEBUG else None
@@ -141,8 +143,10 @@ def create_file(file_path: str, contents: str) -> str:
     print_function_name(colour= MAGENTA) if DEBUG else None
     try:
         global project_dir
+        # Resolve the given path under the project directory.
         target, after_creations = resolve_under_project(file_path)
 
+        # If the path is not under the project directory, return an error message.
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
             return f'[ERROR] The file {file_path} must be a child of {project_dir}.'
@@ -150,10 +154,12 @@ def create_file(file_path: str, contents: str) -> str:
         # Ensure parent directory exists
         target.parent.mkdir(parents= True, exist_ok= True)
 
+        # If the file already exists, return an error message
         if target.exists():
             print(f'{RED}[TOOL] [ERR]{RESET} The file {after_creations} already exists.') if DEBUG else None
             return f'[ERROR] The file {after_creations} already exists.'
 
+        # Otherwise create the file
         with open(target, 'w', encoding='utf-8') as f:
             f.write(contents)
 
@@ -182,20 +188,24 @@ def modify_file(file_path: str, file_changes: List[Tuple[str, str]]) -> str:
 
     try:
         global project_dir, immutable_files
-
+        # Resolve the given path under the project directory.
         target, after_creations = resolve_under_project(file_path)
         
+        # If the path is not under the project directory, return an error message.
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
             return f'[ERROR] The file {file_path} must be a child of {project_dir}.'
         
+        # If the file is immutable, return an error message
         if target.name in immutable_files:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {after_creations} is immutable.') if DEBUG else None
             return f'[ERROR] The file {after_creations} is immutable.'
         
+        # Read the contents of the file
         with open(target, 'r', encoding='utf-8') as f:
             contents = f.read()
 
+        # Replace the old lines with the new lines
         for (old_lines, new_lines) in file_changes:
             if old_lines not in contents:
                 print(f'{RED}[TOOL] [ERR]{RESET} The old lines ```\n{old_lines}\n``` does not exist in the file {file_path}.') if DEBUG else None
@@ -203,6 +213,7 @@ def modify_file(file_path: str, file_changes: List[Tuple[str, str]]) -> str:
             
             contents = contents.replace(old_lines, new_lines)
 
+        # Write the modified contents to the file
         with open(target, 'w', encoding='utf-8') as f:
             f.write(contents)
 
@@ -229,13 +240,15 @@ def read_file(file_path: str) -> str:
 
     try:
         global project_dir
-
+        # Resolve the given path under the project directory.
         target, after_creations = resolve_under_project(file_path)
         
+        # If the path is not under the project directory, return an error message.
         if target is None:
             print(f'{RED}[TOOL] [ERR]{RESET} The file {file_path} must be under {project_dir}.') if DEBUG else None
             return f'[ERROR] The file {file_path} must be a child of {project_dir}.'
         
+        # Read the contents of the file and just return it
         with open(target, 'r', encoding='utf-8') as f:
             contents = f.read()
 
@@ -247,12 +260,8 @@ def read_file(file_path: str) -> str:
         traceback.print_exc()
         return f'[ERROR] {e}'
 
-tools = [
-    create_directory,
-    create_file,
-    modify_file,
-    read_file
-]
+# The tool list
+tools = [create_directory, create_file, modify_file, read_file]
 
 
 
@@ -264,6 +273,7 @@ file_handler = myChatOpenAI(
 
 
 ''' Helpful Functions '''
+# Resolve the path to be under the project directory
 def resolve_under_project(path: str) -> Tuple[Optional[Path], Optional[Path]]:
     '''
     `resolve_under_project` resolves the path to be under the project directory.
@@ -281,12 +291,14 @@ def resolve_under_project(path: str) -> Tuple[Optional[Path], Optional[Path]]:
     # if path is an absolute path, check if it is under the project directory
     if path.is_absolute():
         abs_path = path.resolve()
-
+        # If the path is under the project directory, return it
         if abs_path.is_relative_to(project):
             return abs_path, abs_path.parts[abs_path.parts.index('creations') + 1:]  
-
+        # If the path is not under the project directory, return None, in order to raise an error
         return None, None
     
+    # If the path is not an absolute path, resolve it under the project directory
+    # Get the parts of the path
     parts = path.parts
 
     # Strip any leading overlap with the tail of project_dir
@@ -295,12 +307,15 @@ def resolve_under_project(path: str) -> Tuple[Optional[Path], Optional[Path]]:
             parts = parts[k:]
             break
     
+    # Resolve the new path under the project directory
     target = (project / Path(*parts)).resolve()
     if target.is_relative_to(project):
         return target, target.parts[target.parts.index('creations') + 1:]
     
+    # If the path is not relative to the project directory, return None
     return None, None
 
+# Format the contents of the file, just for printing
 def format_contents(file_path: str, contents: Optional[str]= None) -> str:
     '''
     `format_contents` formats the contents of the file at the given path and returns them as a string.
@@ -312,12 +327,14 @@ def format_contents(file_path: str, contents: Optional[str]= None) -> str:
     `Returns:`
         (str) The formatted contents of the file
     '''
+    # If the contents are not given, read the file
     if not contents:
         with open(file_path, 'r', encoding='utf-8') as f:
             contents = f.read()
-
+    # Parse the contents into a string
     return f'File {file_path}:\n{contents}\n\n'
 
+# Read the sibling files of the file at the given path. Return it in a nicely formatted string
 def read_sibling_files(file_path: str) -> str:
     '''
     `read_sibling_files` reads the sibling files of the file at the given path.
@@ -330,40 +347,56 @@ def read_sibling_files(file_path: str) -> str:
     '''
     def children_of(path: Path) -> list[Path]:
         try:
-            kids = list(path.iterdir())
+            # Get all child files of the directory
+            children = list(path.iterdir())
             # Sort directories first, then files.
             # Sorted alphabetically
-            kids.sort(key= lambda x: (not x.is_dir(), x.name.lower()))
-            return kids
+            children.sort(key= lambda x: (not x.is_dir(), x.name.lower()))
+            return children
         
         except (PermissionError, FileNotFoundError, NotADirectoryError):
             return []
     
+    # Get the directory of the file
     p = Path(file_path)
     root = p.parent.resolve()
     lines: list[str] = [f'{root.name}/']
 
     def walk(dirpath: Path, prefix: str) -> None:
-        kids = children_of(dirpath)
-        for i, child in enumerate(kids):
-            last = (i == len(kids) - 1)
+        # Get the children of the directory
+        children = children_of(dirpath)
+        # For each child
+        for i, child in enumerate(children):
+            # Check if its the last child
+            last = (i == len(children) - 1)
+            # Get the formating (If its the last child end the sequence)
             branch = '└── ' if last else '├── '
+            # Get the name, if its a dir mark it with a /
             name = f'{child.name}/' if child.is_dir() else child.name
+            # Append the line
             lines.append(prefix + branch + name)
-
+            # If its a directory, recursively format
             if child.is_dir():
+                # If its not the last child, add a vertical line to indicate the continuation of the parent directory
                 ext_prefix = '    ' if last else '│   '
                 walk(child, prefix + ext_prefix)
-            
+    
+    # Start from the root
     walk(root, '')
+    # Join the lines
     return '\n'.join(lines)
 
 
 
 ''' Nodes '''
+# Get the project directory
 def get_project_dir(state: InputSchema) -> InputSchema:
+    '''
+    This node is used to get the project directory in order to update the global variable `project_dir`.
+    '''
     print_function_name() if DEBUG else None
 
+    # Get the project directory and store it in the global variable
     global project_dir
     project_dir = Path(state['file_path']).parent.resolve()
 
@@ -371,11 +404,17 @@ def get_project_dir(state: InputSchema) -> InputSchema:
 
     return state
 
+# Get the immutable files
 def get_immutable_files(state: InputSchema) -> InputSchema:
+    '''
+    This node is used to get the immutable files in order to update the global variable `immutable_files`.
+    '''
     global project_dir, immutable_files
     def collect_files(dir: Path) -> None:
         try:
+            # Get all files in the directory
             for child in dir.iterdir():
+                # If its a file
                 if child.is_file():
                     # store paths relative to project_dir for uniqueness and clarity
                     try:
@@ -383,19 +422,25 @@ def get_immutable_files(state: InputSchema) -> InputSchema:
                     except Exception:
                         rel = child.name
                     immutable_files.append(str(rel))
+                # If its a directory recursively get all file names
                 elif child.is_dir():
                     collect_files(child)
         except (PermissionError, FileNotFoundError, NotADirectoryError):
             return
 
     print_function_name() if DEBUG else None
+    # Get the immutable files and store them in the global variable
     collect_files(project_dir)
     i_f: str = '\n'.join(immutable_files)
     print(f'{BLUE}[NODE] [INFO] [IMMUTABLE_FILES]{RESET} {i_f}') if DEBUG else None
 
     return state
 
+# The main node
 def file_handler_node(state: InputSchema) -> InputSchema:
+    '''
+    This node is used to invoke the file handler LLM.
+    '''
     print_function_name() if DEBUG else None
 
     try:
@@ -428,7 +473,11 @@ def file_handler_node(state: InputSchema) -> InputSchema:
 
 
 ''' Conditional Functions '''
+# After the file handler node, checks if the agent is done
 def should_end(state: InputSchema) -> Literal['file_handler_node', 'tools', 'error_call', '__end__']:
+    '''
+    This function is used to check if the agent is done.
+    '''
     print_function_name() if DEBUG else None
 
     # Tool call
@@ -503,7 +552,3 @@ if __name__ == '__main__':
     }
     response = file_handler_app.invoke(user, config= config)
 
-    # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    # if DEBUG:
-    #     for key, value in response.items():
-    #         print(f'    {key}: {value}')
