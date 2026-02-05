@@ -258,7 +258,14 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
                 cause = '(Rate limit per minute exceeded)'
                 # UFor a minute
                 sleep_for = 60
-            # TODO: for the day
+
+            # Or because of free-models-per-day (daily quota)
+            elif 'Rate limit exceeded:' in error.get('message', '') and ('free-models-per-day' in error.get('message', '') or 'per day' in error.get('message', '')):
+                cause = '(Rate limit per day exceeded)'
+                # For daily limits we do not want to sleep here — re-raise so the caller can handle long waits
+                print(f'RateLimitError {cause}, raising to caller') if DEBUG else None
+                raise e
+            
             # Or fallback
             else: 
                 cause = ''
