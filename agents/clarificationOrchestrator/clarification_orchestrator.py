@@ -89,7 +89,7 @@ class QnA(BaseModel):
     justification: str = Field(description= 'The reasoning behind the answer you provided.')
 
     def __str__(self):
-        return f'- Question:\n{self.question}\n\n- Answer:\n{self.answer}'
+        return f'- Question:\n{self.question}\n- Answer:\n{self.answer}'
 
 class CoordinatorSchema(BaseModel):
     # The confidence score
@@ -99,12 +99,17 @@ class CoordinatorSchema(BaseModel):
     # Possible unanswered questions
     unanswered_questions: Optional[List[str]]
 
+    def __str__(self):
+        answered_questions = (f'\nAnswered questions:\n' + '\n\n'.join([str(qna) + '\nJustification:\n' + qna.justification + '\n' for qna in self.qna])) if self.qna else ''
+        unanswered_questions = (f'\nUnanswered questions:\n' + '\n'.join([str(question) for question in self.unanswered_questions])) if self.unanswered_questions else ''
+        return f'Score: {self.score}\n{answered_questions}\n{unanswered_questions}'
+
 ''' Input Schema '''
-class InputSchema(TypedDict):
+class InputSchema(BaseModel):
     # The question
     question: str
     # The questions and answers up to now (memory)
-    questions_answers: Annotated[List[QnA], add]
+    questions_answers: Annotated[List[QnA], add] = Field(default_factory= list)
 
 ''' Output Schema '''
 class OutputSchema(TypedDict):
@@ -130,15 +135,18 @@ def answer_question(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
-        memory = ''
-        for i, qna in enumerate(state.get('questions_answers', [])):
-            memory += f'### QnA {i}\n\n{qna}\n\n---\n\n'
-        prompt = prompts.ANSWER_QUESTION_PROMPT.format(memory= memory)
+        prompt = prompts.ANSWER_QUESTION_PROMPT.format(question= state.question)
+
+        # memory as messages
+        memory: List[AIMessage, HumanMessage] = []
+        for qna in state.questions_answers:
+            memory.append(AIMessage(content= f'<QUESTION> Cannot be used to answer the question\n{qna.question}\n</QUESTION>'))
+            memory.append(HumanMessage(content= f'<ANSWER> Only these messages can be used for your answers\n{qna.answer}</ANSWER>'))
 
         # call the LLM
         response: CoordinatorSchema = safe_invoke(
             coordinator, 
-            messages= [SystemMessage(content= prompt), HumanMessage(content= state['question'])], 
+            messages= [SystemMessage(content= prompt), *memory, SystemMessage(content= prompts.BEFORE_QUESTION_PROMPT), AIMessage(content= state.question)], 
             raise_pydantic= True
         )
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None
@@ -147,8 +155,8 @@ def answer_question(state: InputSchema) -> InputSchema:
         if response.score <= 0.8:
             print(f'{RED}[NODE] [INFO]{RESET} Low Score') if DEBUG else None
             print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
-            user_answer = input(state['question'] + '\n\n > ')
-            question = state['question']
+            user_answer = input(state.question + '\n\n > ')
+            question = state.question
             answer =  user_answer
 
         # If the score is high, use the answer
@@ -167,10 +175,8 @@ def answer_question(state: InputSchema) -> InputSchema:
                 question += '\n' + q
                 answer += '\n' + user_answer
         
-        if not state.get('questions_answers'):
-            state['questions_answers'] = []
         # Append the question and answer to state
-        return {'question_answers': [QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.')]}
+        return {'questions_answers': [QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.')]}
     
     # If the LLM could not follow the Pydantic Schema, ask the user
     except PydanticValidationError as e:
@@ -178,14 +184,9 @@ def answer_question(state: InputSchema) -> InputSchema:
         print(f'{RED}[NODE] [INFO]{RESET} Pydantic Validation Error') if DEBUG else None
         print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
         # Ask the user
-        user_answer = input(state['question'] + '\n\n > ')
-        answer = QnA(question= state['question'], answer= user_answer, justification= 'User provided the answer.')
-        
-        if not state.get('questions_answers'):
-            state['questions_answers'] = []
+        user_answer = input(state.question + '\n\n > ')
         # Append the question and answer to state
-        state['questions_answers'].append(QnA(question= state['question'], answer= answer))
-        return state
+        return {'questions_answers': [QnA(question= state.question, answer= user_answer, justification= 'User provided the answer.')]}
 
     except Exception as e:
         print(f"{RED}[NODE] [ERR]{RESET}", e) if DEBUG else None
@@ -197,7 +198,7 @@ def return_answer(state: InputSchema) -> OutputSchema:
     '''
     This node returns the last question and answer.
     '''
-    return OutputSchema(qna= state['questions_answers'][-1])
+    return OutputSchema(qna= state.questions_answers[-1])
 
 
 ''' Graph '''

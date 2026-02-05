@@ -11,6 +11,14 @@ if len(sys.argv) != 2:
 
 agent_name = sys.argv[1]
 
+if (
+    '_' not in agent_name and
+    not agent_name.islower()
+):
+    print(f"Usage: python {sys.argv[0]} <agent_name>")
+    print('    <agent_name> must be in snake_case.')
+    sys.exit(1)
+
 parent_path = Path(__file__).resolve().parent
 
 # Convert agent_name to a suitable directory name

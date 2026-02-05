@@ -87,6 +87,7 @@ You may output the following:
 1. You may tool call with the appropriate parameters, depending on the need you deemed necessary. In the same message you should include your reasoning with natural language.
 2. Plain natural language in order to strategise in natural language.
 3. Nothing. Empty response without tool calls.
+    - This is the only way to finalize the workflow.
 
 # Messages
 You should take into consideration the messages following.

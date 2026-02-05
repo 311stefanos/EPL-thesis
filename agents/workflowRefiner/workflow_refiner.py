@@ -7,7 +7,6 @@
 1. Import the app. (`from agents.workflowRefiner.workflowRefiner import workflow_refiner_app`)
 2. Input a dict with the following keys:
     - `orchestrator: bool`: If it should call the orchestrator to get the inputs.
-    - `user_input: str`: The user input as is.
     - `clarified_user_input: str`: The user input refined to be studied and made into a workflow.
 3. Invoke the app.
 4. Get the output dict with the following keys:
@@ -31,7 +30,7 @@
 ## Usage
 ```python
 from agents.workflowRefiner.workflow_refiner import workflow_refiner_app
-graph_input = {'user_input': 'I want a personall fitness coach.', 'clarified_user_input': <Output of the input refiner>}
+graph_input = {'clarified_user_input': <Output of the input refiner>}
 
 response = workflow_refiner_app.invoke(graph_input)
 
@@ -134,7 +133,7 @@ class WorkflowNode(BaseModel):
 
     def __str__(self) -> str:
         subgraph = f'(subgraph: {self.subgraph_id})' if self.subgraph_id else ''
-        return f'• {self.name} {subgraph}\n│   ⤷ {self.description}'
+        return f'• {self.name} {subgraph}\n│   ⤷ {self.description}\n'
 
 class WorkflowEdge(BaseModel):
     source_name: str = Field(description= 'The name of the source node.')
@@ -143,7 +142,7 @@ class WorkflowEdge(BaseModel):
 
     def __str__(self) -> str:
         # return f'{self.source_name} -> {self.target_name}: {self.description}'
-        return f'• {self.source_name} ➜  {self.target_name}\n│   ⤷ {self.description}'
+        return f'• {self.source_name} ➜  {self.target_name}\n│   ⤷ {self.description}\n'
 
 class WorkflowGraph(BaseModel):
     type: Literal['reactive_conversational', 'linear_pipeline', 'planner_executor', 'hybrid'] = Field(
@@ -186,7 +185,6 @@ class WorkflowBundle(BaseModel):
 ''' Input Schema '''
 class InputSchema(MessagesState):
     orchestrator: bool # If it should call the orchestrator to get the inputs.
-    user_input: str # The user input to be studied and made into a workflow.
     clarified_user_input: Optional[str] # The user input refined to be studied and made into a workflow.
 
 ''' Output Schema '''
@@ -232,7 +230,6 @@ def clarify(state: InputSchema) -> InputSchema:
     try:
         # prompt
         prompt = prompts.CLARIFICATION_PROMPT.format(
-            # user_input= state['user_input'], # Not used
             clarified_user_input= state.get('clarified_user_input') or '',
             clarifications= '\n\n---\n'.join([mess.content for mess in state['messages']])
         )
@@ -430,7 +427,6 @@ if __name__ == '__main__':
 
     user = InputSchema(
         orchestrator= False,
-        user_input= 'i want an agent that will store my preferences on food and drink, and then when i sent a photo/link of a menu, it can give me suggestions. after i can comment on the food i ate, and it should update its memory-db.', 
         clarified_user_input= '''The agent will store and manage user-specific food and drink preferences, including dietary restrictions and allergies, in a structured JSON file. Upon receiving a menu (via photo, link, or text), it will parse the content in a single step and generate a ranked list of recommendations with clear explanations for each suggestion. The agent will support multiple user profiles, adapt over time based on feedback, and operate exclusively within the scope of menu items. It will engage users conversationally with a friendly tone in English, functioning as a WhatsApp chatbot without relying on external tools.
 
 **Agent-Creation Essentials:**

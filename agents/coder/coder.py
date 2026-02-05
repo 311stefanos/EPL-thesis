@@ -153,7 +153,7 @@ class OutputSchema(BaseModel):
         if value:
             for import_line in value:
                 if not 'import' in import_line:
-                    raise ValidationError("imports should contain the `import` keyword")
+                    raise ValueError("imports should contain the `import` keyword")
                 
         return value
 

@@ -1,5 +1,7 @@
-from typing import Callable
+from typing import Callable, List
+from pydantic import BaseModel
 import os
+
 
 _CODE = """''' Imports '''
 # Langchain imports
@@ -216,8 +218,11 @@ def _build_workflow(bundle) -> str:
         `Returns:`
             (str) The edge
         '''
-        upper_end: Callable[[str],str] = lambda s: s.upper() if s == 'end' else s
-        to_nodes = [upper_end(to_node) for to_node in to_nodes]
+        # Functions to parse the start and end node so they can be used in the conditional functions with the right names
+        to_end: Callable[[str],str] = lambda s: '__end__' if s == 'end' else s
+        from_start: Callable[[str], str] = lambda s: '__start__' if s == 'start' else s
+
+        to_nodes = [to_end(to_node) for to_node in to_nodes]
 
         # Conditional function
         literals = ', '.join([f'"{to_node}"' for to_node in to_nodes])
@@ -233,7 +238,7 @@ def _build_workflow(bundle) -> str:
         edge_map = '\n'.join([f'        "{to_node}": "{to_node}",' for to_node in to_nodes])
         edge_function = '\n'.join([
             f'{graph_name}_graph.add_conditional_edges(',
-            f'    "{from_node}",' ,
+            f'    "{from_start(from_node)}",' ,
             f'    from_{from_node}_to,',
              '    {   # Not needed just for clarity',
             f'{edge_map}',
@@ -355,24 +360,42 @@ def _stringify_text_values(d):
                 result[k] = str(v).rstrip() + "\n"
         return result
 
-def create_file(workflow_dict: dict) -> None:
+def create_file(workflow_dict: dict) -> List[str]:
     '''
     `create_file` is a function that creates the file
 
     `Args:`
         workflow_dict (dict): The workflow dictionary
+
+    `Returns:`
+        (List[str]) The names of the created files (non prompt files)
     '''
+    if 'workflow' in workflow_dict:
+        workflow_dict: dict = workflow_dict['workflow']
+
+    if isinstance(workflow_dict, BaseModel):
+        workflow_dict: dict = workflow_dict.model_dump()
+        
+
     parsed = _build_workflow(workflow_dict)
 
     code = _stringify_text_values(parsed)
-    parent_dir = dict_to_test['root']['name'].replace(' ', '_').lower()
+    parent_dir = workflow_dict['root']['name'].replace(' ', '_').lower()
+
     if not os.path.exists(f'../creations/{parent_dir}'):
         os.makedirs(f'../creations/{parent_dir}')
+
+    created_agents: List[str] = []
     for k, v in code.items():
         with open(f'../creations/{parent_dir}/{k}.py', 'w') as f:
             f.write(v)
+            created_agents.append(f'../creations/{parent_dir}/{k}.py')
+
         with open(f'../creations/{parent_dir}/{k}_prompts.py', 'w') as f:
             f.write('')
+
+    return created_agents
+
 
 
 if __name__ == '__main__':

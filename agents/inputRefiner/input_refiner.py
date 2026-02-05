@@ -6,6 +6,7 @@
 ## How to use
 1. Import the app. (`from agents.inputRefiner.input_refiner import input_refiner_app`)
 2. Input a dict with the following keys:
+    - `orchestrator: bool`: If it should call the orchestrator to get the inputs.
     - `user_input: str`: The user input to be refined.
 3. Invoke the app.
 4. Get the output dict with the following keys:
@@ -194,7 +195,11 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         user_input = state['user_input']
         prompt = prompts.CORRECTION_PROMPT.format(user_input= user_input)
         # call the LLM
-        corrected = correcter.invoke(prompt).content
+        corrected = correcter.invoke(prompt).content.strip()
+        while corrected[0] in '`\'"':
+            corrected = corrected[1:]
+        while corrected[-1] in '`\'"':
+            corrected = corrected[:-1]
 
         print(f'{BLUE}[NODE] [INFO] [CORRECTION]{RESET} {corrected}') if DEBUG else None
 

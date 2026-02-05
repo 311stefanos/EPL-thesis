@@ -107,7 +107,7 @@ class Function(BaseModel):
         return f'def {self.function_name}({arguments}) -> {self.output}:\n\t"""\n\t{docstring}\n\t"""\n\t...'
     
     def to_method(self):
-        docstring = self.docstring.replace('\n', '\n\t')
+        docstring = self.docstring.replace('\n', '\n\t\t')
         # Add the self argument if not present
         args = list(self.arguments)
         if not any(arg.name == 'self' for arg in args):
@@ -125,10 +125,11 @@ class Docstring(BaseModel):
         return f'Function: {self.function}\nDocstring: {self.docstring}'
 
 class Docstrings(BaseModel): # Used by the docstring_generator
+    thinking_process: str = Field(description= 'The thinking process, TODO list, explanations, and more.')
     docstrings: List[Docstring] = Field(description= 'The docstrings as given from the user.')
 
     def __str__(self):
-        return '\n'.join([f'\n{i}) {docstring}' for i, docstring in enumerate(self.docstrings, start= 1)])
+        return f'Thinking Process: {self.thinking_process}\n\n''\n'.join([f'\n{i}) {docstring}' for i, docstring in enumerate(self.docstrings, start= 1)])
 
 # Schema agent
 class SchemaArgument(Argument):
@@ -148,27 +149,30 @@ class Schema(BaseModel):
         arguments = '\n\t'.join([str(arg) for arg in self.arguments])
         docstring = self.docstring.replace('\n', '\n\t')
         methods = '\n\n'.join([method.to_method() for method in self.proposed_methods])
-        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}{methods}\n\n'
+        return f'class {self.schema_name}({self.base_class}):\n\t"""\n\t{docstring}\n\t"""\n\t{arguments}\n\n{methods}\n\n'
 
 class Schemas(BaseModel): # Used by the schema_generator
+    thinking_process: str = Field(description= 'The thinking process, TODO list, explanations, and more.')
     schemas: List[Schema] = Field(description= 'The schemas.')
 
     def __str__(self):
-        return '\n\n'.join([f'\n{i}) {schema}' for i, schema in enumerate(self.schemas, start= 1)])
+        return f'Thinking Process: {self.thinking_process}\n\n' + '\n\n'.join([f'\n{i}) {schema}' for i, schema in enumerate(self.schemas, start= 1)])
     
 # Helpful functions agent
 class HelpfulFunctions(BaseModel): # Used by the helpful_function_generator
+    thinking_process: str = Field(description= 'The thinking process, TODO list, explanations, and more.')
     helpful_functions: List[Function] = Field(description= 'The helpful functions.')
 
     def __str__(self):
-        return '\n'.join([f'\n{i}) {function.justification}\n{function}' for i, function in enumerate(self.helpful_functions, start= 1)])
+        return f'Thinking Process: {self.thinking_process}\n\n' + '\n'.join([f'\n{i}) {function.justification}\n{function}' for i, function in enumerate(self.helpful_functions, start= 1)])
     
 # Tool functions agent
 class ToolFunctions(BaseModel): # Used by the tool_function_generator
+    thinking_process: str = Field(description= 'The thinking process, TODO list, explanations, and more.')
     tool_functions: List[Function] = Field(description= 'The tool functions.')
 
     def __str__(self):
-        return '\n'.join([f'\n{i}) {function.justification}\n@tool\n{function}' for i, function in enumerate(self.tool_functions, start= 1)])
+        return f'Thinking Process: {self.thinking_process}\n\n' + '\n'.join([f'\n{i}) {function.justification}\n@tool\n{function}' for i, function in enumerate(self.tool_functions, start= 1)])
 
 # For the LLM Modifier Engineer
 class LLMProposalsDict(BaseModel):
@@ -193,7 +197,7 @@ class LLMProposalsDict(BaseModel):
         return f'{self.llm_name} = myChatOpenAI(\n\ttemperature= {self.temp}\n){modifier}\n'
     
 class LLMProposalList(BaseModel): # Used by the tool_or_output_generator
-    comments: str = Field(description= 'The comments as given from the LLM.')
+    thinking_process: str = Field(description= 'The thinking process, TODO list, explanations, and more.')
     llm_proposals: List[LLMProposalsDict] = Field(description= 'The LLM proposals as given from the LLM.')
 
     def get_all_llm_names(self):
@@ -213,7 +217,7 @@ class LLMProposalList(BaseModel): # Used by the tool_or_output_generator
         return [llm_proposal.with_structured_output for llm_proposal in self.llm_proposals if llm_proposal.with_structured_output]
 
     def to_string(self):
-        return f'Comments: {self.comments}\n\n' + '\n'.join([f'{llm_proposal.to_string()}' for llm_proposal in self.llm_proposals])
+        return f'Comments: {self.thinking_process}\n\n' + '\n'.join([f'{llm_proposal.to_string()}' for llm_proposal in self.llm_proposals])
     
     def to_code(self):
         return '\n'.join([f'{llm_proposal.to_string()}' for llm_proposal in self.llm_proposals]) + '\n\n\n\n'

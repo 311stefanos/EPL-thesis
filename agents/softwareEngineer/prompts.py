@@ -329,7 +329,7 @@ Do not call multiple tools at the same time.
         - approved_function_proposals: the exact proposals you want to accept.
         - file_path: must match {file_path}.
 
-6. def add_imports(imports: List[str], file_path: str) -> str:
+6. def add_imports(new_imports: List[str], file_path: str) -> str:
     `add_imports` adds new imports to the file.
 
     Use it when:
@@ -337,7 +337,7 @@ Do not call multiple tools at the same time.
     - You should not use this very often, hence you may wait until most of the functions are implemented in order to import all at once.
 
     Args:
-        - imports: the imports to add. Can be from the list above
+        - new_imports: the imports to add. Can be from the list above
         - file_path: must match {file_path}.
 
 7. submit_final_code(file_path: str) -> None
@@ -346,6 +346,7 @@ Do not call multiple tools at the same time.
     Use it only when:
     - You consider the file complete, consistent and correct.
     - All required functions are implemented and checked.
+    - If called it should be called independently from any other tool.
 
     Args:
         - file_path: must match {file_path}.

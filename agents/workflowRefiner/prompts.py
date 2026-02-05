@@ -85,7 +85,7 @@ When you create tools, follow these rules:
 ---
 
 ## Workflow Taxonomy (choose ONE core archetype)
-Choose one archetype and keep it consistent. Pick the simplest one that matches the user’s intent.
+Choose one archetype and keep it consistent. Pick the simplest one that matches the user's intent.
 
 You must also follow the structural rules per archetype below.
 
@@ -211,6 +211,9 @@ Assumptions: <bullet list of assumptions you applied; if none, write "None.">
 Evidence: <very brief notes about findings or context you used>
 Missing-but-Noncritical: <details that don't block building now; otherwise "None.">
 Topic Queue: <remaining workflow topics only, to resolve next; otherwise "None.">
+
+## Error Porssibility
+If you output only the `RESOLVED WORKFLOW` block, the workflow will continue. You must output `No clarification needed` if no clarifications are needed.
 
 ## Your goal
 Ensure the workflow is unambiguous and buildable now. If the user is unsure, guide them with simple choices and examples, make minimal safe assumptions, and move forward.
@@ -398,7 +401,7 @@ Where to use it:
 ## Output Format (STRICT)
 Return ONLY a JSON object that conforms to WorkflowBundle:
 
-- comments: string
+- comments: string # Use this as a TODO list, reasoning scratchpad, and explanations. 
 
 - root: WorkflowGraph
   - type: one of ["reactive_conversational","linear_pipeline","planner_executor","hybrid"]

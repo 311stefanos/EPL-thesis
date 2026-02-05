@@ -160,6 +160,7 @@ Always follow the user's feedback under the `Previous Conversation`. If there ar
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
+- thinking_process: str # The thinking process, TODO list, explanations, and more.
 - docstrings: List[Docstring]
     - function: str # You must not change the function name. keep it as is.
     - docstring: str
@@ -331,6 +332,7 @@ Always follow the user's feedback under the `Previous Conversation`. If there ar
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
+- thinking_process: str # The thinking process, TODO list, explanations, and more.
 - schemas: List[Schema]
     - schema_name: str
     - docstring: str
@@ -508,6 +510,7 @@ Always follow the user's feedback under the `Previous Conversation`. If there ar
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
+- thinking_process: str # The thinking process, TODO list, explanations, and more.
 - helpful_functions: List[Function]
     - function_name: str
     - arguments: List[Argument]
@@ -718,6 +721,7 @@ Always follow the user's feedback under the `Previous Conversation`. If there ar
 
 # Output
 Return a Python-dict-equivalent object with a single top-level key and value:
+- thinking_process: str # The thinking process, TODO list, explanations, and more.
 - tool_functions: List[Function]
     - function_name: str
     - arguments: List[Argument]
@@ -912,7 +916,7 @@ Always follow the user's feedback under the `Previous Conversation`. If there ar
 
 # Output Format
 Return a Python-dict-equivalent object with this exact structure:
-- **comments**: str — A human-readable explanation of your reasoning. Must address any user concerns from the section `Previous Conversation` above.
+- **thinking_process**: str # The thinking process, TODO list, explanations, and more.
 - **llm_proposals**: List[LLMProposalsDict]
   - **llm_name**: str  
     The name of the LLM variable in the code. Must match exactly one of `{llm_definitions}`.

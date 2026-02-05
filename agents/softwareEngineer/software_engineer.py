@@ -9,19 +9,21 @@
 1. Import the app. (`from agents.softwareEngineer.softwareEngineer import software_engineer_app`)
 2. Input a dict with the following keys:
     - `file_path: str`: The path of the file to implement. This file should be the outlined code structure.
+    - `times_reviewed: int`: The number of times the code has been reviewed.
 3. Invoke the app.
 4. Get the output dict with the following keys:
     - `file_path: str`: The path of the file that was implemented.
+    - `times_reviewed: int`: The number of times the code was reviewed.
 The output of this agent does not matter, its purpose is to implement the code.
 
 ## Usage
 ```python
 from agents.softwareEngineer.software_engineer import software_engineer_app
-graph_input = { 'file_path': path/to/file.py" }
+graph_input = { 'file_path': 'path/to/file.py', 'times_reviewed': 0 }
 
 response = software_engineer_app.invoke(graph_input)
 
-# response = { 'file_path': path/to/file.py" }
+# response = { 'file_path': 'path/to/file.py', 'times_reviewed': 2 }
 ```
 """
 
@@ -164,6 +166,10 @@ def replace_code(file_path: str, old_code: str, new_code: str) -> str:
         # Clean the code given
         old_code = clean_llm_output(old_code)
         new_code = clean_llm_output(new_code)
+
+        if not old_code:
+            print(f'{RED}[TOOL] [ERROR] [OVERWRITE]{RESET} The old code is empty.') if DEBUG else None
+            return f'[ERROR] The old code cannot be empty.'
 
         # Read the code from the file
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -419,37 +425,6 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
     `Returns:`
         (str) Either a success message or an error message
     '''
-    def _is_simple_from_import_line(s: str) -> bool:
-        s = s.strip()
-        if not (s.startswith('from ') and ' import ' in s):
-            return False
-        # avoid editing multiline/parenthesized styles
-        if '(' in s or ')' in s or '\\' in s:
-            return False
-        return True
-
-    def _parse_from_import_line(s: str) -> Tuple[str, List[str]]:
-        # assumes `from X import a, b`
-        s = s.strip()
-        before, after = s.split(' import ', 1)
-        module = before.replace('from', '', 1).strip()
-        names = [x.strip() for x in after.split(',') if x.strip()]
-        return module, names
-
-    def _is_simple_import_line(s: str) -> bool:
-        s = s.strip()
-        if not s.startswith('import '):
-            return False
-        if '(' in s or ')' in s or '\\' in s:
-            return False
-        return True
-
-    def _parse_import_line(s: str) -> List[str]:
-        # `import os, sys` or `import os as myos`
-        s = s.strip()[len('import ') :]
-        mods = [x.strip() for x in s.split(',') if x.strip()]
-        return mods
-    
     print_function_name(colour= MAGENTA) if DEBUG else None
 
     global imports
@@ -464,182 +439,62 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
         start_idx = code.find(start_marker)
         end_idx = code.find(end_marker)
 
-        if start_idx == -1:
-            return f'[ERROR] Cannot import.'
-        if end_idx == -1 or end_idx <= start_idx:
-            return f'[ERROR] Cannot import.'
+        if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
+            return f'[ERROR] Cannot import: import block markers not found.'
 
         import_block = code[start_idx:end_idx]
-        lines = import_block.splitlines()
+        # existing import lines (strip whitespace)
+        existing_lines = [ln.strip() for ln in import_block.splitlines() if ln.strip()]
+        existing_set = set(existing_lines)
 
-        from_line_idx: Dict[str, int] = {}
-        from_names: Dict[str, List[str]] = {}
-        from_name_set: Dict[str, Set[str]] = {}
-
-        import_line_idx: Dict[str, int] = {}
-        import_mods: Dict[str, List[str]] = {}
-        import_mod_set: Dict[str, Set[str]] = {}
-
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-
-            if _is_simple_from_import_line(stripped):
-                module, names = _parse_from_import_line(stripped)
-                # only track the first simple line per module to avoid messing with formatting choices
-                if module not in from_line_idx:
-                    from_line_idx[module] = i
-                    from_names[module] = names[:]  # keep order
-                    from_name_set[module] = set(names)
-
-            if _is_simple_import_line(stripped):
-                mods = _parse_import_line(stripped)
-                # track each module token in this import line
-                for m in mods:
-                    if m not in import_line_idx:
-                        import_line_idx[m] = i
-
-                # also track the line’s full list for extension (keyed by line index)
-                # We'll store per-line lists using a synthetic key.
-                key = f'__line__{i}'
-                if key not in import_mods:
-                    import_mods[key] = mods[:]
-                    import_mod_set[key] = set(mods)
-
-        # map line index -> synthetic key for import lines we can edit
-        linekey_for_import_line: Dict[int, str] = {
-            int(k.replace('__line__', '')): k for k in import_mods.keys()
-        }
-
-        # ---- apply new imports ----
         appended_lines: List[str] = []
-        removed_from_global: List[object] = []
 
         for raw in new_imports:
             if not raw or not raw.strip():
                 continue
             new_line = raw.strip()
-
-            # FROM-import case
-            if new_line.startswith('from ') and ' import ' in new_line:
-                # if new line is complex, just append as-is
-                if not _is_simple_from_import_line(new_line):
-                    appended_lines.append(new_line)
-                    removed_from_global.append(raw)
-                    continue
-
-                module, new_names_list = _parse_from_import_line(new_line)
-
-                if module in from_line_idx:
-                    # extend existing line with missing names only, keeping order
-                    existing_list = from_names[module]
-                    existing_set = from_name_set[module]
-
-                    added_any = False
-                    for nm in new_names_list:
-                        if nm not in existing_set:
-                            existing_list.append(nm)
-                            existing_set.add(nm)
-                            added_any = True
-
-                    if added_any:
-                        idx = from_line_idx[module]
-                        lines[idx] = f"from {module} import {', '.join(existing_list)}"
-
-                    removed_from_global.append(raw)
-                else:
-                    appended_lines.append(new_line)
-                    removed_from_global.append(raw)
-
+            # skip exact duplicates; treat different forms as distinct
+            if new_line in existing_set:
                 continue
-
-            # IMPORT case
-            if new_line.startswith('import '):
-                if not _is_simple_import_line(new_line):
-                    appended_lines.append(new_line)
-                    removed_from_global.append(raw)
-                    continue
-
-                new_mods = _parse_import_line(new_line)
-
-                # figure out which ones are already present anywhere in simple import lines
-                # (either in import-line sets, or as imported modules via from-lines doesn't count)
-                already_imported: Set[str] = set()
-                for key, sset in import_mod_set.items():
-                    already_imported |= sset
-
-                missing = [m for m in new_mods if m not in already_imported]
-
-                if not missing:
-                    removed_from_global.append(raw)
-                    continue
-
-                # if we have at least one editable import line, extend the first one
-                editable_import_line_indices = sorted(linekey_for_import_line.keys())
-                if editable_import_line_indices:
-                    target_i = editable_import_line_indices[0]
-                    key = linekey_for_import_line[target_i]
-                    existing_list = import_mods[key]
-                    existing_set = import_mod_set[key]
-
-                    for m in missing:
-                        if m not in existing_set:
-                            existing_list.append(m)
-                            existing_set.add(m)
-
-                    lines[target_i] = f"import {', '.join(existing_list)}"
-                else:
-                    # no editable import line exists, append a minimal import line
-                    appended_lines.append(f"import {', '.join(missing)}")
-
-                removed_from_global.append(raw)
-                continue
-
-            # Unknown format: keep as-is
             appended_lines.append(new_line)
-            removed_from_global.append(raw)
+            existing_set.add(new_line)
 
-        # Append new lines near the end of the import block, preserving one blank line
-        # Find last non-empty line in import block
+        if not appended_lines:
+            return '[NO CHANGES] No new imports to add.'
+
+        # insert appended lines before end_idx, preserving a blank line
+        lines = import_block.splitlines()
+        # find last non-empty line index
         last_nonempty = -1
         for i in range(len(lines) - 1, -1, -1):
             if lines[i].strip():
                 last_nonempty = i
                 break
 
-        if appended_lines:
-            insert_at = last_nonempty + 1 if last_nonempty != -1 else len(lines)
-            # ensure there is exactly one blank line before appends if needed
-            if insert_at > 0 and lines[insert_at - 1].strip() != '':
-                lines.insert(insert_at, '')
-                insert_at += 1
-            for l in appended_lines:
-                lines.insert(insert_at, l)
-                insert_at += 1
-            # ensure trailing blank line (optional, but keeps sections readable)
-            if lines and lines[-1].strip() != '':
-                lines.append('')
+        insert_at = last_nonempty + 1 if last_nonempty != -1 else len(lines)
+        if insert_at > 0 and lines[insert_at - 1].strip() != '':
+            lines.insert(insert_at, '')
+            insert_at += 1
+        for l in appended_lines:
+            lines.insert(insert_at, l)
+            insert_at += 1
+        if lines and lines[-1].strip() != '':
+            lines.append('')
 
         new_import_block = '\n'.join(lines) + '\n'
-
         new_code = code[:start_idx] + new_import_block + code[end_idx:]
-
-        # print(f'{BLUE}[TOOL] [OLD SECTION]{RESET}\n{import_block}') if DEBUG else None
-        # print(f'{BLUE}[TOOL] [NEW SECTION]{RESET}\n{new_import_block}') if DEBUG else None
 
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(new_code)
 
-        # Best-effort removal from global `imports` (whatever its internal representation is)
+        # update global imports set
         try:
             global imports
-            for item in removed_from_global:
-                if item in imports:
-                    imports.remove(item)
+            imports.update(appended_lines)
         except Exception:
-            # don't fail the tool because of bookkeeping
             pass
 
-        return '[SUCCESS] Added the new imports to the file.'
+        return f'[SUCCESS] Added imports: {appended_lines}'
 
     except Exception as e:
         print(f'{RED}[TOOL] [ERR]{RESET}', e) if DEBUG else None
@@ -768,6 +623,7 @@ def add_imports_called(last_messages: List[BaseMessage]) -> bool:
     `Returns:`
         add_imports_called: bool
     '''
+    count: int = 0
     for message in last_messages:
         # Not a tool message
         if not isinstance(message, ToolMessage):
@@ -778,10 +634,10 @@ def add_imports_called(last_messages: List[BaseMessage]) -> bool:
         # Get the name and check if its add_imports
         tool_name = getattr(message, 'name')
         if tool_name == 'add_imports':
-            return True
+            count += 1
         
     # If no add_imports tool was called
-    return False
+    return count >= 2
 
 
 
@@ -945,6 +801,7 @@ def tool_node(state: InputSchema) -> InputSchema:
             if tool_call['name'] == 'add_imports' and add_imports_called_before:
                 err_msg = '[ERR] You cannot add imports because add_imports was called shorty before. If you want to add imports, call the add_imports tool again after 5 messages. Make sure you are not calling the add_imports tool in a loop or with the same arguments.'
                 observations.append((err_msg, tool_call['name'], tool_call['id']))
+                print(f'{RED}[NODE] [ERR]{RESET} {err_msg}') if DEBUG else None
                 continue
 
             tool = tools_by_name[tool_call['name']]
@@ -1056,7 +913,7 @@ def after_software_engineer(state: InputSchema) -> Literal['last_check', 'softwa
     print(f'{BLUE}[NODE] [INFO] [CALLED TOOLS]{RESET} {formatted_called_tools}') if DEBUG else None
 
     # If the tool is the output tool (submit_final_code), go to the output node
-    if 'submit_final_code' in [called_tool[0] for called_tool in called_tools]:
+    if len(called_tools) == 1 and called_tools[0][0] == 'submit_final_code':
         print(f'{BLUE}[NODE] [INFO] [TOOL CALL]{RESET} submit_final_code') if DEBUG else None
         return 'last_check'
     
