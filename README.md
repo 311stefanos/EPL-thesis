@@ -62,3 +62,4 @@ python <agent_name>.py # Run the agent
 - make the main workflow
 
 - add a memory to all llms
+- check github tool and stackoverflow tool

@@ -1,5 +1,7 @@
+# General imports
 from typing import List, Literal
 
+# My imports (ordered by call order)
 from agents.inputRefiner.input_refiner import input_refiner_app
 from agents.workflowRefiner.workflow_refiner import workflow_refiner_app
 from utils.build_code import create_file
@@ -20,9 +22,11 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
         'configurable': {
             'user_id': 'main',
             'run_name': 'main',
-            'thread_id': 'main', 
+            'thread_id': 'main', # TODO: maybe change the thread_id to be 'main:{agent}'
         }
     }
+
+    # TODO: add messages key to the inputs
 
     print_agent('Input Refiner (internal: Classification Orchestrator)')
     input_refiner_response = input_refiner_app.invoke({
