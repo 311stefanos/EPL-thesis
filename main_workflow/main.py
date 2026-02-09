@@ -1,5 +1,7 @@
 # General imports
-from typing import List, Literal
+from typing import List, Literal, Dict, Callable
+from datetime import datetime
+import uuid
 
 # My imports (ordered by call order)
 from agents.inputRefiner.input_refiner import input_refiner_app
@@ -17,29 +19,30 @@ def print_agent(agent_name: str) -> None:
     print(f'{BRIGHT_WHITE}[NEXT AGENT] {agent_name}{RESET}')
 
 def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Literal['llm', 'user', 'both'] = 'both') -> None:
-    config = {
+    uuid_: str = str(uuid.uuid4())
+    date: str = datetime.now().strftime('%d/%m/%y')
+    config: Callable[[str], Dict] = lambda agent_name: {
         'recursion_limit': 150,
         'configurable': {
             'user_id': 'main',
             'run_name': 'main',
-            'thread_id': 'main', # TODO: maybe change the thread_id to be 'main:{agent}'
+            'thread_id': f'main:{agent_name}:{date}:{uuid_}',
         }
     }
-
-    # TODO: add messages key to the inputs
 
     print_agent('Input Refiner (internal: Classification Orchestrator)')
     input_refiner_response = input_refiner_app.invoke({
         'orchestrator': orchestrator,
         'user_input': user_request
-    }, config= config) # corrected_original, refined_text
+    }, config= config('input_refiner')) # corrected_original, refined_text
     clarified_user_input = input_refiner_response['refined_text']
 
     print_agent('Workflow Refiner (internal: Classification Orchestrator)')
     workflow_refiner_response = workflow_refiner_app.invoke({
+        'messages': [],
         'orchestrator': orchestrator,
         'clarified_user_input': clarified_user_input
-    }, config= config) # workflow
+    }, config= config('workflow_refiner')) # workflow
     workflow_bundle = workflow_refiner_response['workflow']
 
     files: List[str] = create_file(workflow_bundle)
@@ -47,32 +50,35 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
     for file in files:
         print_agent(f'Code Annotator (file: {file})')
         code_annotator_app.invoke({
+            'messages': [],
             'file_path': file,
             'clarified_user_input': clarified_user_input,
             'workflow': workflow_bundle,
-        }, config= config)
+        }, config= config(f'code_annotator:{file}'))
 
         print_agent(f'Software Engineer (file: {file}) (internal: Coder)')
         software_engineer_app.invoke({
+            'messages': [],
             'file_path': file,
             'times_reviewed': 0
-        }, config= config)
+        }, config= config(f'software_engineer:{file}'))
 
         print_agent(f'Prompt Engineer (file: {file})')
         prompt_engineer_app.invoke({
             'file_path': file,
             'mode': prompt_review_mode
-        }, config= config)
+        }, config= config(f'prompt_engineer:{file}'))
 
         print_agent(f'File Handler (file: {file})')
         file_handler_app.invoke({
+            'messages': [],
             'file_path': file
-        }, config= config)
+        }, config= config(f'file_handler:{file}'))
 
 
 
 if __name__ == '__main__':
-    user_request: str = 'I want an agent that helps me with math questions. I can provide my lecture notes in documents for the agent to read or RAG.'
+    user_request: str = 'I want an agent to help me find relevant academic information/books/articles on a given topic. it should find the most relevant information about a topic discussed in a conversation, summarise it by article/book/... provide links and references. it should be an academic assistant.'
     main(
         user_request,
         orchestrator= True,

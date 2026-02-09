@@ -438,7 +438,7 @@ In order to approve a coder's implementation, you must checklist the following:
 
 # Output rules (STRICT)
 Return either:
-1) An empty string if there are no issues worth reporting.
+1) Exactly `okay` if there are no issues in the code.
 OR
 2) A numbered list of issues (max 5), following the format below.
 

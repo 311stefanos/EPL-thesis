@@ -133,7 +133,7 @@ class WorkflowNode(BaseModel):
 
     def __str__(self) -> str:
         subgraph = f'(subgraph: {self.subgraph_id})' if self.subgraph_id else ''
-        return f'• {self.name} {subgraph}\n│   ⤷ {self.description}\n'
+        return f'• {self.name} {subgraph}\n│   ⤷ {self.description}\n│'
 
 class WorkflowEdge(BaseModel):
     source_name: str = Field(description= 'The name of the source node.')
@@ -142,7 +142,7 @@ class WorkflowEdge(BaseModel):
 
     def __str__(self) -> str:
         # return f'{self.source_name} -> {self.target_name}: {self.description}'
-        return f'• {self.source_name} ➜  {self.target_name}\n│   ⤷ {self.description}\n'
+        return f'• {self.source_name} ➜  {self.target_name}\n│   ⤷ {self.description}\n│'
 
 class WorkflowGraph(BaseModel):
     type: Literal['reactive_conversational', 'linear_pipeline', 'planner_executor', 'hybrid'] = Field(
