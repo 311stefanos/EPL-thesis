@@ -43,23 +43,113 @@ export PYTHONPATH=$PWD           # Set the PYTHONPATH (For linux)
 
 
 cd /agents/<agent_name> # Go to the agent folder
+#! Modify the agent's file to insert your inputs
 python <agent_name>.py # Run the agent
 ```
 
+## To run the system:
+1. Run the following commands each time you want to start the system.
+(From the Clone directory)
+```bash
+cd .\to the clone directory
+.\venv\Scripts\Activate.ps1 # Activate the venv
+
+$env:PYTHONPATH = (Get-Location) # Set the PYTHONPATH (For windows)
+#! OR
+export PYTHONPATH=$PWD           # Set the PYTHONPATH (For linux)
 
 
+cd /main_workflow # Go to the main workflow folder
+#! Modify the main file to insert your prompt
+python main.py # Run the system
+```
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
+
+--- 
+
+<br>
 
 
-
-# Agents # TODO: Add a README.md to each agent
-# Workflow
+# TODO: SKIP
 
 ## TODO
-- Add readme.md to each agent
-- Add a workflow diagram to each agent and here
+- Add a workflow diagram here
 - add an overview here
-
-- make the main workflow
 
 - add a memory to all llms
 - check github tool and stackoverflow tool
