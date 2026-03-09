@@ -14,12 +14,7 @@
 11. [Development Notes](#development-notes)
 12. [Author and License](#author-and-license)
 
-## Project Summary
-- **What:** A multi-agent system where agents collaborate to construct custom AI agents from a natural language user request.
-- **Who:** 
-    - Author: Stefanos Panteli
-    - Repository: https://github.com/stefanosPanteli/EPL-thesis
-
+# Project Summary
 ## Description
 - **Purpose:** This repository implements a set of lightweight agents (each in its own folder under `agents/`) to support experimentation with agent collaboration, prompt engineering, and tool integration. A `main_workflow` entrypoint demonstrates orchestrating agents for end-to-end runs.
 
@@ -161,6 +156,17 @@ export PYTHONPATH=$PWD
 ## Configuration
 - The `.env.example` file lists environment variables used by the code.
 - Typical entries are API keys for LLM providers like OpenRouter, service providers such as Tavily, and optional LangSmith settings.
+```bash
+#! Change any necessary keys from .env.example
+#! Min changes are:
+PROVIDER="OPENROUTER"
+OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+OPENROUTER_API_KEY="Your API key"
+MODEL="A model name" # Already provided a valid model
+
+#! Change the name into .env
+cp .env.example .env
+```
 
 ## Running
 Run a single agent (edit the agent file to provide inputs first):

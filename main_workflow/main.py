@@ -48,6 +48,9 @@ def print_to_file(agent_name: str, result: dict, date: str) -> None:
     if not DEBUG:
         return
     
+    if not os.path.exists(f'./logs_{date}'):
+        os.makedirs(f'./logs_{date}')
+
     with open(f'./logs_{date}/{agent_name}.txt', 'w') as f:
         for key, value in result.items():
             if key == 'messages':
