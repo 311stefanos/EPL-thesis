@@ -77,7 +77,10 @@ def copy_file(after_agent_name: str, file_path: str, date: str) -> None:
     with open(file_path, 'r') as f:
         contents = f.read()
 
-    with open(f'./logs_{date}/after_{after_agent_name}/{file_path.split("/")[-1]}', 'w') as f:
+    if not os.path.exists(f'./logs_{date}'):
+        os.makedirs(f'./logs_{date}')
+
+    with open(f'./logs_{date}/after_{after_agent_name}_{file_path.split("/")[-1]}', 'w') as f:
         f.write(contents)
 
 def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Literal['llm', 'user', 'both'] = 'both') -> None:
