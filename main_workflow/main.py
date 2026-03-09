@@ -165,7 +165,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 
 if __name__ == '__main__':
-    user_request: str = 'I want an agent to help me find relevant academic information/books/articles on a given topic. it should find the most relevant information about a topic discussed in a conversation, summarise it by article/book/... provide links and references. it should be an academic assistant.'
+    user_request: str = 'I want an agent that I can send my receipts (in a photo) through a whatsapp chat, and it should read the photo, understand the receipt (cost, date, items, location, etc.), and insert the data into an excel file. It should also answer questions about spending when prompted by the user (e.g. "how much did I spend on groceries this month?", "what are the top 3 items I spent the most on?", etc.).'
     main(
         user_request,
         orchestrator= True,
