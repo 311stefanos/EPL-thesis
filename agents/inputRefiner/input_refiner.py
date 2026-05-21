@@ -150,6 +150,12 @@ class OutputSchema(BaseModel):
         description= 'A more precise, clear, and search-friendly version of the request.'
     )
 
+    # for traceability
+    messages: Annotated[List[BaseMessage], add_messages] 
+    qna: List[Tuple[str, str]]
+    refinements: Annotated[List[AIMessage], add_messages]
+    user_requests: Annotated[List[HumanMessage], add_messages]
+
 
 
 ''' Tools '''
@@ -195,7 +201,7 @@ def correct_user_input(state: InputSchema) -> IntermediateSchema:
         user_input = state['user_input']
         prompt = prompts.CORRECTION_PROMPT.format(user_input= user_input)
         # call the LLM
-        corrected = correcter.invoke(prompt).content.strip()
+        corrected = safe_invoke(correcter, messages= [SystemMessage(content= prompt)]).content.strip()
         while corrected[0] in '`\'"':
             corrected = corrected[1:]
         while corrected[-1] in '`\'"':
@@ -241,7 +247,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
         # TODO: test with a list of messages
         prompt = prompts.CLARIFICATION_PROMPT.format(
             user_input= state['corrected_original'],
-            tool_calls= '\n---\n'.join([mess.content for mess in state['messages'][1:]]),
+            tool_calls= '\n---\n'.join([mess.content for mess in state['messages'][1:] if isinstance(mess, ToolMessage)]),
             clarifications= '\n\n'.join([f'Question: {qna[0]}\nAnswer: {qna[1]}' for qna in state['qna']])
         )
         # call the LLM
@@ -252,7 +258,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
         # If no further clarifications are needed, wrap it in an AIMessage
         if 'no clarification needed' in clarification.content.lower():
             print(f'{BLUE}[NODE] [INFO]{RESET} No further clarifications needed') if DEBUG else None
-            return {'messages': [AIMessage(content = clarification.content)]}
+            return {'messages': [AIMessage(content= clarification.content)]}
         
         # If a tool call is needed/will be used, **do not** wrap it in an AIMessage, as it has to keep the context
         if will_tool_call(state['messages'] + [clarification], instruction_texts= ['will use tavily_search to gather context']):
@@ -281,7 +287,7 @@ def clarify(state: IntermediateSchema) -> IntermediateSchema:
             # Store the QnA in the state 
             new_qna = (clarification.content, user_input)
 
-        return {'qna': state['qna'] + [new_qna]}
+        return {'qna': state['qna'] + [new_qna], 'messages': [AIMessage(content= new_qna[0]), HumanMessage(content= new_qna[1])]}
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
@@ -347,7 +353,14 @@ def parse_output(state: IntermediateSchema) -> OutputSchema:
     This node accepts a corrected version of a user input and provides a refined version of it.
     '''
     print_function_name() if DEBUG else None
-    return OutputSchema(corrected_original= state['corrected_original'], refined_text= state['refinements'][-1].content)
+    return OutputSchema(
+        corrected_original= state['corrected_original'], 
+        refined_text= state['refinements'][-1].content, 
+        qna= state['qna'],
+        user_requests= state['user_requests'],
+        refinements= state['refinements'],
+        messages= state['messages']
+    )
 
 
 

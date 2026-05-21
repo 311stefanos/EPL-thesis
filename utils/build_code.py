@@ -153,7 +153,7 @@ def _build_workflow(bundle) -> str:
             (str) The node
         '''
         if 'LLM' in node['description'] or 'SUBGRAPH' in node['description']:
-            invokation = f'safe_invoke({node["name"]}_llm, messages= [SystemMessage(content= prompt), ...])' if not node.get('subgraph_id') else f'{node["subgraph_id"]}_app.invoke(...)'
+            invocation = f'safe_invoke({node["name"]}_llm, messages= [SystemMessage(content= prompt), ...])' if not node.get('subgraph_id') else f'{node["subgraph_id"]}_app.invoke(...)'
             node_function = '\n'.join([
                 f'def {node["name"]}(state: AgentSchema) -> AgentSchema:',
                 f'    """ {node["description"]} """',
@@ -162,7 +162,7 @@ def _build_workflow(bundle) -> str:
                  '        # TODO: <preprocess>',
                  '        ... # TODO: <make format arguments readable>',
                 f'        prompt = prompts.{node["name"].upper()}_PROMPT.format(...) # TODO: <formatting>',
-                f'        result = {invokation} # TODO: <inputs>',
+                f'        result = {invocation} # TODO: <inputs>',
                  '        # TODO: <postprocess>',
                  '        return ... # TODO: <return>',
                  '    except Exception as e:',
@@ -387,7 +387,7 @@ def create_file(workflow_dict: dict) -> List[str]:
 
     created_agents: List[str] = []
     for k, v in code.items():
-        with open(f'../creations/{parent_dir}/{k}.py', 'w') as f:
+        with open(f'../creations/{parent_dir}/{k}.py', 'w', encoding= 'utf-8') as f:
             f.write(v)
             created_agents.append(f'../creations/{parent_dir}/{k}.py')
 

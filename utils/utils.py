@@ -242,6 +242,8 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
         # Try again
         except (BadRequestError, APIConnectionError, InternalServerError, JSONDecodeError) as e:
             print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
+            # Also print the reason
+            print(e.response.json()['error']['message'])
             retry_counter += 1
             sleep(retry_interval)
 

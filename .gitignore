@@ -79,3 +79,4 @@ pyenv.cfg
 # creations/*
 git_hub_tool.py
 stackoverflow_tool.py
+logs/

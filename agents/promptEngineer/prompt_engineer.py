@@ -189,7 +189,7 @@ prompt_reviewer = myChatOpenAI(
 
 formater = myChatOpenAI(
     temperature= 0.8
-).with_structured_output(Format)
+).with_structured_output(Format, method= 'function_calling')
 
 tester = myChatOpenAI(
     temperature= 0.7

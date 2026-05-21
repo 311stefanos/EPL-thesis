@@ -120,7 +120,8 @@ class OutputSchema(TypedDict):
 
 ''' LLM '''
 coordinator = myChatOpenAI(
-    temperature= 0
+    temperature= 0,
+    model= 'openrouter/owl-alpha'
 ).with_structured_output(CoordinatorSchema)
 
 
@@ -135,7 +136,7 @@ def answer_question(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
-        prompt = prompts.ANSWER_QUESTION_PROMPT.format(question= state.question)
+        prompt = prompts.ANSWER_QUESTION_PROMPT.format(question= state.question.split('# RESOLVED')[0])
 
         # memory as messages
         memory: List[AIMessage, HumanMessage] = []
@@ -157,7 +158,8 @@ def answer_question(state: InputSchema) -> InputSchema:
             print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
             user_answer = input(state.question + '\n\n > ')
             question = state.question
-            answer =  user_answer
+            answer = user_answer
+            justifications = 'User provided answer'
 
         # If the score is high, use the answer
         else:
@@ -174,9 +176,10 @@ def answer_question(state: InputSchema) -> InputSchema:
                 user_answer = input(q + '\n\n > ')
                 question += '\n' + q
                 answer += '\n' + user_answer
+                justifications += f' and User provided answer for the latest questions.'
         
         # Append the question and answer to state
-        return {'questions_answers': [QnA(question= question, answer= answer, justification= f'{justifications} and User provided answer for the latest questions.')]}
+        return {'questions_answers': [QnA(question= question, answer= answer, justification= justifications)]}
     
     # If the LLM could not follow the Pydantic Schema, ask the user
     except PydanticValidationError as e:

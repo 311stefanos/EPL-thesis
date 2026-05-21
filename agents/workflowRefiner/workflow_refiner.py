@@ -191,6 +191,7 @@ class InputSchema(MessagesState):
 class OutputSchema(BaseModel):
     workflow: WorkflowBundle = Field(description= 'The workflow created from the user input.')
 
+    messages: List[BaseMessage]
 
 
 ''' Tools '''
@@ -213,7 +214,7 @@ clarifier = myChatOpenAI(
 
 workflow_engineer = myChatOpenAI(
     temperature= 0.7
-).with_structured_output(WorkflowBundle)
+).with_structured_output(WorkflowBundle, method= 'function_calling')
 
 
 
@@ -333,7 +334,7 @@ def create_workflow(state: InputSchema) -> OutputSchema:
                 graph.nodes.append(WorkflowNode(name= 'end', description= 'End node', subgraph_id= None))
                 graph.edges.append(WorkflowEdge(source_name= last_node.name, target_name= 'end', description= 'End node'))
 
-        return OutputSchema(workflow= workflow)
+        return OutputSchema(workflow= workflow, messages= state['messages'])
 
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None

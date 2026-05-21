@@ -445,7 +445,7 @@ def file_handler_node(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
-        code_file: str = state['file_path'].split('/')[-1]
+        code_file: str = Path(state['file_path']).name
         prompt_file: str = code_file.replace('.py', '_prompts.py')
 
         with open(state['file_path'].replace('.py', '_prompts.py'), 'r', encoding='utf-8') as f:

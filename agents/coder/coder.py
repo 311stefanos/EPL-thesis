@@ -263,7 +263,7 @@ def solution_brainstorm_node(state: InputSchema) -> InputSchema:
     This node is used to think possible solutions to the problem.
     '''
     print_function_name() if DEBUG else None
-    # Remove all prior messages, not from this invokation.
+    # Remove all prior messages, not from this invocation.
     remove_messages: List[RemoveMessage] = [RemoveMessage(id= mes.id) for mes in state.get('messages', [])]
     
     try:

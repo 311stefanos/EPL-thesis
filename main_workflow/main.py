@@ -48,10 +48,13 @@ def print_to_file(agent_name: str, result: dict, date: str) -> None:
     if not DEBUG:
         return
     
-    if not os.path.exists(f'./logs_{date}'):
-        os.makedirs(f'./logs_{date}')
+    if not os.path.exists('./logs'):
+        os.makedirs('./logs')
+    
+    if not os.path.exists(f'./logs/logs_{date}'):
+        os.makedirs(f'./logs/logs_{date}')
 
-    with open(f'./logs_{date}/{agent_name}.txt', 'w') as f:
+    with open(f'./logs/logs_{date}/{agent_name}.txt', 'w', encoding= 'utf-8') as f:
         for key, value in result.items():
             if key == 'messages':
                 f.write('Messages:\n')
@@ -59,8 +62,10 @@ def print_to_file(agent_name: str, result: dict, date: str) -> None:
                     message: BaseMessage
                     f.write(f'{message.pretty_repr()}\n')
                 continue
-
-            f.write(f'{key}: {str(value)}\n\n')
+            try:
+                f.write(f'{key}: {str(value)}\n\n')
+            except Exception as e:
+                f.write(e)
 
 def copy_file(after_agent_name: str, file_path: str, date: str) -> None:
     '''
@@ -77,10 +82,13 @@ def copy_file(after_agent_name: str, file_path: str, date: str) -> None:
     with open(file_path, 'r') as f:
         contents = f.read()
 
-    if not os.path.exists(f'./logs_{date}'):
-        os.makedirs(f'./logs_{date}')
+    if not os.path.exists('./logs'):
+        os.makedirs('./logs')
 
-    with open(f'./logs_{date}/after_{after_agent_name}_{file_path.split("/")[-1]}', 'w') as f:
+    if not os.path.exists(f'./logs/logs_{date}'):
+        os.makedirs(f'./logs/logs_{date}')
+
+    with open(f'./logs/logs_{date}/after_{after_agent_name}_{Path(file_path).name}', 'w', encoding= 'utf-8') as f:
         f.write(contents)
 
 def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Literal['llm', 'user', 'both'] = 'both') -> None:
@@ -106,7 +114,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
     }
 
     # Input Refiner
-    print_agent('Input Refiner (internal: Classification Orchestrator)')
+    print_agent('Input Refiner (internal: Clarification  Orchestrator)')
     input_refiner_response = input_refiner_app.invoke({
         'orchestrator': orchestrator,
         'user_input': user_request
@@ -115,7 +123,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
     clarified_user_input = input_refiner_response['refined_text']
 
     # Workflow Refiner
-    print_agent('Workflow Refiner (internal: Classification Orchestrator)')
+    print_agent('Workflow Refiner (internal: Clarification  Orchestrator)')
     workflow_refiner_response = workflow_refiner_app.invoke({
         'messages': [],
         'orchestrator': orchestrator,
@@ -132,43 +140,56 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
         # Code Annotator
         print_agent(f'Code Annotator (file: {file})')
-        code_annotator_app.invoke({
+        code_annotator_response = code_annotator_app.invoke({
             'messages': [],
             'file_path': file,
             'clarified_user_input': clarified_user_input,
             'workflow': workflow_bundle,
         }, config= config(f'code_annotator:{file}'))
+        print_to_file('code_annotator', code_annotator_response, date)
         copy_file('code_annotator', file, date)
 
         # Software Engineer
         print_agent(f'Software Engineer (file: {file}) (internal: Coder)')
-        software_engineer_app.invoke({
+        software_engineer_response = software_engineer_app.invoke({
             'messages': [],
             'file_path': file,
             'times_reviewed': 0
         }, config= config(f'software_engineer:{file}'))
+        print_to_file('software_engineer', software_engineer_response, date)
         copy_file('software_engineer', file, date)
 
         # Prompt Engineer
         print_agent(f'Prompt Engineer (file: {file})')
-        prompt_engineer_app.invoke({
+        prompt_engineer_response = prompt_engineer_app.invoke({
             'file_path': file,
             'mode': prompt_review_mode
         }, config= config(f'prompt_engineer:{file}'))
+        print_to_file('prompt_engineer', prompt_engineer_response, date)
         copy_file('prompt_engineer', file, date)
 
         # File Handler
         print_agent(f'File Handler (file: {file})')
-        file_handler_app.invoke({
+        file_handler_response = file_handler_app.invoke({
             'messages': [],
             'file_path': file
         }, config= config(f'file_handler:{file}'))
+        print_to_file('file_handler', file_handler_response, date)
         copy_file('file_handler', file, date)
 
 
 
 if __name__ == '__main__':
-    user_request: str = 'I want an agent that I can send my receipts (in a photo) through a whatsapp chat, and it should read the photo, understand the receipt (cost, date, items, location, etc.), and insert the data into an excel file. It should also answer questions about spending when prompted by the user (e.g. "how much did I spend on groceries this month?", "what are the top 3 items I spent the most on?", etc.).'
+    user_request: str = (
+        'I want a personal agent that I can send my receipts (in a photo) through a whatsapp chat, and it should read the photo, understand the receipt '
+        '(cost, date, items, location, etc.), and insert the data into an excel file. '
+        'The excel file should have columns for cost, date, items (format: item1 (quantity x price currency), ...), location, category. '
+        'The category should be automatically determined from the agent based on the items. '
+        'It should also answer questions about spending when prompted by the user '
+        '(e.g. "how much did I spend on groceries this month?", "what are the top 3 items I spent the most on?", etc.). '
+        'For OCR processing, you may call a vision model through OpenRouter, or use PaddleOCR for offline free OCR processing. '
+        'For the Whatsapp API you may use Green-API webhook.'
+    )
     main(
         user_request,
         orchestrator= True,

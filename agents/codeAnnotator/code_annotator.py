@@ -249,23 +249,23 @@ class InputSchema(MessagesState):
 ''' LLM '''
 docstring_generator = myChatOpenAI(
     temperature= 0.5
-).with_structured_output(Docstrings)
+).with_structured_output(Docstrings, method= 'function_calling')
 
 schema_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(Schemas)
+).with_structured_output(Schemas, method= 'function_calling')
 
 helpful_function_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(HelpfulFunctions)
+).with_structured_output(HelpfulFunctions, method= 'function_calling')
 
 tool_function_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(ToolFunctions)
+).with_structured_output(ToolFunctions, method= 'function_calling')
 
 tool_or_output_generator = myChatOpenAI(
     temperature= 0.8
-).with_structured_output(LLMProposalList)
+).with_structured_output(LLMProposalList, method= 'function_calling')
 
 
 
