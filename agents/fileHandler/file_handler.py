@@ -252,6 +252,8 @@ def read_file(file_path: str) -> str:
         with open(target, 'r', encoding='utf-8') as f:
             contents = f.read()
 
+        contents = contents.split("''' Constants '''")[1]
+
         print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Read the file {after_creations} successfully.') if DEBUG else None
         return f'[TOOL] [INFO] [SUCCESS] Read the file {after_creations} successfully.\n{format_contents(file_path, contents)}'
 
@@ -261,7 +263,7 @@ def read_file(file_path: str) -> str:
         return f'[ERROR] {e}'
 
 # The tool list
-tools = [create_directory, create_file, modify_file, read_file]
+tools = [create_directory, create_file, modify_file]#, read_file]
 
 
 
@@ -327,6 +329,7 @@ def format_contents(file_path: str, contents: Optional[str]= None) -> str:
     `Returns:`
         (str) The formatted contents of the file
     '''
+    return contents or 'empty'
     # If the contents are not given, read the file
     if not contents:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -453,7 +456,7 @@ def file_handler_node(state: InputSchema) -> InputSchema:
 
         prompt = prompts.FILE_HANDLER_PROMPT.format(
             code_file= code_file,
-            code= read_state_file(state),
+            code= read_state_file(state).split('if __name__ ==')[0].split("''' Constants '''")[1],
             prompt_file= prompt_file,
             prompt= prompt,
             files= read_sibling_files(state['file_path'])

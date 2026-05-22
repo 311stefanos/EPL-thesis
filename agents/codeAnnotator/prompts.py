@@ -183,6 +183,7 @@ Your output will be parsed into the schema above; return only that object.
 4) Nodes connected with edges must agree on the output of the first node and the input of the last node. At least the input of the last node must not use keys absent from the output of the first node.
 5) You may not suggest helpful functions for prompt creation, LLM response parsing, or LLM response formating.
 6) Always prioritise user feedback below the `Previous Conversation` section for your response.
+7) You can only propose a doctstring for node that **EXIST** in the codebase.
 '''
 
 

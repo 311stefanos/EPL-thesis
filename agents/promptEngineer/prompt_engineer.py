@@ -129,7 +129,7 @@ class Prompt(BaseModel):
     # Check if the prompt can be reviewed
     def can_review(self, what: Literal['prompt', 'response']) -> bool:
         prompt_max: int = 2
-        response_max: int = 3
+        response_max: int = 2
         if what == 'prompt':
             return self.prompt_reviews < prompt_max
         elif what == 'response':
@@ -189,7 +189,7 @@ prompt_reviewer = myChatOpenAI(
 
 formater = myChatOpenAI(
     temperature= 0.8
-).with_structured_output(Format, method= 'function_calling')
+).with_structured_output(Format)
 
 tester = myChatOpenAI(
     temperature= 0.7

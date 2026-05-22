@@ -584,7 +584,7 @@ software_engineer = myChatOpenAI(
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
     temperature= 0.6
-).with_structured_output(CodeIssues, method= 'function_calling')
+).with_structured_output(CodeIssues)
 
 
 

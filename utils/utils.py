@@ -288,6 +288,11 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
                 retry_counter += 1
                 sleep(retry_interval)
 
+        except TypeError as e:
+            print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
+            retry_counter += 1
+            sleep(retry_interval)
+
         except KeyboardInterrupt as e:
             print(f'{e.__class__.__name__}, exiting...') if DEBUG else None
             exit()

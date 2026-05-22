@@ -141,13 +141,13 @@ def answer_question(state: InputSchema) -> InputSchema:
         # memory as messages
         memory: List[AIMessage, HumanMessage] = []
         for qna in state.questions_answers:
-            memory.append(AIMessage(content= f'<QUESTION> Cannot be used to answer the question\n{qna.question}\n</QUESTION>'))
-            memory.append(HumanMessage(content= f'<ANSWER> Only these messages can be used for your answers\n{qna.answer}</ANSWER>'))
+            memory.append(AIMessage(content= qna.question.split('# RESOLVED')[0]))
+            memory.append(HumanMessage(content= {qna.answer}))
 
         # call the LLM
         response: CoordinatorSchema = safe_invoke(
             coordinator, 
-            messages= [SystemMessage(content= prompt), *memory, SystemMessage(content= prompts.BEFORE_QUESTION_PROMPT), AIMessage(content= state.question)], 
+            messages= [SystemMessage(content= prompt), *memory, AIMessage(content= state.question.split('# RESOLVED')[0])], 
             raise_pydantic= True
         )
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None
@@ -181,20 +181,13 @@ def answer_question(state: InputSchema) -> InputSchema:
         # Append the question and answer to state
         return {'questions_answers': [QnA(question= question, answer= answer, justification= justifications)]}
     
-    # If the LLM could not follow the Pydantic Schema, ask the user
-    except PydanticValidationError as e:
+    # If error, ask the user
+    except Exception as e:
         print(f"{RED}[NODE] [ERR]{RESET}", e) if DEBUG else None
-        print(f'{RED}[NODE] [INFO]{RESET} Pydantic Validation Error') if DEBUG else None
-        print(f'{GREEN}[NODE] [QUESTION]{RESET} Please answer the following question:')
         # Ask the user
         user_answer = input(state.question + '\n\n > ')
         # Append the question and answer to state
         return {'questions_answers': [QnA(question= state.question, answer= user_answer, justification= 'User provided the answer.')]}
-
-    except Exception as e:
-        print(f"{RED}[NODE] [ERR]{RESET}", e) if DEBUG else None
-        traceback.print_exc() if DEBUG else None
-        return state
 
 # Return the last question and answer
 def return_answer(state: InputSchema) -> OutputSchema:
