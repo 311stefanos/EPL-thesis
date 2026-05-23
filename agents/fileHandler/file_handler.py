@@ -40,9 +40,12 @@ from typing import Tuple, Literal, List, Optional
 
 # General imports
 from dotenv import load_dotenv
+from openpyxl import Workbook
 from pathlib import Path
 import traceback
+import csv
 import os
+import io
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, read_state_file
@@ -140,6 +143,16 @@ def create_file(file_path: str, contents: str) -> str:
     `Returns:`
         (str) Either a success message or an error message
     '''
+    def create_excel_file(target, contents):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        rows = csv.reader(io.StringIO(contents or ""))
+        for row in rows:
+            ws.append(row)
+
+        wb.save(target)
+
     print_function_name(colour= MAGENTA) if DEBUG else None
     try:
         global project_dir
@@ -160,8 +173,11 @@ def create_file(file_path: str, contents: str) -> str:
             return f'[ERROR] The file {after_creations} already exists.'
 
         # Otherwise create the file
-        with open(target, 'w', encoding='utf-8') as f:
-            f.write(contents)
+        if target.suffix.lower() == ".xlsx":
+            create_excel_file(target, contents)
+        else:
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(contents)
 
         print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Created the file {after_creations} successfully.') if DEBUG else None
         return f'[SUCCESS] Created the file {after_creations} successfully.\n{format_contents(file_path, contents)}'
