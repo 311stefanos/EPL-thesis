@@ -230,7 +230,11 @@ def was_tavily_called(state: InputSchema) -> bool:
         was_tavily_called: bool
     '''
     # Check if the agent already called the tavily tool
-    return any([mes.tool_name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage)])
+    return any([
+        mes.tool_name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage) and hasattr(mes, 'tool_name')
+    ]) or any([
+        mes.name == 'tavily_search' for mes in state.get('messages', []) if isinstance(mes, ToolMessage) and hasattr(mes, 'name')
+    ])
 
 def get_schema_type(state: InputSchema) -> Tuple[str, str]:
     '''
@@ -342,6 +346,15 @@ def coder_node(state: InputSchema) -> InputSchema:
         traceback.print_exc() if DEBUG else None
 
         return {'messages': AIMessage(content= '')}
+    
+def no_tavily_node(state: InputSchema) -> InputSchema:
+    print_function_name() if DEBUG else None
+    global coder
+    coder = myChatOpenAI(
+        temperature= 0.5
+    ).bind_tools([output_tool])
+    
+    return {'messages': [SystemMessage(content= 'You may not call the tavily tool again since you already called it before.')] }
 
 # This node executes the output tool, and ends the workflow
 def parse_output_tool(state: InputSchema) -> InputSchema:
@@ -439,7 +452,7 @@ def output_node(state: InputSchema) -> OutputSchema:
 
 ''' Conditional Functions '''
 # This node is called to decide the next step of the coder_node
-def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'parse_output_tool', 'coder_node']:
+def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'parse_output_tool', 'coder_node', 'no_tavily']:
     '''
     This node is called to decide the next step of the coder_node.
     Possible return values: 
@@ -472,7 +485,7 @@ def tool_node_or_end(state: InputSchema) -> Literal['tool_node', 'parse_output_t
             return 'tool_node'
         # Else, go back to the coder node
         else:
-            return 'coder_node'
+            return 'no_tavily'
 
     # If an error occured, go to the coder node
     except Exception as e:
@@ -522,6 +535,7 @@ coder_graph = StateGraph(InputSchema, output_schema= OutputSchema)
 
 coder_graph.add_node('solution_brainstorm_node', solution_brainstorm_node)
 coder_graph.add_node('coder_node', coder_node)
+coder_graph.add_node('no_tavily', no_tavily_node)
 coder_graph.add_node('tool_node', ToolNode(tools)) # ToolNode with all the tools excluding the output tool
 coder_graph.add_node('parse_output_tool', parse_output_tool)
 coder_graph.add_node('review_node', review_node)
@@ -535,9 +549,11 @@ coder_graph.add_conditional_edges(
     {   # Not needed, for clarity
         'tool_node': 'tool_node',
         'parse_output_tool': 'parse_output_tool',
-        'coder_node': 'coder_node'
+        'coder_node': 'coder_node',
+        'no_tavily': 'no_tavily'
     }    
 )
+coder_graph.add_edge('no_tavily', 'coder_node')
 coder_graph.add_edge('tool_node', 'coder_node')
 coder_graph.add_conditional_edges(
     'parse_output_tool',

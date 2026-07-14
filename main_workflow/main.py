@@ -134,7 +134,6 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
     # Create code structures
     files: List[str] = create_file(workflow_bundle)
-
     for file in files:
         copy_file('code_structure', file, date)
 
@@ -154,7 +153,8 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
         software_engineer_response = software_engineer_app.invoke({
             'messages': [],
             'file_path': file,
-            'times_reviewed': 0
+            'times_reviewed': 0,
+            'skip_tool_sections': False
         }, config= config(f'software_engineer:{file}'))
         print_to_file('software_engineer', software_engineer_response, date)
         copy_file('software_engineer', file, date)
@@ -181,17 +181,14 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 if __name__ == '__main__':
     user_request: str = (
-        'I want a personal agent that I can send my receipts (in a photo) through a whatsapp chat, and it should read the photo, understand the receipt '
-        '(cost, date, items, location, etc.), and insert the data into an excel file. '
-        'The excel file should have columns for cost, date, items (format: item1 (quantity x price currency), ...), location, category. '
-        'The category should be automatically determined from the agent based on the items. '
-        'It should also answer questions about spending when prompted by the user '
-        '(e.g. "how much did I spend on groceries this month?", "what are the top 3 items I spent the most on?", etc.). '
-        'For OCR processing, you may call a vision model through OpenRouter, or use PaddleOCR for offline free OCR processing. '
-        'For the Whatsapp API you may use Green-API webhook.'
+        'I want an agent that solves Python programming benchmark tasks such as HumanEval and MBPP. '
+        'The agent should receive inputs based on the two mentioned benchmarks. '
+        'It should understand the required function, generate correct Python code, '
+        'optionally check the code for syntax or test failures, repair mistakes if needed, '
+        'and return only the final Python solution in the format expected by the benchmark evaluator.'
     )
     main(
         user_request,
         orchestrator= True,
-        prompt_review_mode= 'both'
+        prompt_review_mode= 'llm'
     )

@@ -152,6 +152,9 @@ class Prompt(BaseModel):
         last_comment = self.user_comments[-1] if self.user_comments else ''
         last_comment = last_comment.replace('Review by Expert Reviewer: ', '')
         last_comment = last_comment.replace('Review by User: ', '')
+        last_comment = last_comment.replace('# Issues', '')
+        last_comment = last_comment.replace('- ', '')
+        last_comment = last_comment.replace('`', '')
 
         return not any(c.strip() not in USER_APPROVALS for c in last_comment.split('\n'))
     

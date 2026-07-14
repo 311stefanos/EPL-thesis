@@ -127,6 +127,7 @@ class CodeIssues(BaseModel):
 # The input schema for the software engineer, only the file path is required
 class InputSchema(MessagesState):
     file_path: str # 'The path to the file.
+    skip_tool_sections: bool # Whether to skip the tool sections.
     times_reviewed: int # The number of times the code has been reviewed.
 
 
@@ -876,6 +877,22 @@ def last_check(state: InputSchema) -> InputSchema:
 
 
 ''' Conditional Functions '''
+def from_start(state: InputSchema) -> Literal['software_engineer_node', 'add_tool_sections']:
+    '''
+    This function is used to determine were the graph should start: From the Software Engineer or from the add tool sections
+    Returns:
+        Literal['software_engineer_node', 'add_tool_sections']
+        - Exact node names
+    '''
+    print_function_name() if DEBUG else None
+
+    # If the code is empty, go to the add tool sections node
+    if state.get('skip_tool_sections', False):
+        return 'software_engineer_node'
+
+    # Else, go to the Software Engineer
+    return 'add_tool_sections'
+
 # This conditional logic is used to determine what to do after the Software Engineer: Call a tool, go to the last check, or go back to the Software Engineer
 def after_software_engineer(state: InputSchema) -> Literal['last_check', 'software_engineer_node', 'approve_tool', 'tools']:
     '''
@@ -952,13 +969,20 @@ def passed_last_check(state: InputSchema) -> Literal['software_engineer_node', '
 ''' Graph '''
 software_engineer_graph = StateGraph(InputSchema)
 
-software_engineer_graph.add_node('add_tool_sections', add_tool_sections)
+# software_engineer_graph.add_node('add_tool_sections', add_tool_sections)
 software_engineer_graph.add_node('software_engineer_node', software_engineer_node)
 software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))
 software_engineer_graph.add_node('last_check', last_check)
 
-software_engineer_graph.add_edge(START, 'add_tool_sections')
+software_engineer_graph.add_conditional_edges(
+    START,
+    from_start,
+    {   # Not needed, for clarity
+        'add_tool_sections': 'add_tool_sections',
+        'software_engineer_node': 'software_engineer_node'
+    }
+)
 software_engineer_graph.add_edge('add_tool_sections', 'software_engineer_node')
 software_engineer_graph.add_conditional_edges(
     'software_engineer_node', 
@@ -1013,7 +1037,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py', times_reviewed= 0)
+    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py', times_reviewed= 0, skip_tool_sections= False)
     response = software_engineer_app.invoke(user, config= config)
 
     # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

@@ -120,8 +120,7 @@ class OutputSchema(TypedDict):
 
 ''' LLM '''
 coordinator = myChatOpenAI(
-    temperature= 0,
-    model= 'openrouter/owl-alpha'
+    temperature= 0
 ).with_structured_output(CoordinatorSchema)
 
 

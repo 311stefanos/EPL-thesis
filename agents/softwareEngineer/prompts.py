@@ -254,10 +254,8 @@ The tools are functions that do not belong in the graph:
 - You should generally trust the graph and the defined nodes. Already a team of graph builders reviewed the graph and tool handlers (might be custom nodes or ToolNodes).
 
 # Available Tools
-You have access to the following tools. You may call any of them whenever needed,
-but you must respect the division of responsibilities above.
-You are allowed to call exactly one tool at a time, in order to avoid conflicts.
-Do not call multiple tools at the same time.
+You have access to the following tools. You may call any of them whenever needed, but you must respect the division of responsibilities above.
+You may call the tool `call_coder` multiple times within a single response to parallelise the process.
 
 1. replace_code(file_path: str, old_code: str, new_code: str) -> str
     `replace_code` replaces the old code with the new code in the file.
