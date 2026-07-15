@@ -32,6 +32,7 @@ import tempfile
 import uuid
 
 import ast
+import re
 
 
 
@@ -105,6 +106,34 @@ repair_samples_llm = myChatOpenAI(
 
 
 ''' Helpful Functions '''
+def extract_python_code_blocks(content: str) -> List[str]:
+    """
+    Extract separate Python samples from an LLM response.
+
+    Supports fenced blocks labelled as python, py, or without a language tag.
+    If no complete fenced blocks exist, treats the cleaned response as one
+    candidate.
+    """
+    if not isinstance(content, str):
+        content = str(content)
+
+    pattern = re.compile(
+        r"```(?:python|py)?[ \t]*\r?\n(.*?)```",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    samples = [
+        match.group(1).strip()
+        for match in pattern.finditer(content)
+        if match.group(1).strip()
+    ]
+
+    if samples:
+        return samples
+
+    cleaned = clean_llm_output(content).strip()
+    return [cleaned] if cleaned else []
+
 def validate_code_syntax(code: str) -> bool:
 	"""
 	Overview: Checks if a given Python code string is syntactically valid using ast.parse.
@@ -584,7 +613,7 @@ def generate_samples(state: AgentSchema) -> AgentSchema:
         function_signature: str = state.get('function_signature', '')
         docstring: str = state.get('docstring', '')
         test_cases: List[Any] = state.get('test_cases', [])
-        num_samples: int = 5
+        num_samples: int = 3
 
         # Build prompt with fallback on KeyError
         try:
@@ -596,58 +625,60 @@ def generate_samples(state: AgentSchema) -> AgentSchema:
             )
         except KeyError:
             prompt = (
-                f"Function signature: {function_signature}\n"
-                f"Docstring: {docstring}\n"
-                f"Test cases: {test_cases}\n"
-                f"Generate {num_samples} Python code samples that implement the function."
+                f"Function signature:\n{function_signature}\n\n"
+                f"Docstring:\n{docstring}\n\n"
+                f"Test cases:\n{test_cases}\n\n"
+                f"Generate exactly {num_samples} separate Python code "
+                f"samples that implement the required function. Place each "
+                f"sample in its own fenced Python code block."
             )
 
-        # Invoke LLM with system message only
         result = safe_invoke(
             generate_samples_llm,
             messages=[SystemMessage(content=prompt)]
         )
-        content: str = result.content if isinstance(result.content, str) else str(result.content)
 
-        # Clean LLM output
-        cleaned: str = clean_llm_output(content)
+        content: str = (
+            result.content
+            if isinstance(result.content, str)
+            else str(result.content)
+        )
 
-        # Parse code samples from markdown fences
-        samples: List[str] = []
-        if '```' in cleaned:
-            parts = cleaned.split('```')
-            # Odd indices are inside fenced blocks
-            for i in range(1, len(parts), 2):
-                block = parts[i]
-                # Strip optional language tag (e.g., 'python') on the first line
-                if block.startswith('python'):
-                    lines = block.split('\n', 1)
-                    if len(lines) > 1:
-                        block = lines[1]
-                code = block.strip()
-                if code:
-                    samples.append(code)
-        else:
-            # No fences: treat whole cleaned content as a single sample
-            if cleaned.strip():
-                samples = [cleaned.strip()]
+        # Parse the raw response before clean_llm_output modifies its fences.
+        samples: List[str] = extract_python_code_blocks(content)
 
-        # Safety: never return empty list
+        # Ignore additional blocks if the model produced too many.
+        samples = samples[:num_samples]
+
         if not samples:
-            samples = [cleaned.strip()]
+            raise ValueError(
+                "The generation model returned no extractable Python "
+                "code samples."
+            )
 
-        # Increment generation attempt counter
-        generation_attempt: int = state.get('generation_attempt', 0) + 1
+        generation_attempt: int = (
+            state.get('generation_attempt', 0) + 1
+        )
 
         return {
             'samples': samples,
             'generation_attempt': generation_attempt
         }
+
     except Exception as e:
-        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        print(
+            f'{RED}[NODE] [ERR]{RESET}',
+            e
+        ) if DEBUG else None
+
         traceback.print_exc() if DEBUG else None
-        # On error, return original state unchanged
-        return state
+
+        return {
+            'samples': [],
+            'generation_attempt': (
+                state.get('generation_attempt', 0) + 1
+            )
+        }
 
 
 def validate_syntax(state: AgentSchema) -> AgentSchema:
@@ -908,81 +939,84 @@ def analyze_failures(state: AgentSchema) -> AgentSchema:
 
 
 def repair_samples(state: AgentSchema) -> AgentSchema:
-    """ Execution: LLM. If failures exist and within the 2ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“round limit, regenerates the failing samples using the LLM with repair feedback. Stores updated samples and routes to validate_syntax for reÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“validation. 
-    Execution: LLM. If failures exist and within the 2ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ëœround limit, regenerates the failing samples using the LLM with repair feedback. Stores updated samples and routes to validate_syntax for reÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ë˜validation.
-    
-    Overview:
-        This node receives the repair guidance and regenerates only the samples that previously failed. It preserves the passing samples unchanged, reducing unnecessary work and focusing the LLM on the problematic code.
-    
-    StepÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ËœbyÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Ë˜step:
-        1. Retrieve samples (state["samples"]), repair_feedback (state["repair_feedback"]), should_repair (state["should_repair"]), and repair_round (state["repair_round"]).
-        2. If should_repair is False, the node should not be called (controlled by conditional edge).
-        3. Identify failing samples: use repair_feedback and/or test_results (state.get("test_results")) to obtain indices of samples that need fixing.
-        4. Build a repair prompt that includes the original problem specification, the failing code snippets, and the repair_feedback.
-        5. Invoke repair_samples_llm with the prompt to obtain corrected code for each failing sample.
-        6. Replace the failing entries in the samples list with the newly generated code.
-        7. Increment repair_round.
-        8. Update state with the new samples list and the incremented repair_round.
-        9. Route to validate_syntax.
-    
-    Inputs:
-        - samples (list of str): Current list of code samples.
-        - repair_feedback (str): Guidance on what needs to be fixed.
-        - repair_round (int): Current repair round count.
-        - test_results (dict, optional): To pinpoint which samples failed.
-    
-    Outputs:
-        - samples (list of str): Updated list with repaired samples.
-        - repair_round (int): Incremented repair round count.
-    
-    Possible tools:
-        - None (the LLM performs regeneration). No ToolNode required.
-    
-    Possible helpful functions:
-        - None (prompt creation, parsing, and formatting are excluded per guidelines).
     """
+    Execution: LLM.
 
+    Regenerates samples that failed syntax validation or functional testing.
+    Passing samples remain unchanged. Repaired code is extracted from the
+    raw LLM response before Markdown cleaning.
+    """
     print_function_name()
+
     try:
-        # Extract state fields
-        samples: List[str] = state.get('samples', [])
-        repair_feedback: str = state.get('repair_feedback', '')
-        repair_round: int = state.get('repair_round', 0)
+        samples: List[str] = list(state.get('samples', []))
+        repair_feedback: str = state.get('repair_feedback','')
+        repair_round: int = state.get('repair_round',0)
         test_results: Dict[int, TestResultEntry] = state.get('test_results') or {}
-        function_signature: str = state.get('function_signature', '')
-        docstring: str = state.get('docstring', '')
-        test_cases: List[Any] = state.get('test_cases', [])
+        function_signature: str = state.get('function_signature','')
+        docstring: str = state.get('docstring','')
+        test_cases: List[Any] = state.get('test_cases',[])
 
-        # Build mapping from valid_samples index to original samples index.
-        # execute_tests enumerates valid_samples, so test_results keys refer to
-        # positions in valid_samples, not the original samples list.
-        valid_to_original: Dict[int, int] = {}
-        valid_counter: int = 0
-        for orig_idx, samp in enumerate(samples):
-            if validate_code_syntax(samp):
-                valid_to_original[valid_counter] = orig_idx
-                valid_counter += 1
+        if not samples:
+            failing_indices: List[int] = []
 
-        # Identify failing sample indices (original indices)
-        if test_results:
-            failing_valid_indices: List[int] = [i for i, e in test_results.items() if not e['passed']]
-            failing_indices: List[int] = [
-                valid_to_original[i] for i in failing_valid_indices if i in valid_to_original
-            ]
-        else:
+        elif not state.get('syntax_validation_passed', False):
+            # When every sample is syntactically invalid, repair all samples.
             failing_indices = list(range(len(samples)))
 
-        # If no failing indices, just increment round and return unchanged
-        if not failing_indices:
-            repair_round += 1
-            return {'samples': samples, 'repair_round': repair_round}
+        else:
+            # execute_tests indexes valid_samples rather than samples.
+            # This map connects each valid_samples index to the corresponding
+            # original samples index.
+            valid_to_original: Dict[int, int] = {}
+            valid_sample_index: int = 0
 
-        # Build string of failing samples' code with enumeration (original indices)
+            for original_index, sample in enumerate(samples):
+                if validate_code_syntax(sample):
+                    valid_to_original[valid_sample_index] = original_index
+                    valid_sample_index += 1
+
+            failing_valid_indices: List[int] = [
+                index
+                for index, result in test_results.items()
+                if not result.get('passed', False)
+            ]
+
+            failing_indices = [
+                valid_to_original[index]
+                for index in failing_valid_indices
+                if index in valid_to_original
+            ]
+
+            # Include syntactically invalid samples even when some valid
+            # samples reached functional testing.
+            invalid_indices: List[int] = [
+                index
+                for index, sample in enumerate(samples)
+                if not validate_code_syntax(sample)
+            ]
+
+            failing_indices.extend(invalid_indices)
+
+            # Remove duplicate indices while preserving their order.
+            failing_indices = list(
+                dict.fromkeys(failing_indices)
+            )
+
+        if not failing_indices:
+            return {
+                'samples': samples,
+                'repair_round': repair_round + 1
+            }
+
         failing_samples_str: str = "\n\n".join(
-            f"### Failing Sample {orig_i}:\n{samples[orig_i]}" for orig_i in failing_indices
+            (
+                f"### Failing Sample {sample_index}\n"
+                f"{samples[sample_index]}"
+            )
+            for sample_index in failing_indices
         )
 
-        # Build prompt with fallback on KeyError
         try:
             prompt: str = prompts.REPAIR_SAMPLES_PROMPT.format(
                 function_signature=function_signature,
@@ -992,77 +1026,76 @@ def repair_samples(state: AgentSchema) -> AgentSchema:
                 repair_feedback=repair_feedback,
                 repair_round=repair_round
             )
+
         except KeyError:
             prompt = (
-                f"Function signature: {function_signature}\n"
-                f"Docstring: {docstring}\n"
-                f"Test cases: {test_cases}\n"
-                f"Repair round: {repair_round}\n"
-                f"Repair feedback: {repair_feedback}\n"
-                f"Failing samples:\n{failing_samples_str}\n"
-                f"Generate corrected Python code samples for each failing sample above."
+                f"Function signature:\n"
+                f"{function_signature}\n\n"
+                f"Docstring:\n"
+                f"{docstring}\n\n"
+                f"Test cases:\n"
+                f"{test_cases}\n\n"
+                f"Repair round:\n"
+                f"{repair_round}\n\n"
+                f"Repair feedback:\n"
+                f"{repair_feedback}\n\n"
+                f"Failing samples:\n"
+                f"{failing_samples_str}\n\n"
+                f"Generate one corrected Python implementation for each "
+                f"failing sample. Preserve their order and place every "
+                f"implementation in a separate fenced Python code block."
             )
 
-        # Invoke LLM with system message only
-        result = safe_invoke(
-            repair_samples_llm,
-            messages=[SystemMessage(content=prompt)]
-        )
+        result = safe_invoke(repair_samples_llm, messages= [SystemMessage(content= prompt)])
         content: str = result.content if isinstance(result.content, str) else str(result.content)
 
-        # Clean LLM output
-        cleaned: str = clean_llm_output(content)
+        # Parse raw content before clean_llm_output removes Markdown fences.
+        repaired_samples: List[str] = extract_python_code_blocks(content)
 
-        # Parse code samples from markdown fences (reuse pattern from generate_samples)
-        repaired_samples: List[str] = []
-        if '```' in cleaned:
-            parts = cleaned.split('```')
-            # Odd indices are inside fenced blocks
-            for i in range(1, len(parts), 2):
-                block = parts[i]
-                # Strip optional language tag (e.g., 'python') on the first line
-                if block.startswith('python'):
-                    lines = block.split('\n', 1)
-                    if len(lines) > 1:
-                        block = lines[1]
-                code = block.strip()
-                if code:
-                    repaired_samples.append(code)
-        else:
-            # No fences: treat whole cleaned content as a single sample
-            if cleaned.strip():
-                repaired_samples = [cleaned.strip()]
-
-        # Safety: never return empty list
         if not repaired_samples:
-            repaired_samples = [cleaned.strip()]
+            raise ValueError("The repair model returned no extractable Python samples.")
 
-        # Replace failing entries with repaired code (using original indices)
-        if len(repaired_samples) == 1 and len(failing_indices) > 1:
-            # One repaired sample replaces all failing
-            for orig_i in failing_indices:
-                if 0 <= orig_i < len(samples):
-                    samples[orig_i] = repaired_samples[0]
+        if (
+            len(repaired_samples) == 1
+            and len(failing_indices) > 1
+        ):
+            # A single corrected implementation can replace every failed
+            # candidate when the model returns one shared solution.
+            repaired_code: str = repaired_samples[0]
+
+            for original_index in failing_indices:
+                samples[original_index] = repaired_code
+
         else:
-            # Match as many as possible in order
-            n: int = min(len(failing_indices), len(repaired_samples))
-            for k in range(n):
-                orig_i: int = failing_indices[k]
-                if 0 <= orig_i < len(samples):
-                    samples[orig_i] = repaired_samples[k]
+            # Replace each failed sample with the corresponding repaired
+            # sample. If fewer repairs are returned, unmatched samples remain
+            # unchanged and can be attempted in the next repair round.
+            number_to_replace: int = min(
+                len(failing_indices),
+                len(repaired_samples)
+            )
 
-        # Increment repair round
-        repair_round += 1
+            for repair_index in range(number_to_replace):
+                original_index: int = failing_indices[repair_index]
+                samples[original_index] = repaired_samples[repair_index]
 
         return {
             'samples': samples,
-            'repair_round': repair_round
+            'repair_round': repair_round + 1
         }
+
     except Exception as e:
-        print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
+        print(
+            f'{RED}[NODE] [ERR]{RESET}',
+            e
+        ) if DEBUG else None
+
         traceback.print_exc() if DEBUG else None
-        # On error, return original state unchanged
-        return state
+
+        return {
+            'samples': state.get('samples', []),
+            'repair_round': state.get('repair_round', 0) + 1
+        }
 
 
 def finalize_solution(state: AgentSchema) -> AgentSchema:
