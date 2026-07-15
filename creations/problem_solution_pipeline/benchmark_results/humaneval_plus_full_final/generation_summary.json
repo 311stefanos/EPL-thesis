@@ -1,0 +1,21 @@
+{
+  "finished_at": "2026-07-15T14:17:59.616920+00:00",
+  "dataset_task_count": 164,
+  "selected_tasks": 164,
+  "previously_completed_tasks": 0,
+  "generated_this_run": 164,
+  "samples_in_file": 164,
+  "unique_tasks_in_samples": 164,
+  "full_dataset_complete": true,
+  "agent_errors_this_run": 0,
+  "syntax_invalid_this_run": 0,
+  "elapsed_seconds_this_run": 7665.22,
+  "status_counts_all_logs": {
+    "ok": 164
+  },
+  "samples_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\problem_solution_pipeline\\benchmark_results\\humaneval_plus_full_final\\samples.jsonl",
+  "evaluation_requested": true,
+  "evaluation_performed": true,
+  "evaluation_skipped_reason": null,
+  "evaluation_exit_code": 0
+}
