@@ -58,20 +58,7 @@ class GenerationRecord:
 
 def strip_python_inline_comment(source: str) -> str:
     """
-    Remove Python comments from a code expression while preserving '#' symbols
-    that occur inside string literals.
-
-    Examples:
-        'round(f([1, 2]), 2) # explanation'
-        becomes:
-        'round(f([1, 2]), 2)'
-
-        '"value # text"'
-        remains:
-        '"value # text"'
-
-    If tokenization fails because the expression is incomplete, a conservative
-    character-based fallback is used.
+    Remove Python comments while preserving '#' characters inside strings.
     """
     if not source:
         return ""
@@ -87,8 +74,9 @@ def strip_python_inline_comment(source: str) -> str:
             if token.type != tokenize.COMMENT
         ]
 
-        cleaned = tokenize.untokenize(filtered_tokens).strip()
-        return cleaned
+        return tokenize.untokenize(
+            filtered_tokens
+        ).strip()
 
     except (
         tokenize.TokenError,
@@ -124,63 +112,699 @@ def strip_python_inline_comment(source: str) -> str:
                 return source[:index].rstrip()
 
         return source.strip()
-    
-def clean_doctest_comments(docstring: str) -> str:
+
+
+def clean_docstring_comments(docstring: str) -> str:
     """
-    Remove inline Python comments from doctest prompt lines in a docstring.
+    Remove explanatory comments from examples before the docstring is sent
+    to the agent.
 
-    Only code lines beginning with '>>>' or '...' are modified. Normal
-    descriptive docstring text is preserved.
+    Semantic comment separators are retained by converting:
 
-    Example:
+        function(...) # => result
 
-        >>> round(find_zero([1, 2]), 2) # f(x) = 1 + 2x
-        -0.5
+    into:
 
-    becomes:
+        function(...) => result
 
-        >>> round(find_zero([1, 2]), 2)
-        -0.5
+    Comment-only explanation lines are removed.
     """
     if not docstring:
         return ""
 
+    semantic_comment_pattern = re.compile(
+        r"#\s*"
+        r"(?P<separator>"
+        r"={1,3}>|=>|➞|->|"
+        r"should\s+return|returns?"
+        r")"
+        r"\s*(?P<expected>.+)$",
+        flags=re.IGNORECASE,
+    )
+
     cleaned_lines: list[str] = []
 
-    for line in docstring.splitlines():
-        stripped_line = line.lstrip()
-        indentation = line[:len(line) - len(stripped_line)]
+    for original_line in docstring.splitlines():
+        stripped_line = original_line.lstrip()
 
-        if stripped_line.startswith(">>>"):
-            code = stripped_line[3:].lstrip()
-            code = strip_python_inline_comment(code)
+        # Remove explanation-only comment lines.
+        if stripped_line.startswith("#"):
+            continue
 
-            if code:
-                cleaned_lines.append(
-                    f"{indentation}>>> {code}"
-                )
-            else:
-                cleaned_lines.append(
-                    f"{indentation}>>>"
-                )
+        semantic_match = semantic_comment_pattern.search(
+            original_line
+        )
 
-        elif stripped_line.startswith("..."):
-            code = stripped_line[3:].lstrip()
-            code = strip_python_inline_comment(code)
+        if semantic_match:
+            original_line = (
+                original_line[:semantic_match.start()].rstrip()
+                + " "
+                + semantic_match.group("separator")
+                + " "
+                + semantic_match.group("expected")
+            )
 
-            if code:
-                cleaned_lines.append(
-                    f"{indentation}... {code}"
-                )
-            else:
-                cleaned_lines.append(
-                    f"{indentation}..."
-                )
+        cleaned_line = strip_python_inline_comment(
+            original_line
+        )
 
-        else:
-            cleaned_lines.append(line)
+        cleaned_lines.append(cleaned_line)
 
     return "\n".join(cleaned_lines)
+
+
+def get_signature_parameter_names(
+    function_signature: str,
+) -> list[str]:
+    """
+    Extract parameter names from a Python function signature.
+    """
+    signature = function_signature.strip()
+
+    if not signature:
+        return []
+
+    source = (
+        signature + "\n    pass"
+        if signature.endswith(":")
+        else signature
+    )
+
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return []
+
+    if not tree.body:
+        return []
+
+    function_node = tree.body[0]
+
+    if not isinstance(
+        function_node,
+        (ast.FunctionDef, ast.AsyncFunctionDef),
+    ):
+        return []
+
+    parameters = [
+        *function_node.args.posonlyargs,
+        *function_node.args.args,
+        *function_node.args.kwonlyargs,
+    ]
+
+    return [
+        parameter.arg
+        for parameter in parameters
+    ]
+
+
+def parse_expected_literal(
+    expected_text: str,
+) -> str | None:
+    """
+    Parse the expected result conservatively.
+
+    Supports literal values and explanatory calculations such as:
+
+        19 - 5 - 6 = 8
+
+    In that case, the final literal value, 8, is used.
+    """
+    expected_text = strip_python_inline_comment(
+        expected_text
+    ).strip()
+
+    if not expected_text:
+        return None
+
+    expected_text = re.sub(
+        r"\btrue\b",
+        "True",
+        expected_text,
+        flags=re.IGNORECASE,
+    )
+    expected_text = re.sub(
+        r"\bfalse\b",
+        "False",
+        expected_text,
+        flags=re.IGNORECASE,
+    )
+    expected_text = re.sub(
+        r"\bnull\b",
+        "None",
+        expected_text,
+        flags=re.IGNORECASE,
+    )
+
+    candidates: list[str] = []
+
+    # For:
+    #     19 - 5 - 6 = 8
+    # try 8 first.
+    if "=" in expected_text:
+        candidates.append(
+            expected_text.rsplit("=", 1)[-1].strip()
+        )
+
+    candidates.append(expected_text)
+
+    for candidate in candidates:
+        candidate = candidate.strip().rstrip(".").strip()
+
+        # Try progressively shorter prefixes. This handles:
+        #
+        #     'No' (the name should start with a letter)
+        #
+        # by eventually parsing only 'No'.
+        for end_index in range(
+            len(candidate),
+            0,
+            -1,
+        ):
+            prefix = candidate[:end_index].rstrip()
+
+            if not prefix:
+                continue
+
+            try:
+                value = ast.literal_eval(prefix)
+                return repr(value)
+
+            except (
+                SyntaxError,
+                ValueError,
+                TypeError,
+                MemoryError,
+                RecursionError,
+            ):
+                continue
+
+    return None
+
+
+def is_safe_example_expression(
+    source: str,
+    entry_point: str,
+) -> bool:
+    """
+    Accept an expression only when it calls the current task's function and
+    does not depend on undefined argument variables.
+
+    This accepts:
+
+        target([1, 2])
+        round(target([1, 2]), 2)
+
+    It rejects ambiguous examples such as:
+
+        target(a)
+        target(n)
+    """
+    try:
+        tree = ast.parse(
+            source,
+            mode="eval",
+        )
+
+    except (SyntaxError, ValueError):
+        return False
+
+    parent_nodes: dict[ast.AST, ast.AST] = {}
+
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parent_nodes[child] = parent
+
+    calls_entry_point = False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            called_function = node.func
+
+            if (
+                isinstance(called_function, ast.Name)
+                and called_function.id == entry_point
+            ):
+                calls_entry_point = True
+
+        if isinstance(node, ast.Name):
+            parent = parent_nodes.get(node)
+
+            # Names used as called functions are permitted:
+            # round(...), target(...), len(...), and so on.
+            if (
+                isinstance(parent, ast.Call)
+                and parent.func is node
+            ):
+                continue
+
+            # Any other bare variable would make the test dependent on an
+            # undefined value.
+            return False
+
+    return calls_entry_point
+
+
+def build_call_from_assignment_text(
+    assignment_text: str,
+    *,
+    entry_point: str,
+    parameter_names: list[str],
+) -> str | None:
+    """
+    Convert named argument descriptions into a function call.
+
+    Example:
+
+        lst = [1, 2, 3]
+
+    becomes:
+
+        target_function([1, 2, 3])
+
+    Multiple values are ordered according to the actual function signature.
+    """
+    assignment_text = assignment_text.strip().strip(",")
+
+    if not assignment_text:
+        return None
+
+    # Convert documentation-style colon assignments:
+    #
+    #     grid : [[...]], bucket_capacity : 1
+    #
+    # into valid keyword syntax.
+    assignment_text = re.sub(
+        r"(^|,)\s*([A-Za-z_]\w*)\s*:\s*",
+        lambda match: (
+            f"{match.group(1)} "
+            f"{match.group(2)}="
+        ),
+        assignment_text,
+    )
+
+    try:
+        parsed_expression = ast.parse(
+            f"_arguments({assignment_text})",
+            mode="eval",
+        ).body
+
+    except (SyntaxError, ValueError):
+        return None
+
+    if not isinstance(parsed_expression, ast.Call):
+        return None
+
+    # Named documentation examples are expected here.
+    if parsed_expression.args:
+        return None
+
+    values_by_name: dict[str, Any] = {}
+    documented_order: list[str] = []
+
+    for keyword in parsed_expression.keywords:
+        if keyword.arg is None:
+            return None
+
+        try:
+            value = ast.literal_eval(keyword.value)
+
+        except (
+            SyntaxError,
+            ValueError,
+            TypeError,
+        ):
+            return None
+
+        values_by_name[keyword.arg] = value
+        documented_order.append(keyword.arg)
+
+    if not values_by_name:
+        return None
+
+    signature_order = [
+        parameter_name
+        for parameter_name in parameter_names
+        if parameter_name in values_by_name
+    ]
+
+    if len(signature_order) == len(values_by_name):
+        ordered_names = signature_order
+    else:
+        ordered_names = documented_order
+
+    argument_values = [
+        repr(values_by_name[name])
+        for name in ordered_names
+    ]
+
+    return (
+        f"{entry_point}("
+        f"{', '.join(argument_values)}"
+        f")"
+    )
+
+
+def build_call_from_input_text(
+    input_text: str,
+    *,
+    entry_point: str,
+    parameter_names: list[str],
+) -> str | None:
+    """
+    Convert an Input section into a function call.
+    """
+    input_text = " ".join(
+        part.strip()
+        for part in input_text.splitlines()
+        if part.strip()
+    ).strip().strip(",")
+
+    if not input_text:
+        return None
+
+    contains_named_arguments = bool(
+        re.search(
+            r"(^|,)\s*[A-Za-z_]\w*\s*[:=]",
+            input_text,
+        )
+    )
+
+    if contains_named_arguments:
+        return build_call_from_assignment_text(
+            input_text,
+            entry_point=entry_point,
+            parameter_names=parameter_names,
+        )
+
+    try:
+        input_value = ast.literal_eval(
+            input_text.rstrip(".")
+        )
+
+    except (
+        SyntaxError,
+        ValueError,
+        TypeError,
+    ):
+        return None
+
+    return f"{entry_point}({input_value!r})"
+
+
+def extract_common_visible_examples(
+    docstring: str,
+    *,
+    entry_point: str,
+    function_signature: str,
+) -> list[tuple[str, str]]:
+    """
+    Conservatively extract common visible-example formats from a docstring.
+
+    Supported direct formats include:
+
+        function_call(...) => result
+        function_call(...) ==> result
+        function_call(...) ===> result
+        function_call(...) ➞ result
+        function_call(...) -> result
+        function_call(...) == result
+        function_call(...) = result
+        function_call(...) returns result
+        function_call(...) should return result
+
+    The same formats may optionally begin with the word "for":
+
+        for function_call(...) == result
+        For function_call(...) => result
+
+    Also supports:
+
+        For argument = value, the output should be result
+
+    and structured Input/Output blocks.
+
+    Only examples that call the current task's entry point and have a safely
+    parseable literal result are returned. Ambiguous examples are skipped.
+
+    Returns:
+        A list of tuples containing:
+
+            (function_call_expression, expected_literal_text)
+    """
+    parameter_names = get_signature_parameter_names(
+        function_signature
+    )
+
+    examples: list[tuple[str, str]] = []
+    seen_examples: set[tuple[str, str]] = set()
+
+    def add_example(
+        source: str | None,
+        expected_text: str | None,
+    ) -> None:
+        if not source or not expected_text:
+            return
+
+        source = source.strip()
+
+        if not is_safe_example_expression(
+            source,
+            entry_point,
+        ):
+            return
+
+        expected_literal = parse_expected_literal(
+            expected_text
+        )
+
+        if expected_literal is None:
+            return
+
+        example = (
+            source,
+            expected_literal,
+        )
+
+        if example not in seen_examples:
+            seen_examples.add(example)
+            examples.append(example)
+
+    lines = docstring.splitlines()
+
+    # Direct function-call/result formats.
+    #
+    # The optional (?:for\s+)? part supports:
+    #
+    #     for x_or_y(7, 34, 12) == 34
+    #
+    # The pattern is case-insensitive, so "For" is also accepted.
+    direct_example_pattern = re.compile(
+        r"^(?:[-*]\s*)?"
+        r"(?:for\s+)?"
+        r"(?P<call>[A-Za-z_]\w*\s*\(.*\))"
+        r"\s*"
+        r"(?P<separator>"
+        r"={1,3}>|"
+        r"➞|"
+        r"->|"
+        r"==|"
+        r"=|"
+        r"should\s+return|"
+        r"returns?"
+        r")"
+        r"\s*"
+        r"(?P<expected>.+?)"
+        r"\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    # Documentation format:
+    #
+    #     For lst = [1, 2, 3] the output should be 14
+    #     For num = "AB" the result should be 1
+    for_example_pattern = re.compile(
+        r"^For\s+"
+        r"(?P<inputs>.+?)"
+        r"\s*,?\s*"
+        r"(?:the\s+)?"
+        r"(?:output|result)"
+        r"\s+should\s+be\s+"
+        r"(?P<expected>.+?)"
+        r"\s*$",
+        flags=re.IGNORECASE,
+    )
+
+    for original_line in lines:
+        line = original_line.strip()
+
+        if not line:
+            continue
+
+        # Support doctest assertions written on one line:
+        #
+        #     >>> count_nums([]) == 0
+        if line.startswith(">>>"):
+            line = line[3:].strip()
+
+        direct_match = direct_example_pattern.match(
+            line
+        )
+
+        if direct_match:
+            add_example(
+                direct_match.group("call"),
+                direct_match.group("expected"),
+            )
+            continue
+
+        for_match = for_example_pattern.match(
+            line
+        )
+
+        if for_match:
+            call = build_call_from_assignment_text(
+                for_match.group("inputs"),
+                entry_point=entry_point,
+                parameter_names=parameter_names,
+            )
+
+            add_example(
+                call,
+                for_match.group("expected"),
+            )
+
+    # Structured Input/Output blocks:
+    #
+    #     Input: [4, 2, 3]
+    #     Output: [2, 1]
+    #
+    # or:
+    #
+    #     Input:
+    #         grid: [[0, 0], [1, 1]]
+    #         bucket_capacity: 2
+    #     Output: 1
+    line_index = 0
+
+    while line_index < len(lines):
+        input_match = re.match(
+            r"^\s*Input\s*:\s*(.*)$",
+            lines[line_index],
+            flags=re.IGNORECASE,
+        )
+
+        if not input_match:
+            line_index += 1
+            continue
+
+        input_parts: list[str] = []
+
+        first_input_part = input_match.group(1).strip()
+
+        if first_input_part:
+            input_parts.append(first_input_part)
+
+        search_index = line_index + 1
+        output_text: str | None = None
+
+        while search_index < len(lines):
+            output_match = re.match(
+                r"^\s*Output\s*:\s*(.*)$",
+                lines[search_index],
+                flags=re.IGNORECASE,
+            )
+
+            if output_match:
+                output_text = output_match.group(1).strip()
+                break
+
+            if re.match(
+                r"^\s*(?:Example\b|Input\s*:)",
+                lines[search_index],
+                flags=re.IGNORECASE,
+            ):
+                break
+
+            current_part = lines[search_index].strip()
+
+            if (
+                current_part
+                and not current_part.lower().startswith(
+                    "explanation"
+                )
+            ):
+                input_parts.append(
+                    current_part.rstrip(",")
+                )
+
+            search_index += 1
+
+        if output_text is not None:
+            combined_input = ", ".join(
+                input_parts
+            )
+
+            call = build_call_from_input_text(
+                combined_input,
+                entry_point=entry_point,
+                parameter_names=parameter_names,
+            )
+
+            add_example(
+                call,
+                output_text,
+            )
+
+            line_index = search_index + 1
+
+        else:
+            line_index += 1
+
+    return examples
+
+
+def prepare_docstring_for_agent(
+    docstring: str,
+    *,
+    entry_point: str,
+    function_signature: str,
+) -> str:
+    """
+    Remove comments and append standardized doctest examples for all safely
+    recognized example formats.
+    """
+    cleaned_docstring = clean_docstring_comments(
+        docstring
+    )
+
+    visible_examples = extract_common_visible_examples(
+        cleaned_docstring,
+        entry_point=entry_point,
+        function_signature=function_signature,
+    )
+
+    if not visible_examples:
+        return cleaned_docstring
+
+    normalized_lines = [
+        "",
+        "Normalized visible examples:",
+    ]
+
+    for source, expected_literal in visible_examples:
+        normalized_lines.append(
+            f">>> {source}"
+        )
+        normalized_lines.append(
+            expected_literal
+        )
+
+    return (
+        cleaned_docstring.rstrip()
+        + "\n"
+        + "\n".join(normalized_lines)
+    )
     
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -251,12 +875,8 @@ def parse_problem(
     problem: Mapping[str, Any],
 ) -> ProblemSpec:
     """
-    Parse one HumanEval problem into the fields required by the generated
-    problem-solving agent.
-
-    Inline comments are removed from doctest expressions before the docstring
-    is stored and passed to the agent. Normal descriptive comments and prose
-    outside doctest prompt lines are preserved.
+    Parse a HumanEval problem and normalize its visible examples before the
+    docstring is supplied to the agent.
     """
     prompt = str(problem["prompt"])
     entry_point = str(problem["entry_point"])
@@ -271,7 +891,7 @@ def parse_problem(
 
     function_node = find_target_function(
         tree,
-        entry_point
+        entry_point,
     )
 
     lines = prompt.splitlines()
@@ -281,7 +901,9 @@ def parse_problem(
             f"Function '{entry_point}' has no body in {task_id}."
         )
 
-    first_body_line = function_node.body[0].lineno - 1
+    first_body_line = (
+        function_node.body[0].lineno - 1
+    )
 
     function_signature = "\n".join(
         lines[
@@ -299,13 +921,15 @@ def parse_problem(
     original_docstring = (
         ast.get_docstring(
             function_node,
-            clean=False
+            clean=False,
         )
         or ""
     )
 
-    cleaned_docstring = clean_doctest_comments(
-        original_docstring
+    prepared_docstring = prepare_docstring_for_agent(
+        original_docstring,
+        entry_point=entry_point,
+        function_signature=function_signature,
     )
 
     preamble = "\n".join(
@@ -317,7 +941,7 @@ def parse_problem(
         entry_point=entry_point,
         prompt=prompt,
         function_signature=function_signature,
-        docstring=cleaned_docstring,
+        docstring=prepared_docstring,
         preamble=preamble,
     )
 
@@ -328,89 +952,64 @@ def extract_visible_doctest_asserts(
     max_tests: int,
 ) -> list[str]:
     """
-    Extract visible examples from a HumanEval docstring and convert them into
-    executable assert statements.
+    Convert standardized visible doctest examples into assert statements.
 
-    Supported formats:
-
-    Standard doctest:
-
-        >>> add(1, 2)
-        3
-
-    Inline equality:
-
-        add(1, 2) == 3
-
-    Inline equality with an explanatory calculation:
-
-        double_the_difference([1, 3, 2, 0]) == 1 + 9 + 0 + 0 = 10
-
-    The last literal value is treated as the expected result. Inline Python
-    comments are removed before parsing.
-
-    Malformed or unsupported examples are skipped instead of terminating the
-    benchmark. Hidden HumanEval and HumanEval+ tests are never accessed.
+    Malformed doctest sections are skipped. The normalized examples appended
+    by prepare_docstring_for_agent remain parseable through the fallback
+    parser even when an earlier section has inconsistent indentation.
     """
     if not docstring or max_tests <= 0:
         return []
 
-    cleaned_docstring = clean_doctest_comments(docstring)
-
     tests: list[str] = []
     seen_tests: set[str] = set()
 
-    def add_assertion(
+    def add_example(
         source: str,
         expected_text: str,
     ) -> None:
-        """
-        Add an assertion only when the source is a valid Python expression and
-        the expected result is a Python literal.
-        """
         if len(tests) >= max_tests:
             return
 
-        source = strip_python_inline_comment(source).strip()
-        expected_text = strip_python_inline_comment(expected_text).strip()
+        source = strip_python_inline_comment(
+            source
+        ).strip()
 
-        if not source or not expected_text:
-            return
+        expected_literal = parse_expected_literal(
+            expected_text
+        )
 
-        if "Traceback (most recent call last)" in expected_text:
+        if not source or expected_literal is None:
             return
 
         try:
-            ast.parse(source, mode="eval")
-            expected_value = ast.literal_eval(expected_text)
+            ast.parse(
+                source,
+                mode="eval",
+            )
 
-        except (
-            SyntaxError,
-            ValueError,
-            TypeError,
-            MemoryError,
-            RecursionError,
-        ):
+        except (SyntaxError, ValueError):
             return
 
-        assertion = f"assert ({source}) == {expected_value!r}"
+        assertion = (
+            f"assert ({source}) == "
+            f"{expected_literal}"
+        )
 
         if assertion not in seen_tests:
             seen_tests.add(assertion)
             tests.append(assertion)
 
-    # ---------------------------------------------------------------
-    # 1. Parse standard doctest examples.
-    # ---------------------------------------------------------------
+    # First use Python's doctest parser when possible.
     try:
         parser = doctest.DocTestParser()
-        examples = parser.get_examples(cleaned_docstring)
+        examples = parser.get_examples(docstring)
 
     except Exception:
         examples = []
 
     for example in examples:
-        add_assertion(
+        add_example(
             example.source,
             example.want,
         )
@@ -418,10 +1017,8 @@ def extract_visible_doctest_asserts(
         if len(tests) >= max_tests:
             return tests
 
-    # ---------------------------------------------------------------
-    # 2. Conservative fallback for malformed >>> doctest examples.
-    # ---------------------------------------------------------------
-    lines = cleaned_docstring.splitlines()
+    # Conservative fallback for malformed doctest indentation.
+    lines = docstring.splitlines()
     line_index = 0
 
     while (
@@ -434,9 +1031,7 @@ def extract_visible_doctest_asserts(
             line_index += 1
             continue
 
-        source = strip_python_inline_comment(
-            current_line[3:].strip()
-        )
+        source = current_line[3:].strip()
 
         if not source:
             line_index += 1
@@ -459,78 +1054,12 @@ def extract_visible_doctest_asserts(
             line_index = expected_index
             continue
 
-        add_assertion(
+        add_example(
             source,
             expected_line,
         )
 
         line_index = expected_index + 1
-
-    # ---------------------------------------------------------------
-    # 3. Parse inline equality examples.
-    # ---------------------------------------------------------------
-    for original_line in lines:
-        if len(tests) >= max_tests:
-            break
-
-        line = strip_python_inline_comment(
-            original_line.strip()
-        )
-
-        if not line:
-            continue
-
-        if line.startswith((">>>", "...")):
-            continue
-
-        if "==" not in line:
-            continue
-
-        source_part, remainder = line.split("==", 1)
-
-        source = source_part.strip()
-        remainder = remainder.strip()
-
-        if not source or not remainder:
-            continue
-
-        # Validate the left side as a Python expression. This prevents ordinary
-        # descriptive prose containing "==" from becoming a test.
-        try:
-            ast.parse(source, mode="eval")
-        except (SyntaxError, ValueError):
-            continue
-
-        expected_candidates: list[str] = []
-
-        # First try the complete expression after ==.
-        #
-        # Example:
-        #     function([1]) == 1
-        expected_candidates.append(remainder)
-
-        # Then try the value after the final single or repeated equals sign.
-        #
-        # Example:
-        #     function([1, 3]) == 1 + 9 = 10
-        #
-        # The final candidate becomes "10".
-        if "=" in remainder:
-            final_part = remainder.rsplit("=", 1)[-1].strip()
-
-            if final_part:
-                expected_candidates.insert(0, final_part)
-
-        for expected_text in expected_candidates:
-            previous_count = len(tests)
-
-            add_assertion(
-                source,
-                expected_text,
-            )
-
-            if len(tests) > previous_count:
-                break
 
     return tests
 
