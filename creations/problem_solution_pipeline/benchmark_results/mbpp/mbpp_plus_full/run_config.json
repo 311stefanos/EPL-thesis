@@ -1,0 +1,20 @@
+{
+  "created_at": "2026-07-16T11:58:12.547426+00:00",
+  "run_id": "2a221423bf7043b494af49d6a61035c6",
+  "dataset": "MBPP / MBPP+",
+  "evalplus_dataset_argument": "mbpp",
+  "dataset_task_count": 378,
+  "selected_task_count": 378,
+  "full_dataset_selected": true,
+  "agent_module": "creations.problem_solution_pipeline.problem_solution_pipeline",
+  "agent_object": "problem_solution_pipeline_app",
+  "visible_tests": "original",
+  "max_visible_tests": 20,
+  "recursion_limit": 100,
+  "start_index": 0,
+  "limit": null,
+  "selected_task_ids": [],
+  "evaluation_mode": "docker",
+  "base_only": false,
+  "methodology_note": "The agent receives the curated MBPP task description, EvalPlus's standardized function signature, and optionally the original public MBPP test_list. It never receives canonical_solution, base_input, plus_input, contracts, or evaluator outputs. EvalPlus reports Base for the original MBPP tests on the curated task set and Base + Extra for MBPP+."
+}

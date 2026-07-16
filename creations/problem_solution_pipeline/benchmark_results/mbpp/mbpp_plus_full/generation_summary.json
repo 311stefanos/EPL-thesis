@@ -1,0 +1,27 @@
+{
+  "finished_at": "2026-07-16T13:04:08.078011+00:00",
+  "dataset": "MBPP / MBPP+",
+  "dataset_task_count": 378,
+  "selected_tasks": 378,
+  "previously_completed_tasks": 0,
+  "generated_this_run": 378,
+  "samples_in_file": 378,
+  "unique_tasks_in_samples": 378,
+  "full_dataset_complete": true,
+  "subset_override_used": false,
+  "subset_override_path": null,
+  "agent_errors_this_run": 0,
+  "syntax_invalid_this_run": 0,
+  "elapsed_seconds_this_run": 3952.382,
+  "status_counts_all_logs": {
+    "ok": 378
+  },
+  "samples_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\problem_solution_pipeline\\benchmark_results\\mbpp\\mbpp_plus_full\\samples.jsonl",
+  "evaluation_requested": true,
+  "evaluation_performed": true,
+  "reported_scores": [
+    "Base",
+    "Base + Extra"
+  ],
+  "evaluation_exit_code": 0
+}
