@@ -2063,16 +2063,16 @@ if __name__ == "__main__":
     # Test 3
     # python .\run_humaneval_plus_benchmark.py `
     # --limit 3 `
-    # --output-dir .\benchmark_results\humaneval\humaneval_plus_test `
+    # --output-dir .\benchmark_results\humaneval_plus_test `
     # --evaluation-mode none
 
     # Run All
     # python .\run_humaneval_plus_benchmark.py `
-    # --output-dir .\benchmark_results\humaneval\humaneval_plus_full `
+    # --output-dir .\benchmark_results\humaneval_plus_full `
     # --evaluation-mode docker
 
     # Resume
     # python .\run_humaneval_plus_benchmark.py `
-    # --output-dir .\benchmark_results\humaneval\humaneval_plus_full `
+    # --output-dir .\benchmark_results\humaneval_plus_full `
     # --resume `
     # --evaluation-mode docker
