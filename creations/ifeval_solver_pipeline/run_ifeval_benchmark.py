@@ -261,6 +261,19 @@ def invoke_agent(
     return response
 
 
+def close_result_queue(result_queue: Any) -> None:
+    """Close a multiprocessing queue without allowing cleanup to hang."""
+    try:
+        result_queue.close()
+    except Exception:
+        pass
+
+    try:
+        result_queue.join_thread()
+    except Exception:
+        pass
+
+
 def invoke_agent_worker(
     result_queue: Any,
     module_name: str,
@@ -269,12 +282,7 @@ def invoke_agent_worker(
     recursion_limit: int,
     run_id: str,
 ) -> None:
-    """Run one agent invocation in an isolated child process.
-
-    Only small, serializable fields are returned to the parent process. The
-    process can be terminated safely by the parent when the task exceeds its
-    time limit.
-    """
+    """Run one agent invocation in an isolated child process."""
     try:
         agent = load_agent(module_name, object_name)
         response = invoke_agent(
@@ -851,27 +859,88 @@ def main() -> int:
             except StopIteration:
                 no_more_tasks = True
                 break
+
             start_task(position, task)
 
         if not active:
             break
 
         made_progress = False
-        now = time.perf_counter()
 
         for task_key, invocation in list(active.items()):
             task = invocation["task"]
             process = invocation["process"]
             result_queue = invocation["queue"]
-            elapsed = now - invocation["started_at"]
+            elapsed = time.perf_counter() - invocation["started_at"]
 
-            if process.is_alive() and elapsed < args.task_timeout_seconds:
+            # Read the queue before waiting for the process to exit.
+            try:
+                result = result_queue.get_nowait()
+            except Empty:
+                result = None
+
+            if result is not None:
+                made_progress = True
+
+                # The answer has been received. Give the worker a short period
+                # to exit normally, then terminate it if background threads remain.
+                process.join(timeout=2.0)
+
+                if process.is_alive():
+                    terminate_process(process)
+
+                if result.get("kind") == "success":
+                    answer = normalize_answer(result.get("answer"))
+                    status = "ok" if answer.strip() else "empty_answer"
+
+                    save_task_result(
+                        task,
+                        status=status,
+                        elapsed_seconds=elapsed,
+                        answer=answer,
+                        review_loops=optional_int(
+                            result.get("review_loops")
+                        ),
+                        passed_latest_review=optional_bool(
+                            result.get("passed_latest_review")
+                        ),
+                    )
+
+                    failure_occurred = status != "ok"
+
+                else:
+                    error = str(
+                        result.get("error")
+                        or "WorkerProcessError: unknown worker failure"
+                    )
+
+                    worker_traceback = result.get("traceback")
+                    if worker_traceback:
+                        print(worker_traceback, file=sys.stderr)
+
+                    save_task_result(
+                        task,
+                        status="agent_error",
+                        elapsed_seconds=elapsed,
+                        error=error,
+                    )
+
+                    failure_occurred = True
+
+                close_result_queue(result_queue)
+                del active[task_key]
+
+                if failure_occurred and args.stop_on_error:
+                    stop_requested = True
+
                 continue
 
-            made_progress = True
+            # No result yet. Apply the timeout only now.
+            if elapsed >= args.task_timeout_seconds:
+                made_progress = True
 
-            if process.is_alive():
                 terminate_process(process)
+
                 save_task_result(
                     task,
                     status="timeout",
@@ -881,56 +950,84 @@ def main() -> int:
                         f"{args.task_timeout_seconds:g} seconds"
                     ),
                 )
-                failure_occurred = True
-            else:
+
+                close_result_queue(result_queue)
+                del active[task_key]
+
+                if args.stop_on_error:
+                    stop_requested = True
+
+                continue
+
+            # The worker exited unexpectedly without placing anything in the queue.
+            if not process.is_alive():
+                made_progress = True
                 process.join(timeout=0.1)
+
+                # Queue delivery can lag very slightly after process exit.
                 try:
                     result = result_queue.get(timeout=1.0)
                 except Empty:
-                    result = {
-                        "kind": "error",
-                        "error": (
-                            "WorkerProcessError: child process exited "
-                            f"with code {process.exitcode} without returning a result"
-                        ),
-                    }
+                    result = None
 
-                if result.get("kind") == "success":
-                    answer = normalize_answer(result.get("answer"))
-                    status = "ok" if answer.strip() else "empty_answer"
-                    save_task_result(
-                        task,
-                        status=status,
-                        elapsed_seconds=elapsed,
-                        answer=answer,
-                        review_loops=optional_int(result.get("review_loops")),
-                        passed_latest_review=optional_bool(
-                            result.get("passed_latest_review")
-                        ),
-                    )
-                    failure_occurred = status != "ok"
+                if result is not None:
+                    if result.get("kind") == "success":
+                        answer = normalize_answer(result.get("answer"))
+                        status = "ok" if answer.strip() else "empty_answer"
+
+                        save_task_result(
+                            task,
+                            status=status,
+                            elapsed_seconds=elapsed,
+                            answer=answer,
+                            review_loops=optional_int(
+                                result.get("review_loops")
+                            ),
+                            passed_latest_review=optional_bool(
+                                result.get("passed_latest_review")
+                            ),
+                        )
+
+                        failure_occurred = status != "ok"
+
+                    else:
+                        error = str(
+                            result.get("error")
+                            or "WorkerProcessError: unknown worker failure"
+                        )
+
+                        worker_traceback = result.get("traceback")
+                        if worker_traceback:
+                            print(worker_traceback, file=sys.stderr)
+
+                        save_task_result(
+                            task,
+                            status="agent_error",
+                            elapsed_seconds=elapsed,
+                            error=error,
+                        )
+
+                        failure_occurred = True
+
                 else:
-                    error = str(
-                        result.get("error")
-                        or "WorkerProcessError: unknown worker failure"
-                    )
-                    worker_traceback = result.get("traceback")
-                    if worker_traceback:
-                        print(worker_traceback, file=sys.stderr)
                     save_task_result(
                         task,
                         status="agent_error",
                         elapsed_seconds=elapsed,
-                        error=error,
+                        error=(
+                            "WorkerProcessError: child process exited "
+                            f"with code {process.exitcode} without returning "
+                            "a result"
+                        ),
                     )
+
                     failure_occurred = True
 
-            result_queue.close()
-            result_queue.join_thread()
-            del active[task_key]
+                close_result_queue(result_queue)
+                del active[task_key]
 
-            if failure_occurred and args.stop_on_error:
-                stop_requested = True
+                if failure_occurred and args.stop_on_error:
+                    stop_requested = True
 
         if stop_requested and active:
             for task_key, invocation in list(active.items()):
@@ -938,7 +1035,9 @@ def main() -> int:
                 process = invocation["process"]
                 result_queue = invocation["queue"]
                 elapsed = time.perf_counter() - invocation["started_at"]
+
                 terminate_process(process)
+
                 save_task_result(
                     task,
                     status="agent_error",
@@ -948,9 +1047,10 @@ def main() -> int:
                         "was triggered by another task"
                     ),
                 )
-                result_queue.close()
-                result_queue.join_thread()
+
+                close_result_queue(result_queue)
                 del active[task_key]
+
             break
 
         if not made_progress:
