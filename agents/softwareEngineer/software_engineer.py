@@ -969,7 +969,7 @@ def passed_last_check(state: InputSchema) -> Literal['software_engineer_node', '
 ''' Graph '''
 software_engineer_graph = StateGraph(InputSchema)
 
-# software_engineer_graph.add_node('add_tool_sections', add_tool_sections)
+software_engineer_graph.add_node('add_tool_sections', add_tool_sections)
 software_engineer_graph.add_node('software_engineer_node', software_engineer_node)
 software_engineer_graph.add_node('approve_tool', tool_node)
 software_engineer_graph.add_node('tools', ToolNode(tools))

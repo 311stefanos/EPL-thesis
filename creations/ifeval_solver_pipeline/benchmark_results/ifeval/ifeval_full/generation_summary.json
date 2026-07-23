@@ -1,0 +1,29 @@
+{
+  "finished_at": "2026-07-23T10:49:45.851279+00:00",
+  "dataset_task_count": 541,
+  "selected_tasks": 541,
+  "previously_completed_selected_tasks": 527,
+  "generated_this_run": 14,
+  "completed_selected_tasks": 530,
+  "response_rows_in_file": 538,
+  "usable_nonempty_responses": 530,
+  "full_dataset_complete": false,
+  "agent_errors_this_run": 7,
+  "timeouts_this_run": 4,
+  "empty_answers_this_run": 0,
+  "retryable_missing_tasks_this_run": 11,
+  "elapsed_seconds_this_run": 819.265,
+  "status_counts_all_logs": {
+    "ok": 530,
+    "empty_answer": 10,
+    "timeout": 23,
+    "agent_error": 13
+  },
+  "responses_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\ifeval_solver_pipeline\\benchmark_results\\ifeval\\ifeval_full\\responses.jsonl",
+  "evaluation_requested": true,
+  "evaluation_performed": true,
+  "evaluated_task_count": 530,
+  "score_summary_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\ifeval_solver_pipeline\\benchmark_results\\ifeval\\ifeval_full\\score_summary.json",
+  "final_score": 0.9018867924528302,
+  "final_score_percent": 90.18867924528303
+}

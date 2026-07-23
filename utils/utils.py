@@ -1,4 +1,4 @@
-from openai import APIConnectionError, InternalServerError, RateLimitError, BadRequestError, AuthenticationError
+from openai import APIConnectionError, InternalServerError, RateLimitError, BadRequestError, AuthenticationError, ContentFilterFinishReasonError
 from pydantic_core._pydantic_core import ValidationError as PydanticValidationError
 from json.decoder import JSONDecodeError
 
@@ -240,10 +240,13 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
                 sleep(retry_interval)
         
         # Try again
-        except (BadRequestError, APIConnectionError, InternalServerError, JSONDecodeError) as e:
+        except (BadRequestError, APIConnectionError, InternalServerError, JSONDecodeError, ContentFilterFinishReasonError) as e:
             print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
             # Also print the reason
-            print(e.response.json()['error']['message'])
+            try: 
+                print(e.response.json()['error']['message'])
+            except AttributeError:
+                pass
             retry_counter += 1
             sleep(retry_interval)
 

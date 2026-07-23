@@ -1,0 +1,22 @@
+{
+  "created_at": "2026-07-23T10:36:06.486105+00:00",
+  "run_id": "20dad8589e42408c963fb6b50e4615f9",
+  "benchmark": "IFEval",
+  "dataset_name": "google/IFEval",
+  "dataset_split": "train",
+  "dataset_task_count": 541,
+  "selected_task_count": 541,
+  "full_dataset_selection": true,
+  "agent_module": "creations.ifeval_solver_pipeline.ifeval_solver_pipeline",
+  "agent_object": "ifeval_solver_pipeline_app",
+  "recursion_limit": 100,
+  "max_parallel_tasks": 2,
+  "task_timeout_seconds": 300.0,
+  "start_index": 0,
+  "limit": null,
+  "selected_task_keys": [],
+  "evaluation_mode": "library",
+  "evaluator_backend": "lm_eval.tasks.ifeval.utils.process_results",
+  "evaluator_repository_downloaded": false,
+  "methodology_note": "The agent receives only the published prompt text. The instruction_id_list and kwargs remain hidden and are used only after generation by the local rule-based evaluator. The agent's internal passed_latest_review value is logged but is never used as the benchmark result."
+}

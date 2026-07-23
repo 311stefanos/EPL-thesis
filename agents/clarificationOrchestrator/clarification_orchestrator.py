@@ -135,18 +135,20 @@ def answer_question(state: InputSchema) -> InputSchema:
 
     try:
         # prompt
-        prompt = prompts.ANSWER_QUESTION_PROMPT.format(question= state.question.split('# RESOLVED')[0])
+        q = state.question.split('# RESOLVED')[0]
+        prompt = prompts.ANSWER_QUESTION_PROMPT.format(question= q)
 
         # memory as messages
         memory: List[AIMessage, HumanMessage] = []
         for qna in state.questions_answers:
-            memory.append(AIMessage(content= qna.question.split('# RESOLVED')[0]))
+            temp = qna.question.split('# RESOLVED')[0] if '# RESOLVED' in qna.question else qna.question
+            memory.append(AIMessage(content= temp))
             memory.append(HumanMessage(content= {qna.answer}))
 
         # call the LLM
         response: CoordinatorSchema = safe_invoke(
             coordinator, 
-            messages= [SystemMessage(content= prompt), *memory, AIMessage(content= state.question.split('# RESOLVED')[0])], 
+            messages= [SystemMessage(content= prompt), *memory, AIMessage(content= q)], 
             raise_pydantic= True
         )
         print(f'{BLUE}[NODE] [LLM RESPONSE]{RESET} {response}') if DEBUG else None

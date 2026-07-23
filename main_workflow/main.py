@@ -181,11 +181,11 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 if __name__ == '__main__':
     user_request: str = (
-        'I want an agent that solves Python programming benchmark tasks such as HumanEval and MBPP. '
-        'The agent should receive inputs based on the two mentioned benchmarks. '
-        'It should understand the required function, generate correct Python code, '
-        'optionally check the code for syntax or test failures, repair mistakes if needed, '
-        'and return only the final Python solution in the format expected by the benchmark evaluator.'
+        'I want an agent that solves IFEval benchmark tasks by answering prompts '
+        'while strictly following every explicit instruction. The agent should '
+        'identify requirements such as format, length, required keywords, forbidden words, '
+        'language, bullet counts, and response structure, generate a compliant answer, check '
+        'it for violations, fix any problems, and return only the final response.'
     )
     main(
         user_request,
