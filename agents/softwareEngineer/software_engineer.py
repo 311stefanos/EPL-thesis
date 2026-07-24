@@ -19,7 +19,7 @@ The output of this agent does not matter, its purpose is to implement the code.
 ## Usage
 ```python
 from agents.softwareEngineer.software_engineer import software_engineer_app
-graph_input = { 'file_path': 'path/to/file.py', 'times_reviewed': 0 }
+graph_input = { 'file_path': 'path/to/file.py', 'times_reviewed': 0, 'skip_tool_sections': False, 'coder_run_code': False }
 
 response = software_engineer_app.invoke(graph_input)
 
@@ -129,6 +129,7 @@ class InputSchema(MessagesState):
     file_path: str # 'The path to the file.
     skip_tool_sections: bool # Whether to skip the tool sections.
     times_reviewed: int # The number of times the code has been reviewed.
+    coder_run_code: bool # Wether the coder should run the code to review
 
 
 
@@ -141,7 +142,8 @@ comments: Dict[str, CoderComment] = {}
 code_issues: CodeIssues = CodeIssues()
 # A set of import strings to be added to the code
 imports: Set[str] = set()
-
+# Wether the coder should run the code to review
+RUN_CODE: bool = False
 
 
 ''' Tools '''
@@ -226,6 +228,7 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         comments[function_name] = CoderComment()
 
     # Call the coder
+    global RUN_CODE
     args: CoderInputSchema = {
         'messages': [], # No new messages
         'file_path': file_path, # The path to the file, same
@@ -234,7 +237,8 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
         'previous_outputs': [coders[function_name].code] if coders[function_name].code else [], # The previous outputs if they exist
         'comments': [comments[function_name].comment] if comments[function_name].comment else [], # The comments of the software engineer
         'previous_implementation': None, # No previous implementation (it is internal)
-        'reviewer_comments': None # No previous implementation to get reviews (it is internal)
+        'reviewer_comments': None, # No previous implementation to get reviews (it is internal)
+        'run_code': RUN_CODE
     }
     config = {
         'recursion_limit': 100,
@@ -651,6 +655,9 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
     print_function_name() if DEBUG else None
 
     try:
+        global RUN_CODE
+        RUN_CODE = state['coder_run_code']
+
         # prompt
         code = read_state_file(state)
 
@@ -1037,7 +1044,7 @@ if __name__ == '__main__':
         }
     }
 
-    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py', times_reviewed= 0, skip_tool_sections= False)
+    user = InputSchema(file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation_workflow.py', times_reviewed= 0, skip_tool_sections= False, coder_run_code= True)
     response = software_engineer_app.invoke(user, config= config)
 
     # print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None

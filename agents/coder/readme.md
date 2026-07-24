@@ -198,7 +198,8 @@ graph_input = {
     "previous_outputs": [],
     "comments": [],
     "previous_implementation": None,
-    "reviewer_comments": None
+    "reviewer_comments": None,
+	"run_code": True
 }
 
 response = coder_app.invoke(graph_input)

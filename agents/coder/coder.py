@@ -39,7 +39,8 @@ graph_input = {
     'previous_outputs': [],
     'comments': [],
     'previous_implementation': None,
-    'reviewer_comments': None
+    'reviewer_comments': None,
+    'run_code': False
 }
 
 response = coder_app.invoke(graph_input)
@@ -79,7 +80,8 @@ import json
 import os
 
 # My imports
-from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, USER_APPROVALS ,read_state_file
+from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, USER_APPROVALS, read_state_file
+from agents.codeTester.code_tester import code_tester_app
 from agents.coder import prompts
 
 
@@ -139,6 +141,8 @@ class InputSchema(MessagesState):
 
     previous_implementation: Optional['OutputSchema']
     reviewer_comments: Optional[str]
+
+    run_code: bool
 
 ''' Output Schema '''
 class OutputSchema(BaseModel):
@@ -356,10 +360,10 @@ def no_tavily_node(state: InputSchema) -> InputSchema:
     
     return {'messages': [SystemMessage(content= 'You may not call the tavily tool again since you already called it before.')] }
 
-# This node executes the output tool, and ends the workflow
+# This node executes the output tool
 def parse_output_tool(state: InputSchema) -> InputSchema:
     '''
-    This node executes the output tool, and ends the workflow.
+    This node executes the output tool
     '''
     print_function_name() if DEBUG else None
 
@@ -408,27 +412,43 @@ def parse_output_tool(state: InputSchema) -> InputSchema:
 # This node calls a reviewer to review the code and provide feedback
 def review_node(state: InputSchema) -> InputSchema:
     '''
-    This node calls a reviewer to review the code and provide feedback
+    This node reviews the implementation.
+
+    If run_code is True, it uses the Code Tester agent.
+    Otherwise, it uses the original static Reviewer LLM.
     '''
     print_function_name() if DEBUG else None
-    
+
     try:
-        # prompt
-        type_, how = get_schema_type(state)
+        # Use the Code Tester agent
+        if state.get('run_code', False):
+            code_tester_input = {
+                'function_name': state['function_name'],
+                'file_path': state['file_path'],
+                'implementation': state['previous_implementation'].code,
+                'imports': state['previous_implementation'].imports,
+                'se_instructions': state['software_engineer_instructions']
+            }
 
-        prompt = prompts.REVIEW_PROMPT.format(
-            code= read_state_file(state),
-            additional_imports= state['previous_implementation'].imports,
-            function_name= state['function_name'],
-            special_instructions= state['software_engineer_instructions'],
-            previous_implementation= state['previous_implementation'].code,
-            issues= state['reviewer_comments'],
-            agent_schema_type= type_,
-            schema_call= how
-        )
+            response: str = code_tester_app.invoke(code_tester_input).reviewer_comments
 
-        # call the LLM
-        response = safe_invoke(reviewer, messages= [SystemMessage(content= prompt)]).content
+        # Use the original static reviewer
+        else:
+            type_, how = get_schema_type(state)
+
+            prompt = prompts.REVIEW_PROMPT.format(
+                code= read_state_file(state),
+                additional_imports= state['previous_implementation'].imports,
+                function_name= state['function_name'],
+                special_instructions= state['software_engineer_instructions'],
+                previous_implementation= state['previous_implementation'].code,
+                issues= state['reviewer_comments'],
+                agent_schema_type= type_,
+                schema_call= how
+            )
+
+            response = safe_invoke(reviewer, messages= [SystemMessage(content= prompt)]).content
+
         print(f'{BLUE}[NODE] [INFO] [RESPONSE]{RESET} {response}') if DEBUG else None
 
         return {'reviewer_comments': response}
@@ -437,7 +457,7 @@ def review_node(state: InputSchema) -> InputSchema:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
         traceback.print_exc() if DEBUG else None
 
-        return {'messages': [AIMessage(content= '')]}
+        return {'reviewer_comments': ''}
 
 # This node just returns the output
 def output_node(state: InputSchema) -> OutputSchema:
@@ -613,7 +633,8 @@ if __name__ == '__main__':
         previous_outputs= [],
         comments= [],
         previous_implementation= None,
-        reviewer_comments= None
+        reviewer_comments= None,
+        run_code= True
     )
     response = coder_app.invoke(user, config= config)
 

@@ -91,7 +91,7 @@ def copy_file(after_agent_name: str, file_path: str, date: str) -> None:
     with open(f'./logs/logs_{date}/after_{after_agent_name}_{Path(file_path).name}', 'w', encoding= 'utf-8') as f:
         f.write(contents)
 
-def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Literal['llm', 'user', 'both'] = 'both') -> None:
+def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Literal['llm', 'user', 'both']= 'both', coder_run_code: bool= False) -> None:
     '''
     `main` is the main function of the program.
     It invokes the input refiner, workflow refiner, code annotator, software engineer, prompt engineer and file handler agents.
@@ -154,7 +154,8 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
             'messages': [],
             'file_path': file,
             'times_reviewed': 0,
-            'skip_tool_sections': False
+            'skip_tool_sections': False, 
+            'coder_run_code': coder_run_code
         }, config= config(f'software_engineer:{file}'))
         print_to_file('software_engineer', software_engineer_response, date)
         copy_file('software_engineer', file, date)
@@ -190,5 +191,6 @@ if __name__ == '__main__':
     main(
         user_request,
         orchestrator= True,
-        prompt_review_mode= 'llm'
+        prompt_review_mode= 'llm',
+        coder_run_code= True
     )

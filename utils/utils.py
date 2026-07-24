@@ -4,11 +4,12 @@ from json.decoder import JSONDecodeError
 
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import tools_condition
-from typing import Protocol, Any
 from langchain_openai import ChatOpenAI
+from collections.abc import Mapping
+from typing import Protocol, Any
 from dotenv import load_dotenv
-from time import sleep
 from pathlib import Path
+from time import sleep
 import inspect
 import json 
 import os
@@ -155,9 +156,25 @@ def read_state_file(state) -> str:
     `Returns:`
         code: str
     '''
-    with open(state['file_path'], 'r', encoding='utf-8') as f:
-        code = f.read()
-    return code
+    if isinstance(state, Mapping):
+        file_path = state.get('file_path')
+        
+    else:
+        file_path = getattr(state, 'file_path', None)
+
+    if not file_path:
+        raise ValueError('The state must contain a valid file_path value.')
+
+    file_path = Path(file_path)
+
+    if not file_path.is_file():
+        raise FileNotFoundError(f'File not found: {file_path}')
+
+    return file_path.read_text(encoding= 'utf-8')
+
+    # with open(state['file_path'], 'r', encoding='utf-8') as f:
+    #     code = f.read()
+    # return code
 
 
 
