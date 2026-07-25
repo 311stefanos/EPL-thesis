@@ -191,7 +191,8 @@ prompt_reviewer = myChatOpenAI(
 )
 
 formater = myChatOpenAI(
-    temperature= 0.8
+    temperature= 0.8,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(

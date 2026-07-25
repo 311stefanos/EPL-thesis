@@ -145,6 +145,11 @@ class Schema(BaseModel):
     arguments: List[SchemaArgument] = Field(description= 'The arguments of the schema.')
     proposed_methods: List[Function] = Field(description= 'The proposed methods of the schema.')
 
+    # If the chema is MessagesState, remove an argument that is named "messages"
+    def __post_init__(self):
+        if self.base_class == 'MessagesState':
+            self.arguments = [arg for arg in self.arguments if arg.name != 'messages']
+
     def __str__(self):
         arguments = '\n\t'.join([str(arg) for arg in self.arguments])
         docstring = self.docstring.replace('\n', '\n\t')
@@ -248,23 +253,28 @@ class InputSchema(MessagesState):
 
 ''' LLM '''
 docstring_generator = myChatOpenAI(
-    temperature= 0.5
+    temperature= 0.5,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(Docstrings)
 
 schema_generator = myChatOpenAI(
-    temperature= 0.2
+    temperature= 0.2,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(Schemas)
 
 helpful_function_generator = myChatOpenAI(
-    temperature= 0.2
+    temperature= 0.2,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(HelpfulFunctions)
 
 tool_function_generator = myChatOpenAI(
-    temperature= 0.2
+    temperature= 0.2,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(ToolFunctions)
 
 tool_or_output_generator = myChatOpenAI(
-    temperature= 0.8
+    temperature= 0.8,
+    model= 'cohere/north-mini-code:free'
 ).with_structured_output(LLMProposalList)
 
 

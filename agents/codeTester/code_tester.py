@@ -1,4 +1,4 @@
-"""
+r"""
 - `author:` Stefanos Panteli
 - `date:` 2026-07-24
 - `description:` Generates test inputs for a Python function, executes the proposed implementation in an isolated Docker environment, and reviews the implementation together with the execution results.
@@ -324,7 +324,7 @@ def go_to_run_code(state: CodeTesterIntermediate) -> Literal['run_code', 'review
 
 
 ''' Graph '''
-code_tester_graph = StateGraph(CodeTesterIntermediate, input_schema= CodeTesterInput, output_schema= CodeTesterOutput,)
+code_tester_graph = StateGraph(CodeTesterIntermediate, input_schema= CodeTesterInput, output_schema= CodeTesterOutput)
 
 code_tester_graph.add_node('generate_inputs', generate_inputs)
 code_tester_graph.add_node('run_code', run_code)

@@ -244,7 +244,7 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
             return llm.invoke(messages, *args)
         
         # Nothing to do, just raise the error
-        except (AuthenticationError,) as e:
+        except (BadRequestError, AuthenticationError,) as e:
             raise e
         
         # Try again
@@ -257,7 +257,7 @@ def safe_invoke(llm: Invokable, messages: list[BaseMessage], *args, retry_interv
                 sleep(retry_interval)
         
         # Try again
-        except (BadRequestError, APIConnectionError, InternalServerError, JSONDecodeError, ContentFilterFinishReasonError) as e:
+        except (APIConnectionError, InternalServerError, JSONDecodeError, ContentFilterFinishReasonError) as e:
             print(f'{e.__class__.__name__}, retrying in {retry_interval} seconds...') if DEBUG else None
             # Also print the reason
             try: 

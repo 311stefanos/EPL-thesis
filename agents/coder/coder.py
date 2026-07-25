@@ -430,7 +430,7 @@ def review_node(state: InputSchema) -> InputSchema:
                 'se_instructions': state['software_engineer_instructions']
             }
 
-            response: str = code_tester_app.invoke(code_tester_input).reviewer_comments
+            response: str = code_tester_app.invoke(code_tester_input)['reviewer_comments']
 
         # Use the original static reviewer
         else:

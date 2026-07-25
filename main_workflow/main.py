@@ -1,5 +1,6 @@
 # Langchain imports
 from langchain_core.messages import BaseMessage
+from langsmith import Client
 
 # General imports
 from typing import List, Literal, Dict, Callable
@@ -108,10 +109,15 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
         'recursion_limit': 150,
         'configurable': {
             'user_id': 'main',
-            'run_name': 'main',
+            'run_name': f'main:{uuid_}',
             'thread_id': f'main:{agent_name}:{date}:{uuid_}',
         }
     }
+
+    # Connect to langsmith
+    os.environ['LANGCHAIN_PROJECT'] = 'main_workflow'
+    os.environ['LANGSMITH_PROJECT'] = 'main_workflow'
+    client = Client()
 
     # Input Refiner
     print_agent('Input Refiner (internal: Clarification  Orchestrator)')
@@ -135,6 +141,8 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
     # Create code structures
     files: List[str] = create_file(workflow_bundle)
     for file in files:
+        agent_name = file.split('/')[-1].split('\\')[-1].replace('.py', '')
+
         copy_file('code_structure', file, date)
 
         # Code Annotator
@@ -144,7 +152,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
             'file_path': file,
             'clarified_user_input': clarified_user_input,
             'workflow': workflow_bundle,
-        }, config= config(f'code_annotator:{file}'))
+        }, config= config(f'code_annotator:{agent_name}'))
         print_to_file('code_annotator', code_annotator_response, date)
         copy_file('code_annotator', file, date)
 
@@ -154,9 +162,9 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
             'messages': [],
             'file_path': file,
             'times_reviewed': 0,
-            'skip_tool_sections': False, 
+            'skip_tool_sections': not False, 
             'coder_run_code': coder_run_code
-        }, config= config(f'software_engineer:{file}'))
+        }, config= config(f'software_engineer:{agent_name}'))
         print_to_file('software_engineer', software_engineer_response, date)
         copy_file('software_engineer', file, date)
 
@@ -165,7 +173,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
         prompt_engineer_response = prompt_engineer_app.invoke({
             'file_path': file,
             'mode': prompt_review_mode
-        }, config= config(f'prompt_engineer:{file}'))
+        }, config= config(f'prompt_engineer:{agent_name}'))
         print_to_file('prompt_engineer', prompt_engineer_response, date)
         copy_file('prompt_engineer', file, date)
 
@@ -174,7 +182,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
         file_handler_response = file_handler_app.invoke({
             'messages': [],
             'file_path': file
-        }, config= config(f'file_handler:{file}'))
+        }, config= config(f'file_handler:{agent_name}'))
         print_to_file('file_handler', file_handler_response, date)
         copy_file('file_handler', file, date)
 

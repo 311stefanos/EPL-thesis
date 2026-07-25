@@ -928,7 +928,8 @@ def after_software_engineer(state: InputSchema) -> Literal['last_check', 'softwa
     called_tools = []
     for tool_call in tool_calls:
         if 'function' in tool_call:
-            called_tools.append((tool_call['function']['name'], tool_call['function']['args']))
+            args = tool_call['function'].get('args', None) or tool_call['function'].get('arguments', None)
+            called_tools.append((tool_call['function']['name'], args))
 
         else:
             called_tools.append((tool_call['name'], tool_call['args']))
