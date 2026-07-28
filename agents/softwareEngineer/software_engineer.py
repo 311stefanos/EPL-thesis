@@ -655,9 +655,6 @@ def add_tool_sections(state: InputSchema) -> InputSchema:
     print_function_name() if DEBUG else None
 
     try:
-        global RUN_CODE
-        RUN_CODE = state['coder_run_code']
-
         # prompt
         code = read_state_file(state)
 
@@ -703,7 +700,8 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
     '''
     print_function_name() if DEBUG else None
 
-    global coders, code_issues, imports
+    global coders, code_issues, imports, RUN_CODE
+    RUN_CODE = state.get('coder_run_code', False)
 
     try:
         # prompt

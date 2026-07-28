@@ -296,7 +296,51 @@ chat_llm = myChatOpenAI(
 
 
 ''' Helpful Functions '''
+def extract_paddleocr_text(result: Any) -> str:
+    """
+    Extract recognized text from PaddleOCR 3.x prediction results.
 
+    Supports Result objects exposing either:
+    - result.json as a dictionary
+    - result.json as a JSON string
+    - result.to_dict()
+    """
+    recognized_lines: list[str] = []
+
+    for page_result in result:
+        page_data: Dict[str, Any] = {}
+
+        try:
+            json_data = page_result.json
+
+            if callable(json_data):
+                json_data = json_data()
+
+            if isinstance(json_data, str):
+                json_data = json.loads(json_data)
+
+            if isinstance(json_data, dict):
+                page_data = json_data
+
+        except Exception:
+            try:
+                converted = page_result.to_dict()
+                if isinstance(converted, dict):
+                    page_data = converted
+            except Exception:
+                continue
+
+        page_data = page_data.get("res", page_data)
+        rec_texts = page_data.get("rec_texts", [])
+
+        if not isinstance(rec_texts, list):
+            continue
+
+        for text in rec_texts:
+            if isinstance(text, str) and text.strip():
+                recognized_lines.append(text.strip())
+
+    return "\n".join(recognized_lines)
 # TODO: Add Helpful Functions (if needed)
 
 
@@ -330,10 +374,22 @@ def ocr_processor(state: AgentSchema) -> AgentSchema:
             return state
 
         # Step 2: Extract raw text using PaddleOCR
-        ocr = PaddleOCR(use_angle_cls=True, lang='en')
-        result = ocr.ocr(image_path, cls=True)
+        ocr = PaddleOCR(
+            lang="en",
+            use_doc_orientation_classify=True,
+            use_doc_unwarping=False,
+            use_textline_orientation=True,
+        )
 
-        raw_text: str = "\n".join([line[1] for page in result for line in page if line])
+        result = ocr.predict(image_path)
+        raw_text = extract_paddleocr_text(result)
+
+        if DEBUG:
+            print(f"{BLUE}[OCR] [RAW TEXT]{RESET}\n{raw_text}")
+
+        if not raw_text.strip():
+            state["error_message"] = "OCR returned no text"
+            return state
 
         if not raw_text.strip():
             state["error_message"] = "OCR returned no text"
@@ -437,11 +493,10 @@ def ocr_processor(state: AgentSchema) -> AgentSchema:
             "category": category,
         }
 
-        # Step 8: Append to Excel file
-        excel_write_tool.invoke({"receipt_data": receipt_data})
-
         # Step 9: Return updated state with ocr_result
         state["ocr_result"] = receipt_data
+        state["error_message"] = None
+        state["messages"].append(AIMessage(content=f"OCR result: {receipt_data}"))
         return state
 
     except Exception as e:
@@ -455,32 +510,6 @@ def chat(state: AgentSchema) -> AgentSchema:
     """ Execution: LLM+TOOLS. Core reactive step. Inspect the latest Human message (or OCR-processed data): if it contains an image (i.e., data from OCR), handle receipt ingestion; if plain text, interpret as a natural-language spending query, read and aggregate data from ./receipts.xlsx, and produce a concise plain-text summary. Calls tools for currency conversion, Excel I/O, and other operations as needed. Sets mode/next_action for any follow-up if required. """
     print_function_name()
     try:
-        ocr_result = state.get("ocr_result")
-        if ocr_result:
-            # Receipt ingestion path
-            cost_eur: float = ocr_result.get("cost_eur", 0)
-            date: str = ocr_result.get("date", "")
-            items: str = ocr_result.get("items", "")
-            location: str = ocr_result.get("location", "")
-            category: str = ocr_result.get("category", "")
-
-            valid_categories = ["Groceries", "Dining", "Transport", "Utilities", "Entertainment", "Shopping", "Health", "Other"]
-
-            if cost_eur <= 0 or not date or not items or category not in valid_categories:
-                state["messages"].append(AIMessage(content="Error: Invalid receipt data. Missing or invalid fields."))
-                return state
-
-            success = excel_write_tool.invoke({"receipt_data": ocr_result})
-            if success:
-                confirmation = f"Receipt added. Total: {cost_eur} EUR in {category}."
-            else:
-                confirmation = "Failed to save receipt. Please try again."
-
-            state["messages"].append(AIMessage(content=confirmation))
-            state["mode"] = "receipt_ingestion"
-            state["next_action"] = "confirm"
-            return state
-
         # Plain-text query path
         messages: list[BaseMessage] = state.get("messages", [])
         query: str = ""
@@ -498,7 +527,7 @@ def chat(state: AgentSchema) -> AgentSchema:
             chat_llm,
             messages=[
                 SystemMessage(content=system_prompt),
-                HumanMessage(content=query)
+                *state["messages"]
             ]
         )
 
@@ -610,8 +639,18 @@ if __name__ == '__main__':
         }
     }
 
-    user = '' # TODO: add
-    response = whatsapp_receipt_processor_and_query_bot_app.invoke(user, config= config)
+    user_in = input(f'{GREEN}[USER INPUT]{RESET} > ')
+    while user_in.lower() != 'q':
+        if user_in.startswith('re:'): # receipt
+            user_in = user_in[3:]
+            response = whatsapp_receipt_processor_and_query_bot_app.invoke({'image_path': user_in}, config= config)
+            print(f'{BLUE}[MAIN] [INFO]{RESET} {response["messages"][-1]}') if DEBUG else None
+            user_in = input(f'{GREEN}[USER INPUT]{RESET} > ')
+
+        else:
+            response = whatsapp_receipt_processor_and_query_bot_app.invoke({'messages': [HumanMessage(content=user_in)], 'image_path': ''}, config= config)
+            print(f'{BLUE}[MAIN] [INFO]{RESET} {response["messages"][-1]}') if DEBUG else None
+            user_in = input(f'{GREEN}[USER INPUT]{RESET} > ')
 
     print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
     if DEBUG:

@@ -162,7 +162,7 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
             'messages': [],
             'file_path': file,
             'times_reviewed': 0,
-            'skip_tool_sections': not False, 
+            'skip_tool_sections': False, 
             'coder_run_code': coder_run_code
         }, config= config(f'software_engineer:{agent_name}'))
         print_to_file('software_engineer', software_engineer_response, date)

@@ -627,9 +627,9 @@ if __name__ == '__main__':
 
     user = InputSchema(
         messages= [],
-        file_path= '..\..\creations\menu_recommendation_workflow\menu_recommendation.py',
-        function_name= 'generate_suggestions',
-        software_engineer_instructions= 'Implement the chat function. Use the docstring to guide you.',
+        file_path= './test.py',
+        function_name= 'clean_llm_output',
+        software_engineer_instructions= 'Implement the clean_llm_output function. Use the docstring to guide you. ',
         previous_outputs= [],
         comments= [],
         previous_implementation= None,
