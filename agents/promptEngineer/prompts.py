@@ -321,6 +321,9 @@ Your job is to provide a dictionary of key-value pairs that will be used to form
 You should understand how the messages are created from the codebase, in order to simulate a realistic scenario.
 e.g., [HumanMessage(content="..."), AIMessage(content="...", tool_calls=[...]), ToolMessage(content="...", tool_name="..."), AIMessage(content="..."), HumanMessage(content="..."), ...].
 
+# Strict Rule
+**Always adhere to the prompt's placeholders**, not only by the codebase because the Prompt Engineer mught make changes to the code, according to the prompt. 
+
 # Output
 You should return a dictionary of the form:
 {{

@@ -76,6 +76,10 @@ You must generate test inputs for the function named: {function_name}
 19. Return an empty list only when no valid JSON-compatible input can reasonably be generated.
 20. Follow the structured output schema exactly.
 
+# Strict Instruction
+If a function parameter is a state, such as `state: AgentSchema`, the input **MUST** be a dictionary with the `state` key. The fields within the state field's dictionary must adhere to the schema.
+e.g., {{"state": {{ ... }} }}
+
 # Output Schema
 Return a `FunctionInputs` object containing:
 

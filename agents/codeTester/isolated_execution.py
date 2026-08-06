@@ -26,51 +26,138 @@ def _normalise_import_statement(import_statement: str) -> str:
     return ast.unparse(node).strip()
 
 
-def _extract_source_imports(source_code: str) -> List[str]:
-    '''Extracts top-level imports from the original source file.'''
+def _replace_function_in_source(
+    *,
+    function_name: str,
+    source_code: str,
+    implementation: str,
+) -> str:
+    '''Replaces one top-level function with the candidate implementation.'''
     try:
         parsed_source = ast.parse(source_code)
+        parsed_implementation = ast.parse(implementation)
     except SyntaxError as exc:
-        raise ValueError('The original source file could not be parsed while extracting imports.') from exc
+        raise ValueError(f'Unable to parse the source or candidate implementation: {exc}') from exc
 
-    imports: List[str] = []
-    for node in parsed_source.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            imports.append(ast.unparse(node).strip())
+    source_functions = [
+        node
+        for node in parsed_source.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function_name
+    ]
 
-    return imports
+    if len(source_functions) != 1:
+        raise ValueError(
+            f'Expected exactly one top-level function named {function_name!r}, '
+            f'but found {len(source_functions)}.'
+        )
 
+    implementation_functions = [
+        node
+        for node in parsed_implementation.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
 
-def _merge_imports(*, source_code: str, additional_imports: Optional[List[str]]) -> List[str]:
-    '''Merges source imports and Coder imports without duplicates.'''
-    source_imports = _extract_source_imports(source_code)
-    all_imports = source_imports + list(additional_imports or [])
-    future_imports: List[str] = []
-    normal_imports: List[str] = []
-    seen: set[str] = set()
+    if len(implementation_functions) != 1:
+        raise ValueError('The candidate implementation must contain exactly one top-level function.')
 
-    for import_statement in all_imports:
+    if implementation_functions[0].name != function_name:
+        raise ValueError(
+            f'The candidate implements {implementation_functions[0].name!r}, '
+            f'but the expected function is {function_name!r}.'
+        )
+
+    target_function = source_functions[0]
+    decorator_lines = [decorator.lineno for decorator in target_function.decorator_list]
+    start_line = min([target_function.lineno, *decorator_lines]) - 1
+    end_line = target_function.end_lineno
+
+    source_lines = source_code.splitlines(keepends= True)
+    candidate = implementation.strip('\n') + '\n'
+
+    return ''.join(source_lines[:start_line]) + candidate + ''.join(source_lines[end_line:])
+
+def _insert_additional_imports(
+    *,
+    source_code: str,
+    additional_imports: Optional[List[str]],
+) -> str:
+    '''Adds new imports after the module docstring and future imports.'''
+    if not additional_imports:
+        return source_code
+
+    parsed_source = ast.parse(source_code)
+
+    existing_imports = {
+        ast.unparse(node).strip()
+        for node in parsed_source.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    }
+
+    new_imports: List[str] = []
+    for import_statement in additional_imports:
         if not import_statement:
             continue
 
         normalised = _normalise_import_statement(import_statement)
-        if normalised in seen:
+        if normalised not in existing_imports and normalised not in new_imports:
+            new_imports.append(normalised)
+
+    if not new_imports:
+        return source_code
+
+    insertion_line = 0
+    body_index = 0
+
+    if (
+        parsed_source.body
+        and isinstance(parsed_source.body[0], ast.Expr)
+        and isinstance(parsed_source.body[0].value, ast.Constant)
+        and isinstance(parsed_source.body[0].value.value, str)
+    ):
+        insertion_line = parsed_source.body[0].end_lineno
+        body_index = 1
+
+    while body_index < len(parsed_source.body):
+        node = parsed_source.body[body_index]
+
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == '__future__'
+        ):
+            insertion_line = node.end_lineno
+            body_index += 1
             continue
 
-        seen.add(normalised)
-        if normalised.startswith('from __future__ import '):
-            future_imports.append(normalised)
-        else:
-            normal_imports.append(normalised)
+        break
 
-    return future_imports + normal_imports
+    source_lines = source_code.splitlines(keepends= True)
+    import_block = '\n'.join(new_imports) + '\n\n'
 
+    return (
+        ''.join(source_lines[:insertion_line])
+        + import_block
+        + ''.join(source_lines[insertion_line:])
+    )
 
-def _build_candidate_code(*, source_code: str, additional_imports: Optional[List[str]], implementation: str) -> str:
-    '''Creates the code executed inside the isolated environment.'''
-    merged_imports = _merge_imports(source_code= source_code, additional_imports= additional_imports)
-    code_parts = [*merged_imports, implementation.strip()]
-    return '\n\n'.join(part for part in code_parts if part)
+def _build_candidate_code(
+    *,
+    function_name: str,
+    source_code: str,
+    additional_imports: Optional[List[str]],
+    implementation: str,
+) -> str:
+    '''Creates the complete modified source module for isolated execution.'''
+    candidate_code = _replace_function_in_source(
+        function_name= function_name,
+        source_code= source_code,
+        implementation= implementation,
+    )
+
+    return _insert_additional_imports(
+        source_code= candidate_code,
+        additional_imports= additional_imports,
+    )
 
 
 def _failed_result(
@@ -150,8 +237,9 @@ try:
 
     function_name = payload['function_name']
     candidate_code = payload['candidate_code']
+    source_file = payload['source_file']
     kwargs = payload['kwargs']
-    namespace = {'__name__': '__submitted_solution__'}
+    namespace = {'__name__': '__submitted_solution__', '__file__': source_file, '__package__': None}
 
     try:
         compiled_code = compile(candidate_code, '/sandbox/submitted_solution.py', 'exec')
@@ -216,7 +304,7 @@ try:
             'execution_time_seconds': elapsed,
         })
 
-except BaseException as exc:
+except Exception as exc:
     emit({
         'kwargs': {},
         'completed': False,
@@ -248,9 +336,11 @@ def _run_single_input(
     *,
     function_name: str,
     candidate_code: str,
+    source_file: str,
     kwargs: Dict[str, Any],
     utils_path: Path,
     agents_path: Path,
+    creations_path: Path,
     timeout_seconds: int,
     memory_limit: str,
     cpus: str,
@@ -258,7 +348,7 @@ def _run_single_input(
     docker_image: str,
 ) -> Dict[str, Any]:
     '''Executes one function input inside a separate Docker container.'''
-    payload = {'function_name': function_name, 'candidate_code': candidate_code, 'kwargs': kwargs}
+    payload = {'function_name': function_name, 'candidate_code': candidate_code, 'source_file': source_file, 'kwargs': kwargs}
 
     try:
         payload_json = json.dumps(payload, ensure_ascii= False)
@@ -283,6 +373,7 @@ def _run_single_input(
 
         resolved_utils_path = Path(utils_path).resolve()
         resolved_agents_path = Path(agents_path).resolve()
+        resolved_creations_path = Path(creations_path).resolve()
 
         docker_command = [
             'docker',
@@ -316,6 +407,8 @@ def _run_single_input(
             f'type=bind,source={resolved_utils_path},target=/project/utils,readonly',
             '--mount',
             f'type=bind,source={resolved_agents_path},target=/project/agents,readonly',
+            '--mount',
+            f'type=bind,source={resolved_creations_path},target=/project/creations,readonly',
             '--workdir',
             '/sandbox',
             '-e',
@@ -378,23 +471,30 @@ def run_in_isolated_env(
     *,
     function_name: str,
     source_code: str,
+    source_file_path: str,
     implementation: str,
     imports: Optional[List[str]],
     function_inputs: List[Dict[str, Any]],
     utils_path: str,
     agents_path: str,
+    creations_path: str,
     timeout_seconds: int = 8,
     memory_limit: str = '256m',
     cpus: str = '1.0',
     pids_limit: int = 64,
-    docker_image: str = 'thesis-code-tester',
+    docker_image: str = 'thesis-code-tester:latest',
 ) -> Dict[str, Any]:
     '''Executes the candidate function once for every kwargs input.'''
     if shutil.which('docker') is None:
         raise RuntimeError('Docker is not installed or is not available on PATH.')
 
+    resolved_source_file_path = Path(source_file_path).resolve()
     resolved_utils_path = Path(utils_path).resolve()
     resolved_agents_path = Path(agents_path).resolve()
+    resolved_creations_path = Path(creations_path).resolve()
+
+    if not resolved_source_file_path.is_file():
+        raise FileNotFoundError(f'Source file not found: {resolved_source_file_path}')
 
     if not resolved_utils_path.is_dir():
         raise FileNotFoundError(f'Utils directory not found: {resolved_utils_path}')
@@ -402,6 +502,24 @@ def run_in_isolated_env(
     if not resolved_agents_path.is_dir():
         raise FileNotFoundError(f'Agents directory not found: {resolved_agents_path}')
 
+    if not resolved_creations_path.is_dir():
+        raise FileNotFoundError(f'Creations directory not found: {resolved_creations_path}')
+
+    if resolved_source_file_path.is_relative_to(resolved_agents_path):
+        relative_source_file = resolved_source_file_path.relative_to(resolved_agents_path)
+        container_source_file = f'/project/agents/{relative_source_file.as_posix()}'
+
+    elif resolved_source_file_path.is_relative_to(resolved_creations_path):
+        relative_source_file = resolved_source_file_path.relative_to(resolved_creations_path)
+        container_source_file = f'/project/creations/{relative_source_file.as_posix()}'
+
+    elif resolved_source_file_path.is_relative_to(resolved_utils_path):
+        relative_source_file = resolved_source_file_path.relative_to(resolved_utils_path)
+        container_source_file = f'/project/utils/{relative_source_file.as_posix()}'
+
+    else:
+        raise ValueError('The source file must be located inside the agents, creations, or utils directory.')
+    
     try:
         image_check = subprocess.run(
             ['docker', 'image', 'inspect', docker_image],
@@ -419,6 +537,7 @@ def run_in_isolated_env(
         raise RuntimeError(f'Docker image not found: {docker_image}. Build the Code Tester image before running.')
 
     candidate_code = _build_candidate_code(
+        function_name= function_name,
         source_code= source_code,
         additional_imports= imports,
         implementation= implementation,
@@ -440,9 +559,11 @@ def run_in_isolated_env(
         result = _run_single_input(
             function_name= function_name,
             candidate_code= candidate_code,
+            source_file= container_source_file,
             kwargs= function_input,
             utils_path= resolved_utils_path,
             agents_path= resolved_agents_path,
+            creations_path= resolved_creations_path,
             timeout_seconds= timeout_seconds,
             memory_limit= memory_limit,
             cpus= cpus,

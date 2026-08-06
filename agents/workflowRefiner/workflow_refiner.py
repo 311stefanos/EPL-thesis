@@ -213,8 +213,7 @@ clarifier = myChatOpenAI(
 ).bind_tools([tavily_search])
 
 workflow_engineer = myChatOpenAI(
-    temperature= 0.7,
-    model= 'cohere/north-mini-code:free'
+    temperature= 0.7
 ).with_structured_output(WorkflowBundle)
 
 

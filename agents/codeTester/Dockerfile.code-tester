@@ -18,5 +18,5 @@ WORKDIR /sandbox
 # cd C:\UCY\EPL-thesis\EPL-thesis\Clone
 # docker build `
 #     -f agents\codeTester\Dockerfile.code-tester `
-#     -t epl-code-tester:latest `
+#     -t thesis-code-tester:latest `
 #     .

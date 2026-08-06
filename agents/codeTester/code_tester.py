@@ -84,6 +84,7 @@ CODE_TESTER_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CODE_TESTER_DIR.parent.parent
 UTILS_PATH = PROJECT_ROOT / 'utils'
 AGENTS_PATH = PROJECT_ROOT / 'agents'
+CREATIONS_PATH = PROJECT_ROOT / 'creations'
 
 
 
@@ -263,16 +264,18 @@ def run_code(state: CodeTesterIntermediate) -> CodeTesterIntermediate:
         report_data = run_in_isolated_env(
             function_name= state.function_name,
             source_code= read_state_file(state),
+            source_file_path= state.file_path,
             implementation= state.implementation,
             imports= state.imports,
             function_inputs= state.function_inputs.kwargs,
             utils_path= str(UTILS_PATH),
             agents_path= str(AGENTS_PATH),
+            creations_path= str(CREATIONS_PATH),
             timeout_seconds= 8,
             docker_image= os.getenv(
-                    'CODE_TESTER_DOCKER_IMAGE',
-                    'thesis-code-tester',
-                ) or 'thesis-code-tester',
+                'CODE_TESTER_DOCKER_IMAGE',
+                'thesis-code-tester:latest',
+            ) or 'thesis-code-tester:latest',
         )
 
         function_execution_report = CodeExecutionReport.model_validate(report_data)

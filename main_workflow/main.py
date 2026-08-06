@@ -189,6 +189,13 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 
 if __name__ == '__main__':
+    # user_request: str = (
+    #     'I want an agent that solves GSM8K and GSM-Hard benchmark tasks. '
+    #     'The agent should read each mathematical word problem, identify '
+    #     'the required calculations, solve it step by step, check the reasoning '
+    #     'and arithmetic for mistakes, and return the final numerical answer in '
+    #     'the format required by the benchmark evaluator.'
+    # )
     user_request: str = (
         'I want an agent that solves GSM8K and GSM-Hard benchmark tasks. '
         'The agent should read each mathematical word problem, identify '

@@ -192,7 +192,7 @@ prompt_reviewer = myChatOpenAI(
 
 formater = myChatOpenAI(
     temperature= 0.8,
-    model= 'cohere/north-mini-code:free'
+    model= 'nvidia/nemotron-3-super-120b-a12b:free'
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(
@@ -428,7 +428,7 @@ def review_prompt(state: InputSchema) -> InputSchema:
     print_function_name() if DEBUG else None
 
     try:
-        print(f'{GREEN}[NODE] [INFO] [LATEST PROMPT]{RESET} {get_active_prompt(state).suggested_prompt}')
+        print(f'{GREEN}[NODE] [INFO] [{get_active_prompt(state).prompt_name}]{RESET} {get_active_prompt(state).suggested_prompt}')
         comments: str = ''
 
         # Get the LLM to review the prompt
@@ -515,7 +515,7 @@ def review_response(state: InputSchema) -> InputSchema:
     print_function_name() if DEBUG else None
 
     try:
-        print(f'{GREEN}[NODE] [INFO] [RESPONSE]{RESET} {get_active_prompt(state).latest_response}')
+        print(f'{GREEN}[NODE] [INFO] [{get_active_prompt(state).prompt_name}] [RESPONSE]{RESET} {get_active_prompt(state).latest_response}')
         comments: str = ''
 
         # Get the LLM to review the prompt

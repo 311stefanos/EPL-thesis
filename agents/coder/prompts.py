@@ -338,7 +338,8 @@ You should not call tavily_search more than once.
         - function_arguments: [{{name, type}}]
         - output: return type
         - justification: why it's necessary now
-    - `imports` (Optional[List[str]]) **NOT** a string: a list of imports you need, do not import on the code key! You should not request an import that is already imported in the provided code. All imports must containt the `import` keyword.
+    - `imports` (Optional[List[str]]): a list of imports you need, do not import on the code key! You should not request an import that is already imported in the provided code. All imports must containt the `import` keyword.
+    e.g., `imports= ['import pandas as pd']`, `imports= ['import json', 'import requests']`, **NOT** `imports= ['json']`
 
 # Correct Implementation
 In order to make a correct implementation, you must checklist the following:
