@@ -189,23 +189,386 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 
 if __name__ == '__main__':
-    # user_request: str = (
-    #     'I want an agent that solves GSM8K and GSM-Hard benchmark tasks. '
-    #     'The agent should read each mathematical word problem, identify '
-    #     'the required calculations, solve it step by step, check the reasoning '
-    #     'and arithmetic for mistakes, and return the final numerical answer in '
-    #     'the format required by the benchmark evaluator.'
-    # )
+    # def test(model):
+    #     from utils.utils import safe_invoke, myChatOpenAI
+    #     from langchain.schema import SystemMessage
+    #     from typing import TypedDict, Tuple
+    #     def tool(arg1: str, arg2: int) -> str:
+    #         '''`tool` is a function that takes two arguments and returns a string.'''
+    #         return f'{arg1} {arg2}'
+    #     class SubSchema(TypedDict):
+    #         arg1: str
+    #         arg2: int
+    #         arg3: Tuple[str, str]
+            
+    #     class Schema(TypedDict):
+    #         name: str
+    #         age: int
+    #         subSchema: SubSchema
+
+    #     llm = myChatOpenAI(
+    #         model= model
+    #     ).bind_tools([tool])
+    #     print(safe_invoke(llm, messages= [SystemMessage(content= 'Call the provided tool with random values')]))
+
+    #     llm = myChatOpenAI(
+    #         model= model
+    #     ).with_structured_output(Schema)
+    #     print(safe_invoke(llm, messages= [SystemMessage(content= 'Return the provided schema with random values')]))
+
+
+    # test("deepseek/deepseek-v4-flash-0731")
+
     user_request: str = (
-        'I want an agent that solves GSM8K and GSM-Hard benchmark tasks. '
-        'The agent should read each mathematical word problem, identify '
-        'the required calculations, solve it step by step, check the reasoning '
-        'and arithmetic for mistakes, and return the final numerical answer in '
-        'the format required by the benchmark evaluator.'
+        '''Create a simple LangGraph-based AI agent that solves tasks from the GAIA benchmark.
+
+The agent must use a single solver agent and a small workflow. Do not create separate researcher, planner, browser, calculator, or file-analysis agents.
+
+The workflow must contain these four nodes:
+
+1. `analyze_task`
+2. `solve_task`
+3. `review_answer`
+4. `format_output`
+
+## Workflow behaviour
+
+### `analyze_task`
+
+This node receives the original GAIA question and any attached files.
+
+It must produce a high-level, step-by-step plan for solving the task.
+
+The plan should:
+
+* identify the exact objective;
+* identify the required final-answer format;
+* identify any attached files that need inspection;
+* list the main steps needed to reach the answer;
+* identify which available tools are likely to be useful;
+* remain high-level and avoid performing the task itself.
+
+The plan is guidance for the solver. The solver may adjust it when new evidence makes a step unnecessary or reveals an additional requirement.
+
+### `solve_task`
+
+This node executes the task.
+
+It receives:
+
+* the original user question;
+* the attached file paths;
+* the plan created by `analyze_task`;
+* all previous messages and tool results;
+* any feedback returned by `review_answer`;
+* the current review-loop count.
+
+The solver must work through the task by making a sequence of tool calls.
+
+It should:
+
+* execute one clear action at a time;
+* inspect each tool result before selecting the next action;
+* keep exact names, dates, values, units, and supporting evidence;
+* avoid repeating tool calls that already succeeded;
+* revise its approach when a tool fails;
+* directly address feedback from `review_answer`;
+* stop investigating when it has enough evidence to answer the question;
+* call `submit_final_answer` when it has produced a supported candidate answer.
+
+Calling `submit_final_answer` must end the current solver execution and route the workflow to `review_answer`.
+
+The solver must have access to the following tools:
+
+#### `file_parser`
+
+Use this tool to inspect attached or downloaded files.
+
+It must support all input modalities accepted by Gemini, including:
+
+* images;
+* PDF files;
+* audio;
+* video;
+* text files;
+* Word documents;
+* PowerPoint presentations;
+* spreadsheets;
+* HTML files;
+* other supported document formats.
+
+The tool should internally call a Gemini multimodal model.
+
+Gemini must receive:
+
+1. a fixed system prompt describing how files should be analysed;
+2. a dynamic instruction supplied by `solve_task`;
+3. the relevant file or files.
+
+The dynamic instruction should clearly state what information the solver needs from the file.
+
+The parser must return:
+
+* the relevant extracted information;
+* structured data where useful;
+* exact names, dates, numbers, and units;
+* evidence locations such as page numbers, timestamps, sheet names, cell ranges, or image regions;
+* any uncertainty;
+* any unreadable or missing content.
+
+The parser must not invent content and should not solve the entire GAIA task unless the solver explicitly asks it to do so.
+
+Suggested arguments:
+
+```python
+file_parser(
+    file_paths: list[str],
+    instruction: str,
+    task_context: str | None = None
+)
+```
+
+#### `web_search`
+
+Use this tool to discover relevant webpages and online sources.
+
+It should return:
+
+* result title;
+* URL;
+* short snippet;
+* publication date when available.
+
+Search-result snippets must not be treated as final evidence. Important information should normally be verified by opening the source.
+
+Suggested arguments:
+
+```python
+web_search(
+    query: str,
+    max_results: int = 5
+)
+```
+
+#### `open_url`
+
+Use this tool to open and inspect a specific webpage.
+
+It should accept a focused extraction instruction and return:
+
+* the requested information;
+* supporting passages;
+* page title;
+* final URL;
+* relevant links;
+* downloadable files;
+* any uncertainty.
+
+When the URL points to a file rather than a normal webpage, the tool should download the file to the task workspace and return its local path so that `file_parser` or `run_python` can inspect it.
+
+Suggested arguments:
+
+```python
+open_url(
+    url: str,
+    instruction: str
+)
+```
+
+#### `run_python`
+
+Use this tool for:
+
+* calculations;
+* date and time operations;
+* unit conversions;
+* spreadsheet and CSV processing;
+* sorting and filtering;
+* structured-data analysis;
+* validation of candidate answers;
+* reproducible transformations.
+
+The execution environment must:
+
+* run in an isolated sandbox;
+* have no unrestricted network access;
+* enforce a time limit;
+* enforce memory and output limits;
+* capture standard output and errors;
+* allow access only to the task workspace.
+
+Suggested arguments:
+
+```python
+run_python(
+    code: str,
+    input_files: list[str] | None = None
+)
+```
+
+#### `submit_final_answer`
+
+Use this tool when the solver believes it has completed the task.
+
+The tool should record:
+
+* the candidate answer;
+* the expected answer format;
+* the steps completed;
+* the supporting evidence;
+* any calculations;
+* any unresolved issues.
+
+Suggested arguments:
+
+```python
+submit_final_answer(
+    answer: str,
+    answer_format: str,
+    completed_steps: list[str],
+    supporting_evidence: list[str],
+    calculations: list[str],
+    unresolved_issues: list[str]
+)
+```
+
+Calling this tool must route the workflow directly to `review_answer`.
+
+### `review_answer`
+
+This node reviews the full execution history after `submit_final_answer` is called.
+
+It must inspect:
+
+* the original question;
+* the high-level plan;
+* all solver messages;
+* all tool calls and tool results;
+* the candidate answer;
+* the evidence and calculations submitted by the solver.
+
+It must check whether:
+
+* every part of the question was answered;
+* the solver followed or reasonably adjusted the plan;
+* the evidence supports the candidate answer;
+* any important search result was verified from its source;
+* calculations are correct and reproducible;
+* dates, names, values, units, and requested precision are correct;
+* attached files were interpreted correctly;
+* tool outputs contradict each other;
+* the solver ignored uncertainty reported by a tool;
+* the candidate answer uses the required format.
+
+The review result must be either:
+
+* `approve`
+* `revise`
+
+When mistakes are found, the reviewer must provide specific and actionable feedback to `solve_task`.
+
+Example:
+
+```text
+The population value is from 2021, but the task asks for 2020. Find and verify an authoritative 2020 value, then resubmit the answer.
+```
+
+The reviewer must not provide vague feedback such as:
+
+```text
+Research the task more carefully.
+```
+
+The workflow may return from `review_answer` to `solve_task` a maximum of two times.
+
+After two review-feedback loops, the workflow must continue to `format_output`, even when the reviewer still detects a problem.
+
+The review counter should increase only when the reviewer returns `revise`.
+
+### `format_output`
+
+This node receives the full message history through the `messages` state key.
+
+It must produce the exact answer required by the original GAIA task.
+
+It should:
+
+* identify the latest candidate answer;
+* consider the latest reviewer result;
+* follow the answer-format instructions from the original question;
+* return only the information required by the task;
+* remove plans, explanations, tool logs, evidence notes, and reviewer feedback unless the task explicitly requests them;
+* preserve exact spelling, punctuation, units, precision, ordering, and formatting.
+
+It must not:
+
+* call tools;
+* perform new research;
+* introduce new facts;
+* restart the solving process;
+* expose internal reasoning.
+
+## Routing
+
+Use this routing structure:
+
+```text
+START
+  ↓
+analyze_task
+  ↓
+solve_task
+  ↓ submit_final_answer
+review_answer
+  ├─ approve → format_output
+  └─ revise and review_count < 2 → solve_task
+  └─ revise and review_count >= 2 → format_output
+  ↓
+END
+```
+
+## State
+
+Use a compact state structure based mainly on the `messages` key.
+
+Include at least:
+
+```python
+class GAIAState(TypedDict):
+    messages: Annotated[list, add_messages]
+
+    question: str
+    attachments: list[str]
+
+    task_analysis: dict | None
+
+    candidate_answer: str | None
+    review_decision: str | None
+    review_feedback: list[str]
+    review_count: int
+
+    final_output: str | None
+```
+
+All tool calls and tool results should remain available in `messages` so that the reviewer and formatter can inspect the full task history.
+
+## General requirements
+
+* Keep the implementation simple.
+* Use one solver agent.
+* Do not add unnecessary nodes or agents.
+* Use structured outputs for task analysis and answer review.
+* Use tool calling inside `solve_task`.
+* Make the package directly runnable.
+* Include all required source files, prompts, schemas, tool definitions, routing functions, and dependency declarations.
+* Use clear logging for node transitions, tool calls, review decisions, and feedback-loop counts.
+* Ensure that one GAIA task can be executed by passing a question and an optional list of attachment paths.
+'''
     )
+
     main(
         user_request,
         orchestrator= True,
-        prompt_review_mode= 'llm',
+        prompt_review_mode= 'user',
         coder_run_code= True
     )

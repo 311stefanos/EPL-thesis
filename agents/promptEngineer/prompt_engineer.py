@@ -191,8 +191,7 @@ prompt_reviewer = myChatOpenAI(
 )
 
 formater = myChatOpenAI(
-    temperature= 0.8,
-    model= 'nvidia/nemotron-3-super-120b-a12b:free'
+    temperature= 0.8
 ).with_structured_output(Format)
 
 tester = myChatOpenAI(
