@@ -26,7 +26,7 @@ DEFAULT_AGENT_MODULE = "creations.gaia_task_solver.gaia_task_solver"
 DEFAULT_AGENT_OBJECT = "gaia_task_solver_app"
 DEFAULT_DATASET_REPO = "gaia-benchmark/GAIA"
 DEFAULT_DATASET_CONFIG = "2023_all"
-DEFAULT_DOCKER_IMAGE = "python:3.11-slim"
+DEFAULT_DOCKER_IMAGE = "gaia-python:3.11"
 
 # Target agent:
 # creations/gaia_task_solver/gaia_task_solver.py
@@ -477,7 +477,7 @@ def build_agent_state(task: GaiaTask) -> dict[str, Any]:
         "evidence": [],
         "calculations": [],
         "unresolved_issues": [],
-        "review_decision": "revise",
+        "review_decision": "",
         "review_feedback": None,
         "review_count": 0,
         "final_output": "",
@@ -1493,12 +1493,22 @@ def build_parser() -> argparse.ArgumentParser:
             "benchmark_results/gaia_<split>_<UTC timestamp>."
         ),
     )
-    parser.add_argument(
+    continuation_group = parser.add_mutually_exclusive_group()
+    continuation_group.add_argument(
         "--resume",
         action="store_true",
         help=(
             "Skip task IDs already present in answers.jsonl. Failed and "
-            "timed-out tasks are not written there, so resume reruns them."
+            "timed-out tasks are rerun in their normal dataset order."
+        ),
+    )
+    continuation_group.add_argument(
+        "--continue",
+        dest="continue_run",
+        action="store_true",
+        help=(
+            "Continue after the highest previously attempted task index, then "
+            "retry earlier failed, timed-out, or unanswered tasks at the end."
         ),
     )
     parser.add_argument(
@@ -1522,7 +1532,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--recursion-limit",
         type=int,
-        default=150,
+        default=600,
         help="LangGraph recursion limit for each task.",
     )
     parser.add_argument(
@@ -1612,11 +1622,12 @@ def main() -> int:
 
     if (
         not args.resume
+        and not args.continue_run
         and answers_path.exists()
         and answers_path.stat().st_size > 0
     ):
         raise FileExistsError(
-            f"{answers_path} already exists. Use --resume or another "
+            f"{answers_path} already exists. Use --resume, --continue, or another "
             "--output-dir."
         )
 
@@ -1657,7 +1668,7 @@ def main() -> int:
 
     existing_rows = (
         read_jsonl(answers_path)
-        if args.resume
+        if args.resume or args.continue_run
         else []
     )
     existing_answers = validate_answer_file(
@@ -1665,6 +1676,11 @@ def main() -> int:
     )
     completed_task_ids = set(
         existing_answers
+    )
+    existing_log_rows = (
+        read_jsonl(log_path)
+        if args.continue_run
+        else []
     )
 
     unknown_completed = completed_task_ids.difference(
@@ -1678,11 +1694,70 @@ def main() -> int:
             f"GAIA split: {sorted(unknown_completed)}"
         )
 
-    pending_tasks = [
-        task
-        for task in selected_tasks
-        if task.task_id not in completed_task_ids
-    ]
+    continue_from_index = None
+
+    if args.continue_run:
+        selected_task_id_set = {
+            task.task_id
+            for task in selected_tasks
+        }
+
+        attempted_indices = [
+            int(row["task_index"])
+            for row in existing_log_rows
+            if (
+                str(row.get("task_id") or "") in selected_task_id_set
+                and _optional_int(row.get("task_index")) is not None
+            )
+        ]
+
+        if attempted_indices:
+            highest_attempted_index = max(attempted_indices)
+            continue_from_index = highest_attempted_index + 1
+
+            forward_tasks = [
+                task
+                for task in selected_tasks
+                if (
+                    task.task_index > highest_attempted_index
+                    and task.task_id not in completed_task_ids
+                )
+            ]
+
+            prior_unfinished_tasks = [
+                task
+                for task in selected_tasks
+                if (
+                    task.task_index <= highest_attempted_index
+                    and task.task_id not in completed_task_ids
+                )
+            ]
+
+            pending_tasks = forward_tasks + prior_unfinished_tasks
+
+            print(
+                f"Continuing after task index {highest_attempted_index}. "
+                f"{len(prior_unfinished_tasks)} earlier unfinished task(s) "
+                f"will run at the end."
+            )
+
+        else:
+            pending_tasks = [
+                task
+                for task in selected_tasks
+                if task.task_id not in completed_task_ids
+            ]
+
+            print(
+                "No previous attempted tasks found; starting from the beginning."
+            )
+
+    else:
+        pending_tasks = [
+            task
+            for task in selected_tasks
+            if task.task_id not in completed_task_ids
+        ]
 
     run_id = uuid.uuid4().hex
 
@@ -1694,6 +1769,9 @@ def main() -> int:
         "dataset_config": args.dataset_config,
         "split": args.split,
         "level": args.level,
+        "resume": args.resume,
+        "continue": args.continue_run,
+        "continue_from_index": continue_from_index,
         "dataset_task_count": len(all_tasks),
         "selected_task_count": len(selected_tasks),
         "pending_task_count": len(pending_tasks),
@@ -1721,9 +1799,15 @@ def main() -> int:
         run_config,
     )
 
+    mode = (
+        "continue" if args.continue_run
+        else "resume" if args.resume
+        else "selection"
+    )
+
     print(
         f"Selected {len(selected_tasks)} task(s); "
-        f"{len(pending_tasks)} remain after resume."
+        f"{len(pending_tasks)} remain after {mode}."
     )
 
     started = time.perf_counter()
@@ -1876,12 +1960,14 @@ if __name__ == "__main__":
 
 # Full validation:
 # python .\run_gaia_task_solver.py `
-#     --output-dir .\benchmark_results\gaia_task_solver\gaia_validation_full
+#     --output-dir .\benchmark_results\gaia_task_solver\gaia_validation_full `
+#     --task-timeout 300
 
 # Resume failed, missing, or timed-out tasks:
 # python .\run_gaia_task_solver.py `
 #     --output-dir .\benchmark_results\gaia_task_solver\gaia_validation_full `
-#     --resume
+#     --resume `
+#     --task-timeout 300
 
 # Generate the private-test leaderboard submission:
 # python .\run_gaia_task_solver.py `

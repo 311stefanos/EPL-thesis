@@ -1,0 +1,48 @@
+FROM python:3.11-slim
+
+
+# System-level tools used by GAIA tasks.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    tesseract-ocr \
+    poppler-utils \
+    stockfish \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# Common Python packages likely to be useful across GAIA tasks.
+RUN pip install --no-cache-dir \
+    requests \
+    beautifulsoup4 \
+    lxml \
+    numpy \
+    pandas \
+    scipy \
+    sympy \
+    openpyxl \
+    pillow \
+    python-docx \
+    python-pptx \
+    pypdf \
+    pymupdf \
+    pdfplumber \
+    pytesseract \
+    opencv-python-headless \
+    biopython \
+    rdflib \
+    python-chess \
+    mutagen \
+    pydub \
+    soundfile \
+    networkx \
+    rapidfuzz \
+    pint \
+    matplotlib \
+    SpeechRecognition \
+    pydub \
+    openai-whisper \
+    CoolProp
+
+
+WORKDIR /sandbox

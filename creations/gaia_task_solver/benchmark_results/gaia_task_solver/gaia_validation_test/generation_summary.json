@@ -1,0 +1,54 @@
+{
+  "finished_at": "2026-08-08T14:39:37.343221+00:00",
+  "dataset": "GAIA",
+  "split": "validation",
+  "level": "all",
+  "dataset_task_count": 165,
+  "selected_tasks": 3,
+  "previously_completed_tasks": 0,
+  "generated_this_run": 3,
+  "answers_in_file": 1,
+  "selected_tasks_answered": 1,
+  "selected_tasks_complete": false,
+  "elapsed_seconds_this_run": 355.497,
+  "status_counts_all_logs": {
+    "agent_failed": 1,
+    "agent_error": 1,
+    "ok": 1,
+    "timeout": 1
+  },
+  "answers_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\gaia_task_solver\\benchmark_results\\gaia_task_solver\\gaia_validation_test\\answers.jsonl",
+  "generation_log_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\gaia_task_solver\\benchmark_results\\gaia_task_solver\\gaia_validation_test\\generation_log.jsonl",
+  "run_config_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\gaia_task_solver\\benchmark_results\\gaia_task_solver\\gaia_validation_test\\run_config.json",
+  "scored_results_path": "C:\\UCY\\EPL-thesis\\EPL-thesis\\Clone\\creations\\gaia_task_solver\\benchmark_results\\gaia_task_solver\\gaia_validation_test\\scored_results.jsonl",
+  "validation_scores": {
+    "selected_tasks": 3,
+    "answered_tasks": 1,
+    "correct_answers": 1,
+    "score_selected": 0.3333333333333333,
+    "accuracy_answered": 1.0,
+    "by_level": {
+      "1": {
+        "correct": 0,
+        "answered": 0,
+        "selected": 0,
+        "score_selected": null,
+        "accuracy_answered": null
+      },
+      "2": {
+        "correct": 1,
+        "answered": 1,
+        "selected": 3,
+        "score_selected": 0.3333333333333333,
+        "accuracy_answered": 1.0
+      },
+      "3": {
+        "correct": 0,
+        "answered": 0,
+        "selected": 0,
+        "score_selected": null,
+        "accuracy_answered": null
+      }
+    }
+  }
+}

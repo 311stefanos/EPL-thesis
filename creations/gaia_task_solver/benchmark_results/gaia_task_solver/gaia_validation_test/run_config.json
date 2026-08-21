@@ -1,0 +1,21 @@
+{
+  "created_at": "2026-08-08T14:33:41.839749+00:00",
+  "run_id": "0552ab1513e9427fa991378d1b085db2",
+  "dataset": "GAIA",
+  "dataset_repo": "gaia-benchmark/GAIA",
+  "dataset_config": "2023_all",
+  "split": "validation",
+  "level": "all",
+  "dataset_task_count": 165,
+  "selected_task_count": 3,
+  "pending_task_count": 3,
+  "agent_module": "creations.gaia_task_solver.gaia_task_solver",
+  "agent_object": "gaia_task_solver_app",
+  "recursion_limit": 150,
+  "workers": 2,
+  "task_timeout_seconds": 300,
+  "start_index": 0,
+  "limit": 3,
+  "selected_task_ids": [],
+  "methodology_note": "The agent receives only the GAIA question and an attachments list containing zero or one local file path. It never receives the reference answer, annotator metadata, or scorer output. Validation predictions are scored after the agent invocation with the official GAIA quasi-exact normalization. Reference answers are not written to output files."
+}

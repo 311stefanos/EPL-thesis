@@ -27,6 +27,13 @@ from creations.gaia_task_solver import gaia_task_solver_prompts as prompts
 import requests
 import time
 import base64
+import shutil
+import subprocess
+import tempfile
+import uuid
+import re
+from html import unescape
+from ddgs import DDGS
 
 
 
@@ -39,6 +46,9 @@ BLUE = '\033[94m' # INFO
 RED = '\033[91m' # ERR
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
+
+
+RESEARCH_MEMORY_TOKEN_THRESHOLD = 700_000
 
 
 
@@ -74,7 +84,7 @@ class AgentSchema(MessagesState):
     evidence: List[str] # Supporting evidence or sources used to derive the answer.
     calculations: List[str] # Records of any calculations performed during the solving process.
     unresolved_issues: List[str] # Notes about any remaining uncertainties or issues with the solution.
-    review_decision: Literal['approve', 'revise'] # The outcome from review_answer node indicating whether the candidate answer is approved or needs revision.
+    review_decision: Literal['approve', 'revise', ''] # The outcome from review_answer node indicating whether the candidate answer is approved or needs revision.
     review_feedback: Optional[str] # Detailed, actionable feedback from review_answer node when review_decision is 'revise'.
     review_count: int # Number of times the answer has been reviewed, used to limit revision loops to a maximum of 2.
     final_output: str # The GAIA-formatted answer string produced by format_output node after review approval or after maximum revisions.
@@ -85,32 +95,27 @@ class AgentSchema(MessagesState):
 @tool
 def file_parser(file_path: str, instruction: str) -> dict:
     """
-    Overview:
-    Inspects an attached or downloaded file using the configured LLM through
-    `myChatOpenAI` and `safe_invoke`.
-
-    Text files are decoded locally. Images are sent as multimodal image content.
-    PDFs are sent as file content. DOCX and XLSX files are converted to text
-    locally when direct file input is unavailable.
+    Send an attached or downloaded file directly to the configured LLM
+    without locally converting or extracting its contents.
 
     Args:
-        file_path: Path to the file that must be parsed.
+        file_path: Path to the file that must be analyzed.
         instruction: Specific information to extract from the file.
 
     Returns:
-        A dictionary containing extracted information, evidence, uncertainties,
-        confidence, and file metadata.
+        A dictionary containing extracted information, evidence,
+        uncertainties, confidence, and file metadata.
     """
     SYSTEM_PROMPT = (
         "You are a meticulous file analysis expert. Inspect the provided file "
         "and extract all relevant information based on the user's instruction. "
         "Return only one valid JSON object with these keys:\n"
         "- 'extracted_info': the main extracted information, preserving exact text, numbers, and structure\n"
-        "- 'evidence': a list of precise evidence locations such as pages, sheets, rows, cells, lines, or visual regions\n"
+        "- 'evidence': a list of precise evidence locations such as pages, sheets, rows, cells, lines, timestamps, or visual regions\n"
         "- 'uncertainties': a list of uncertainties or ambiguities\n"
         "- 'confidence': an integer from 0 to 100\n\n"
         "If the file contains tables, preserve them as structured data. "
-        "If it contains images, describe only relevant visual elements. "
+        "If it contains images, audio, or video, inspect only information relevant to the instruction. "
         "Do not invent evidence locations."
     )
 
@@ -128,42 +133,106 @@ def file_parser(file_path: str, instruction: str) -> dict:
 
         return result
 
-    # Validate the file path.
     if not os.path.exists(file_path):
-        return error_result(f'File not found: {file_path}', 'File does not exist')
+        return error_result(
+            f'File not found: {file_path}',
+            'File does not exist'
+        )
 
-    # Keep the existing 10 MB limit.
+    if not os.path.isfile(file_path):
+        return error_result(
+            f'Path is not a file: {file_path}',
+            'Provided path is not a file'
+        )
+
     file_size = os.path.getsize(file_path)
+    max_file_size = 100 * 1024 * 1024
 
-    if file_size > 10 * 1024 * 1024:
-        return error_result(f'File too large: {file_size} bytes (max 10MB)','File exceeds the 10MB limit')
+    if file_size > max_file_size:
+        return error_result(
+            f'File too large: {file_size} bytes (max 100MB)',
+            'File exceeds the 100MB local limit'
+        )
 
+    file_name = os.path.basename(file_path)
     ext = os.path.splitext(file_path)[1].lower()
 
     MIME_MAP = {
+        # Gemini 2.5 Flash-Lite document input.
+        '.pdf': 'application/pdf',
+
+        # Text-based files: preserve original bytes, but send as text/plain.
+        '.txt': 'text/plain',
+        '.md': 'text/plain',
+        '.csv': 'text/plain',
+        '.tsv': 'text/plain',
+        '.json': 'text/plain',
+        '.jsonld': 'text/plain',
+        '.xml': 'text/plain',
+        '.html': 'text/plain',
+        '.htm': 'text/plain',
+        '.py': 'text/plain',
+        '.pdb': 'text/plain',
+        '.yaml': 'text/plain',
+        '.yml': 'text/plain',
+        '.toml': 'text/plain',
+        '.sql': 'text/plain',
+        '.rdf': 'text/plain',
+        '.ttl': 'text/plain',
+        '.log': 'text/plain',
+        '.ini': 'text/plain',
+        '.cfg': 'text/plain',
+        '.conf': 'text/plain',
+
+        # Images.
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.bmp': 'image/bmp',
         '.webp': 'image/webp',
-        '.pdf': 'application/pdf',
-        '.csv': 'text/csv',
-        '.txt': 'text/plain',
-        '.md': 'text/markdown',
-        '.json': 'application/json',
-        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        '.xls': 'application/vnd.ms-excel',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.doc': 'application/msword',
-        '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+        '.heic': 'image/heic',
+        '.heif': 'image/heif',
+
+        # Audio.
+        '.aac': 'audio/x-aac',
+        '.flac': 'audio/flac',
+        '.mp3': 'audio/mp3',
+        '.m4a': 'audio/m4a',
+        '.mpeg3': 'audio/mpeg',
+        '.mpga': 'audio/mpga',
+        '.ogg': 'audio/ogg',
+        '.pcm': 'audio/pcm',
+        '.wav': 'audio/wav',
+        '.weba': 'audio/webm',
+
+        # Video.
+        '.flv': 'video/x-flv',
+        '.mov': 'video/quicktime',
+        '.mpeg': 'video/mpeg',
+        '.mpegs': 'video/mpegs',
+        '.mpg': 'video/mpg',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.wmv': 'video/wmv',
+        '.3gp': 'video/3gpp',
     }
 
-    mime_type = MIME_MAP.get(ext, 'application/octet-stream')
+    mime_type = MIME_MAP.get(ext)
+
+    if not mime_type:
+        return error_result(
+            f'File type {ext or "unknown"} cannot be sent directly to Gemini 2.5 Flash-Lite.',
+            'The parser model directly supports PDF, plain-text files, images, audio, and video. Use run_python for unsupported binary formats.',
+            metadata={
+                'path': file_path,
+                'name': file_name,
+                'size': file_size,
+                'mime_type': None
+            }
+        )
 
     metadata = {
         'path': file_path,
-        'name': os.path.basename(file_path),
+        'name': file_name,
         'size': file_size,
         'mime_type': mime_type
     }
@@ -179,209 +248,84 @@ def file_parser(file_path: str, instruction: str) -> dict:
             metadata=metadata
         )
 
-    provider = (os.getenv('PROVIDER') or '').upper()
-
-    image_extensions = {
-        '.png',
-        '.jpg',
-        '.jpeg',
-        '.gif',
-        '.bmp',
-        '.webp'
-    }
-
-    text_extensions = {
-        '.csv',
-        '.txt',
-        '.md',
-        '.json'
-    }
+    encoded_file = base64.b64encode(file_data).decode('utf-8')
+    data_url = f'data:{mime_type};base64,{encoded_file}'
 
     user_content = [{
         'type': 'text',
         'text': (
             f"Instruction:\n{instruction}\n\n"
-            f"File name: {metadata['name']}\n"
-            f"File MIME type: {mime_type}"
+            f"File name: {file_name}\n"
+            f"File MIME type: {mime_type}\n"
+            f"File size: {file_size} bytes"
         )
     }]
 
+    image_extensions = {
+        '.png',
+        '.jpg',
+        '.jpeg',
+        '.webp',
+        '.gif'
+    }
+
+    audio_formats = {
+        '.mp3': 'mp3',
+        '.wav': 'wav',
+        '.aiff': 'aiff',
+        '.aif': 'aiff',
+        '.aac': 'aac',
+        '.ogg': 'ogg',
+        '.flac': 'flac',
+        '.m4a': 'm4a'
+    }
+
+    video_extensions = {
+        '.mp4',
+        '.mpeg',
+        '.mpg',
+        '.mov',
+        '.webm'
+    }
+
     try:
-        # Plain-text files can be included directly in the prompt.
-        if ext in text_extensions:
-            try:
-                decoded_text = file_data.decode('utf-8-sig')
-
-            except UnicodeDecodeError:
-                decoded_text = file_data.decode('latin-1', errors='replace')
-
-            max_text_chars = 250_000
-            was_truncated = len(decoded_text) > max_text_chars
-            decoded_text = decoded_text[:max_text_chars]
-
-            truncation_note = (
-                f"\n\n[FILE CONTENT TRUNCATED AFTER {max_text_chars} CHARACTERS]"
-                if was_truncated else ''
-            )
-
-            user_content.append({
-                'type': 'text',
-                'text': f"File contents:\n{decoded_text} {truncation_note}"
-            })
-
-        # Images use the OpenAI-compatible multimodal image format.
-        elif ext in image_extensions:
-            encoded_file = base64.b64encode(file_data).decode('utf-8')
-            data_url = f'data:{mime_type};base64,{encoded_file}'
-
+        if ext in image_extensions:
             user_content.append({
                 'type': 'image_url',
-                'image_url': {'url': data_url}
+                'image_url': {
+                    'url': data_url
+                }
             })
 
-        # OpenRouter supports PDF file blocks.
-        elif provider == 'OPENROUTER' and ext == '.pdf':
-            encoded_file = base64.b64encode(file_data).decode('utf-8')
-            data_url = f'data:{mime_type};base64,{encoded_file}'
+        elif ext in audio_formats:
+            user_content.append({
+                'type': 'input_audio',
+                'input_audio': {
+                    'data': encoded_file,
+                    'format': audio_formats[ext]
+                }
+            })
 
+        elif ext in video_extensions:
+            user_content.append({
+                'type': 'video_url',
+                'video_url': {
+                    'url': data_url
+                }
+            })
+
+        else:
             user_content.append({
                 'type': 'file',
                 'file': {
-                    'filename': metadata['name'],
+                    'filename': file_name,
                     'file_data': data_url
                 }
             })
 
-        # Standard LangChain file block for providers supporting PDF input.
-        elif ext == '.pdf':
-            user_content.append({
-                'type': 'file',
-                'base64': base64.b64encode(file_data).decode('utf-8'),
-                'mime_type': mime_type,
-                'filename': metadata['name']
-            })
-
-        # Extract DOCX text locally, then send it through your configured API.
-        elif ext == '.docx':
-            import zipfile
-            import xml.etree.ElementTree as ET
-
-            with zipfile.ZipFile(file_path) as archive:
-                xml_data = archive.read('word/document.xml')
-
-            root = ET.fromstring(xml_data)
-
-            namespace = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-
-            paragraphs = []
-
-            for paragraph in root.findall('.//w:p', namespace):
-                paragraph_text = ''.join(
-                    node.text or ''
-                    for node in paragraph.findall('.//w:t', namespace)
-                ).strip()
-
-                if paragraph_text:
-                    paragraphs.append(paragraph_text)
-
-            extracted_text = '\n'.join(paragraphs)
-
-            max_text_chars = 250_000
-            was_truncated = len(extracted_text) > max_text_chars
-            extracted_text = extracted_text[:max_text_chars]
-
-            if was_truncated:
-                extracted_text += f"\n\n[DOCX CONTENT TRUNCATED AFTER {max_text_chars} CHARACTERS]"
-                
-
-            user_content.append({
-                'type': 'text',
-                'text': f'DOCX extracted text:\n{extracted_text}'
-            })
-
-        # Extract XLSX values locally, then send them through your API.
-        elif ext == '.xlsx':
-            try:
-                from openpyxl import load_workbook
-
-            except ImportError:
-                return error_result(
-                    'XLSX parsing requires the openpyxl package',
-                    'The openpyxl dependency is not installed',
-                    metadata=metadata
-                )
-
-            workbook = load_workbook(
-                file_path,
-                read_only=True,
-                data_only=True
-            )
-
-            workbook_text = []
-            max_rows_per_sheet = 10_000
-
-            for worksheet in workbook.worksheets:
-                workbook_text.append(
-                    f'[SHEET: {worksheet.title}]'
-                )
-
-                for row_index, row in enumerate(
-                    worksheet.iter_rows(values_only=True),
-                    start=1
-                ):
-                    if row_index > max_rows_per_sheet:
-                        workbook_text.append(
-                            f'[SHEET TRUNCATED AFTER '
-                            f'{max_rows_per_sheet} ROWS]'
-                        )
-                        break
-
-                    values = [
-                        str(value) if value is not None else ''
-                        for value in row
-                    ]
-
-                    if any(values):
-                        workbook_text.append(
-                            f"Row {row_index}:\t" + '\t'.join(values)
-                        )
-
-            workbook.close()
-
-            extracted_text = '\n'.join(workbook_text)
-            max_text_chars = 250_000
-
-            if len(extracted_text) > max_text_chars:
-                extracted_text = (
-                    extracted_text[:max_text_chars]
-                    + f"\n\n[XLSX CONTENT TRUNCATED AFTER "
-                    + f"{max_text_chars} CHARACTERS]"
-                )
-
-            user_content.append({
-                'type': 'text',
-                'text': f'XLSX extracted values:\n{extracted_text}'
-            })
-
-        else:
-            return error_result(
-                (
-                    f'Unsupported file type for provider '
-                    f'{provider or "UNKNOWN"}: '
-                    f'{ext or "no extension"}'
-                ),
-                (
-                    'The configured provider cannot receive this file type '
-                    'and no local parser is available'
-                ),
-                metadata=metadata
-            )
-
-        # Uses PROVIDER, {PROVIDER}_API_KEY,
-        # {PROVIDER}_BASE_URL, and MODEL_NAME.
         parser_llm = myChatOpenAI(
             temperature=0.1,
-            model= 'google/gemini-2.5-flash-lite:batch',
+            model='google/gemini-2.5-flash-lite',
             max_retries=0
         )
 
@@ -395,7 +339,6 @@ def file_parser(file_path: str, instruction: str) -> dict:
 
         raw_content = response.content
 
-        # Some multimodal providers return a list of content blocks.
         if isinstance(raw_content, list):
             text_parts = []
 
@@ -436,10 +379,7 @@ def file_parser(file_path: str, instruction: str) -> dict:
         confidence = parsed.get('confidence', 0)
 
         try:
-            confidence = max(
-                0,
-                min(100, int(confidence))
-            )
+            confidence = max(0, min(100, int(confidence)))
 
         except (TypeError, ValueError):
             confidence = 0
@@ -455,10 +395,7 @@ def file_parser(file_path: str, instruction: str) -> dict:
     except Exception as e:
         return error_result(
             f'File parser failed: {e}',
-            (
-                f'{e.__class__.__name__} while invoking '
-                f'the configured LLM API'
-            ),
+            f'{e.__class__.__name__} while sending the original file to the configured LLM',
             metadata=metadata
         )
 
@@ -494,123 +431,113 @@ def web_search(query: str) -> list[dict]:
     list[dict] - A list where each element is a dictionary with keys 'title', 'url', 'snippet', and 'publication_date' representing a search result.
     """
     try:
-        # Try using Tavily API first
-        tavily_key = os.getenv('TAVILY_API_KEY')
-        if tavily_key:
-            response = requests.post(
-                "https://api.tavily.com/search",
-                json={"api_key": tavily_key, "query": query, "max_results": 5}
-            )
-            response.raise_for_status()
-            data = response.json()
-            results = []
-            for r in data.get('results', []):
-                results.append({
-                    "title": r.get('title'),
-                    "url": r.get('url'),
-                    "snippet": r.get('content'),  # Map 'content' to 'snippet'
-                    "publication_date": r.get('published_date')
-                })
-            return results
-
-        # If no API key is configured, return an error indicator
-        return [{"error": "No API key configured"}]
+        results = DDGS().text(query, max_results=5)
+        return [{
+            'title': result.get('title'),
+            'url': result.get('href'),
+            'snippet': result.get('body'),
+            'publication_date': result.get('date')
+        } for result in results]
 
     except Exception as e:
-        # Return a list with an error message on any failure
-        return [{"error": str(e)}]
+        return [{'error': str(e)}]
 
 @tool
-def open_url(url: str, instruction: str) -> dict:
+def open_url(url: str, download: bool = False) -> dict:
     """
-    Overview: 
-    Opens webpages with extraction instructions or downloads files to the workspace. This tool is used to retrieve content from specific web URLs or download files during the GAIA task solving process. It can either extract specific information from a webpage based on instructions or download the file content for further analysis.
-    
-    Caller LLM: solve_task_llm
-    
-    Outside-the-Tool Work (Tool Handler Function Responsibilities): 
-    None - The tool handler only needs to append the result as a ToolMessage to the messages state.
-    
-    Inside-the-Tool Work (Tool Responsibilities): 
-    Access the specified URL, either extract information from the webpage using the provided instruction or download the file to the workspace, and return the result in a structured format.
-    
-    Instructions: 
-    1. Receive a URL to access and an instruction specifying what to do with the content.
-    2. Access the URL (webpage or file).
-    3. If the instruction indicates extraction: extract the specified information from the webpage content.
-    4. If the instruction indicates download: download the file to the workspace and return its local path.
-    5. Return a dictionary containing either the extracted information from the webpage or details about the downloaded file including its local path.
-    
-    State Updates (on the caller function): 
-    None
-    
-    Args: 
-    url: str - The URL to open (could be a webpage or direct file link).
-    instruction: str - Guidance on whether to extract information from the URL or download a file, and what specific information to extract if applicable.
-    
-    Returns: 
-    dict - A dictionary containing either the extracted information from the webpage or details about the downloaded file including its local path.
+    Open a URL and either return its cleaned text content or download it.
+
+    Args:
+        url: URL to access.
+        download: If True, save the response to disk and return the local path.
+                  If False, return cleaned text content from the response.
+
+    Returns:
+        A dictionary containing the URL, status code, and either webpage
+        content or the downloaded local file path.
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
-    
+
     try:
         response = requests.get(url, headers=headers, timeout=60)
         status_code = response.status_code
-        
+
         if status_code != 200:
             return {
                 'url': url,
                 'status_code': status_code,
                 'error': f'Failed to access URL. Status code: {status_code}'
             }
-        
-        if 'download' in instruction.lower():
-            # Download mode: save file to workspace
-            filename = Path(url).name
+
+        if download:
+            filename = Path(url.split('?')[0]).name
+
             if not filename or '.' not in filename:
-                filename = f"downloaded_{int(time.time())}.dat"
-            
-            # Create downloads directory if it doesn't exist
+                filename = f'downloaded_{int(time.time())}.dat'
+
             download_dir = os.path.join(os.getcwd(), 'downloads')
             os.makedirs(download_dir, exist_ok=True)
-            
+
             local_path = os.path.join(download_dir, filename)
+
             with open(local_path, 'wb') as f:
                 f.write(response.content)
-            
+
             return {
                 'url': url,
                 'local_path': local_path,
-                'status_code': status_code
+                'status_code': status_code,
+                'content_type': response.headers.get('Content-Type'),
+                'size_bytes': len(response.content)
             }
-        else:
-            # Extraction mode: return webpage content
-            return {
-                'url': url,
-                'extracted_info': response.text,
-                'status_code': status_code
-            }
-    
+
+        content = response.text
+
+        content = re.sub(r'(?is)<script.*?>.*?</script>', ' ', content)
+        content = re.sub(r'(?is)<style.*?>.*?</style>', ' ', content)
+        content = re.sub(r'(?is)<noscript.*?>.*?</noscript>', ' ', content)
+        content = re.sub(r'(?s)<[^>]+>', '\n', content)
+        content = unescape(content)
+        content = re.sub(r'[ \t]+', ' ', content)
+        content = re.sub(r'\n\s*\n+', '\n', content).strip()
+
+        was_truncated = len(content) > 1_500_000
+
+        if was_truncated:
+            content = content[:1_500_000] + '\n\n...\n[WEBPAGE CONTENT TRUNCATED]'
+
+        return {
+            'url': url,
+            'content': content,
+            'status_code': status_code,
+            'content_type': response.headers.get('Content-Type'),
+            'content_truncated': was_truncated,
+            'returned_characters': len(content)
+        }
+
     except requests.exceptions.Timeout:
         return {
             'url': url,
             'status_code': None,
             'error': 'Request timed out after 60 seconds'
         }
+
     except requests.exceptions.ConnectionError as e:
         return {
             'url': url,
             'status_code': None,
             'error': f'Connection error: {str(e)}'
         }
+
     except requests.exceptions.RequestException as e:
         return {
             'url': url,
             'status_code': None,
             'error': f'Request failed: {str(e)}'
         }
+
     except Exception as e:
         return {
             'url': url,
@@ -619,38 +546,38 @@ def open_url(url: str, instruction: str) -> dict:
         }
 
 @tool
-def run_python(code: str) -> dict:
+def run_python(code: str, file_paths: Optional[List[str]] = None, pip_install: Optional[List[str]] = None) -> dict:
     """
     Execute Python code inside an isolated Docker container.
 
-    The container has:
-    - no network access
-    - no access to project or host files
-    - a read-only filesystem
-    - a non-root user
-    - no Linux capabilities
-    - limited CPU, memory, processes, files, and execution time
+    The GAIA dataset is mounted read-only at /gaia_dataset.
+    Files listed in file_paths are copied into /sandbox/attachments.
+    Packages listed in pip_install are temporarily installed for this
+    execution and automatically removed afterwards.
 
     Args:
         code: Python code to execute.
+        file_paths: Optional host files that the code needs to access.
+        pip_install: Optional PyPI packages required by the submitted code.
 
     Returns:
         A dictionary containing success, stdout, stderr, exit code,
-        timeout status, and execution time.
+        timeout status, execution time, mounted files, and installed packages.
     """
-    import json
-    import os
-    import shutil
-    import subprocess
-    import tempfile
-    import time
-    import uuid
-    from pathlib import Path
+    import re
 
     timeout_seconds = 10
-    docker_image = "python:3.11-slim"
+    pip_install_timeout_seconds = 120
+    docker_image = "gaia-python:3.11"
     max_code_size = 100_000
     max_output_size = 20_000
+
+    gaia_dataset_root = Path(
+        os.getenv(
+            'GAIA_DATASET_DIR',
+            Path.home() / '.cache' / 'huggingface' / 'hub' / 'datasets--gaia-benchmark--GAIA'
+        )
+    ).expanduser().resolve()
 
     if not isinstance(code, str) or not code.strip():
         return {
@@ -666,13 +593,101 @@ def run_python(code: str) -> dict:
         return {
             "success": False,
             "output": "",
-            "error": (
-                f"Code exceeds the {max_code_size}-byte limit."
-            ),
+            "error": f"Code exceeds the {max_code_size}-byte limit.",
             "exit_code": None,
             "timed_out": False,
             "execution_time": 0.0,
         }
+
+    file_paths = file_paths or []
+    pip_install = pip_install or []
+
+    if isinstance(file_paths, str):
+        file_paths = [file_paths]
+
+    if isinstance(pip_install, str):
+        pip_install = [pip_install]
+
+    if not isinstance(file_paths, list):
+        return {
+            "success": False,
+            "output": "",
+            "error": "file_paths must be a list of file paths.",
+            "exit_code": None,
+            "timed_out": False,
+            "execution_time": 0.0,
+        }
+
+    if not isinstance(pip_install, list):
+        return {
+            "success": False,
+            "output": "",
+            "error": "pip_install must be a list of PyPI package names.",
+            "exit_code": None,
+            "timed_out": False,
+            "execution_time": 0.0,
+        }
+
+    for package in pip_install:
+        if not isinstance(package, str) or not package.strip() or package.strip().startswith('-'):
+            return {
+                "success": False,
+                "output": "",
+                "error": "Every pip_install entry must be a valid PyPI package name.",
+                "exit_code": None,
+                "timed_out": False,
+                "execution_time": 0.0,
+            }
+
+        if '://' in package or '/' in package or '\\' in package:
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Remote URLs and paths are not allowed in pip_install: {package}",
+                "exit_code": None,
+                "timed_out": False,
+                "execution_time": 0.0,
+            }
+
+    validated_file_paths = []
+
+    for file_path in file_paths:
+        if not isinstance(file_path, str) or not file_path.strip():
+            return {
+                "success": False,
+                "output": "",
+                "error": "Every file path must be a non-empty string.",
+                "exit_code": None,
+                "timed_out": False,
+                "execution_time": 0.0,
+            }
+
+        resolved_path = Path(file_path).expanduser().resolve()
+
+        if not resolved_path.exists():
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Requested file does not exist: {file_path}",
+                "exit_code": None,
+                "timed_out": False,
+                "execution_time": 0.0,
+            }
+
+        if not resolved_path.is_file():
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Requested path is not a file: {file_path}",
+                "exit_code": None,
+                "timed_out": False,
+                "execution_time": 0.0,
+            }
+
+        validated_file_paths.append({
+            "original": file_path,
+            "resolved": resolved_path,
+        })
 
     if shutil.which("docker") is None:
         return {
@@ -687,22 +702,149 @@ def run_python(code: str) -> dict:
     container_name = f"gaia-python-{uuid.uuid4().hex}"
     started_at = time.perf_counter()
 
-    with tempfile.TemporaryDirectory(
-        prefix="gaia_python_"
-    ) as temp_directory:
+    with tempfile.TemporaryDirectory(prefix="gaia_python_") as temp_directory:
         sandbox_directory = Path(temp_directory)
-        script_path = sandbox_directory / "submitted_code.py"
+        attachments_directory = sandbox_directory / "attachments"
+        packages_directory = sandbox_directory / "python_packages"
 
-        script_path.write_text(
-            code,
-            encoding="utf-8",
-        )
+        attachments_directory.mkdir(parents=True, exist_ok=True)
+        packages_directory.mkdir(parents=True, exist_ok=True)
+
+        path_mapping = {}
+        rewritten_code = code
+
+        # Rewrite GAIA Hugging Face cache paths to the path used inside Docker.
+        if gaia_dataset_root.exists():
+            gaia_path = str(gaia_dataset_root)
+
+            gaia_path_variants = {
+                gaia_path,
+                gaia_path.replace("\\", "\\\\"),
+                gaia_path.replace("\\", "/"),
+            }
+
+            for gaia_path_variant in gaia_path_variants:
+                rewritten_code = rewritten_code.replace(
+                    gaia_path_variant,
+                    "/gaia_dataset"
+                )
+
+            def normalize_gaia_path(match):
+                return match.group(0).replace("\\\\", "/").replace("\\", "/")
+
+            rewritten_code = re.sub(
+                r'/gaia_dataset[^\'"\n]*',
+                normalize_gaia_path,
+                rewritten_code
+            )
+
+        # Copy explicitly requested non-GAIA files into the sandbox.
+        for index, file_data in enumerate(validated_file_paths):
+            original_path = file_data["original"]
+            resolved_path = file_data["resolved"]
+
+            sandbox_name = f"{index}_{resolved_path.name}"
+            sandbox_path = attachments_directory / sandbox_name
+            container_path = f"/sandbox/attachments/{sandbox_name}"
+
+            shutil.copy2(resolved_path, sandbox_path)
+
+            path_variants = {
+                original_path,
+                str(resolved_path),
+                original_path.replace("\\", "\\\\"),
+                str(resolved_path).replace("\\", "\\\\"),
+                original_path.replace("\\", "/"),
+                str(resolved_path).replace("\\", "/"),
+            }
+
+            for path_variant in path_variants:
+                if path_variant:
+                    rewritten_code = rewritten_code.replace(
+                        path_variant,
+                        container_path
+                    )
+
+            path_mapping[original_path] = container_path
+
+        script_path = sandbox_directory / "submitted_code.py"
+        script_path.write_text(rewritten_code, encoding="utf-8")
 
         try:
             os.chmod(sandbox_directory, 0o755)
+            os.chmod(attachments_directory, 0o755)
+            os.chmod(packages_directory, 0o755)
             os.chmod(script_path, 0o644)
         except OSError:
             pass
+
+        # Temporarily install requested PyPI packages.
+        # This installer container has internet access.
+        if pip_install:
+            pip_command = [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                "bridge",
+                "--mount",
+                f"type=bind,source={packages_directory.resolve()},target=/packages",
+                docker_image,
+                "python",
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-cache-dir",
+                "--target",
+                "/packages",
+                *pip_install,
+            ]
+
+            try:
+                pip_process = subprocess.run(
+                    pip_command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=pip_install_timeout_seconds,
+                    check=False,
+                )
+
+            except subprocess.TimeoutExpired:
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": f"pip install timed out after {pip_install_timeout_seconds} seconds.",
+                    "exit_code": None,
+                    "timed_out": True,
+                    "execution_time": round(time.perf_counter() - started_at, 6),
+                    "pip_installed": pip_install,
+                }
+
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "output": "",
+                    "error": f"Failed to start pip installer: {type(exc).__name__}: {exc}",
+                    "exit_code": None,
+                    "timed_out": False,
+                    "execution_time": round(time.perf_counter() - started_at, 6),
+                    "pip_installed": pip_install,
+                }
+
+            if pip_process.returncode != 0:
+                return {
+                    "success": False,
+                    "output": (pip_process.stdout or "")[-max_output_size:],
+                    "error": (pip_process.stderr or "pip install failed.")[-max_output_size:],
+                    "exit_code": pip_process.returncode,
+                    "timed_out": False,
+                    "execution_time": round(time.perf_counter() - started_at, 6),
+                    "pip_installed": pip_install,
+                }
 
         docker_command = [
             "docker",
@@ -711,18 +853,14 @@ def run_python(code: str) -> dict:
             "--name",
             container_name,
 
-            # Proper signal handling.
             "--init",
-
-            # Do not download or update an image during execution.
             "--pull",
             "never",
 
-            # No internet or local network access.
+            # Submitted code has no network access.
             "--network",
             "none",
 
-            # Resource limits.
             "--memory",
             "128m",
             "--memory-swap",
@@ -732,31 +870,23 @@ def run_python(code: str) -> dict:
             "--pids-limit",
             "32",
 
-            # Limit open files and generated processes.
             "--ulimit",
             "nofile=64:64",
             "--ulimit",
             "nproc=32:32",
 
-            # Remove container privileges.
             "--cap-drop",
             "ALL",
             "--security-opt",
             "no-new-privileges:true",
 
-            # Run as the unprivileged nobody user.
             "--user",
             "65534:65534",
-
-            # Prevent modification of the container filesystem.
             "--read-only",
 
-            # Small writable temporary filesystem.
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=16m",
 
-            # Mount only the submitted script.
-            # The host directory is read-only inside the container.
             "--mount",
             (
                 f"type=bind,"
@@ -765,22 +895,45 @@ def run_python(code: str) -> dict:
                 f"readonly"
             ),
 
+            "--mount",
+            (
+                f"type=bind,"
+                f"source={packages_directory.resolve()},"
+                f"target=/python_packages,"
+                f"readonly"
+            ),
+
             "--workdir",
             "/sandbox",
 
-            # Avoid writing Python cache files.
             "-e",
             "PYTHONDONTWRITEBYTECODE=1",
             "-e",
             "PYTHONUNBUFFERED=1",
             "-e",
+            "PYTHONPATH=/python_packages",
+            "-e",
             "HOME=/tmp",
+        ]
 
+        # Make the complete GAIA dataset available read-only.
+        if gaia_dataset_root.exists():
+            docker_command.extend([
+                "--mount",
+                (
+                    f"type=bind,"
+                    f"source={gaia_dataset_root},"
+                    f"target=/gaia_dataset,"
+                    f"readonly"
+                )
+            ])
+
+        docker_command.extend([
             docker_image,
             "python",
             "-I",
             "/sandbox/submitted_code.py",
-        ]
+        ])
 
         try:
             process = subprocess.Popen(
@@ -792,9 +945,7 @@ def run_python(code: str) -> dict:
                 errors="replace",
             )
 
-            stdout, stderr = process.communicate(
-                timeout=timeout_seconds
-            )
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
 
         except subprocess.TimeoutExpired:
             try:
@@ -813,21 +964,15 @@ def run_python(code: str) -> dict:
             except Exception:
                 pass
 
-            execution_time = time.perf_counter() - started_at
-
             return {
                 "success": False,
                 "output": "",
-                "error": (
-                    f"Execution timed out after "
-                    f"{timeout_seconds} seconds."
-                ),
+                "error": f"Execution timed out after {timeout_seconds} seconds.",
                 "exit_code": None,
                 "timed_out": True,
-                "execution_time": round(
-                    execution_time,
-                    6,
-                ),
+                "execution_time": round(time.perf_counter() - started_at, 6),
+                "mounted_files": path_mapping,
+                "pip_installed": pip_install,
             }
 
         except Exception as exc:
@@ -847,56 +992,134 @@ def run_python(code: str) -> dict:
             except Exception:
                 pass
 
-            execution_time = time.perf_counter() - started_at
-
             return {
                 "success": False,
                 "output": "",
-                "error": (
-                    f"Failed to start the Docker sandbox: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
+                "error": f"Failed to start the Docker sandbox: {type(exc).__name__}: {exc}",
                 "exit_code": None,
                 "timed_out": False,
-                "execution_time": round(
-                    execution_time,
-                    6,
-                ),
+                "execution_time": round(time.perf_counter() - started_at, 6),
+                "mounted_files": path_mapping,
+                "pip_installed": pip_install,
             }
 
-    execution_time = time.perf_counter() - started_at
+        execution_time = time.perf_counter() - started_at
 
-    stdout = stdout or ""
-    stderr = stderr or ""
+        stdout = stdout or ""
+        stderr = stderr or ""
 
-    output_truncated = len(stdout) > max_output_size
-    error_truncated = len(stderr) > max_output_size
+        output_truncated = len(stdout) > max_output_size
+        error_truncated = len(stderr) > max_output_size
 
-    if output_truncated:
-        stdout = (
-            stdout[:max_output_size]
-            + "\n[stdout truncated]"
+        if output_truncated:
+            stdout = stdout[:max_output_size] + "\n[stdout truncated]"
+
+        if error_truncated:
+            stderr = stderr[:max_output_size] + "\n[stderr truncated]"
+
+        return {
+            "success": process.returncode == 0,
+            "output": stdout,
+            "error": stderr or None,
+            "exit_code": process.returncode,
+            "timed_out": False,
+            "execution_time": round(execution_time, 6),
+            "output_truncated": output_truncated,
+            "error_truncated": error_truncated,
+            "mounted_files": path_mapping,
+            "gaia_dataset_mounted": gaia_dataset_root.exists(),
+            "pip_installed": pip_install,
+        }
+
+@tool
+def wikipedia_search(query: str, max_results: int = 3) -> list[dict]:
+    """
+    Search English Wikipedia and return relevant article text.
+
+    Use this tool when the required information is likely to be available
+    in Wikipedia. It searches for matching pages and retrieves their
+    plain-text contents in a single tool call.
+
+    Args:
+        query: Search query.
+        max_results: Maximum number of Wikipedia articles to return.
+
+    Returns:
+        A list containing article titles, URLs, and plain-text extracts.
+    """
+    try:
+        max_results = max(1, min(int(max_results), 5))
+
+        search_response = requests.get(
+            'https://en.wikipedia.org/w/api.php',
+            params={
+                'action': 'query',
+                'list': 'search',
+                'srsearch': query,
+                'srlimit': max_results,
+                'format': 'json',
+                'utf8': 1,
+            },
+            headers={
+                'User-Agent': 'GAIA-task-solver/1.0'
+            },
+            timeout=30
         )
+        search_response.raise_for_status()
 
-    if error_truncated:
-        stderr = (
-            stderr[:max_output_size]
-            + "\n[stderr truncated]"
+        search_results = search_response.json().get('query', {}).get('search', [])
+
+        if not search_results:
+            return []
+
+        titles = [result['title'] for result in search_results]
+
+        content_response = requests.get(
+            'https://en.wikipedia.org/w/api.php',
+            params={
+                'action': 'query',
+                'prop': 'extracts|info',
+                'titles': '|'.join(titles),
+                'explaintext': 1,
+                'inprop': 'url',
+                'format': 'json',
+                'utf8': 1,
+            },
+            headers={
+                'User-Agent': 'GAIA-task-solver/1.0'
+            },
+            timeout=30
         )
+        content_response.raise_for_status()
 
-    return {
-        "success": process.returncode == 0,
-        "output": stdout,
-        "error": stderr or None,
-        "exit_code": process.returncode,
-        "timed_out": False,
-        "execution_time": round(
-            execution_time,
-            6,
-        ),
-        "output_truncated": output_truncated,
-        "error_truncated": error_truncated,
-    }
+        pages = content_response.json().get('query', {}).get('pages', {})
+        pages_by_title = {
+            page.get('title'): page
+            for page in pages.values()
+        }
+
+        results = []
+
+        for search_result in search_results:
+            title = search_result['title']
+            page = pages_by_title.get(title, {})
+            extract = page.get('extract', '')
+
+            if len(extract) > 100_000:
+                extract = extract[:100_000] + '\n\n[WIKIPEDIA CONTENT TRUNCATED]'
+
+            results.append({
+                'title': title,
+                'url': page.get('fullurl'),
+                'extract': extract,
+            })
+
+        return results
+
+    except Exception as e:
+        return [{
+            'error': str(e)
+        }]
 
 @tool
 def submit_final_answer(answer: str, format: str, steps_completed: list[str], evidence: list[str], calculations: list[str], unresolved_issues: list[str]) -> str:
@@ -957,7 +1180,11 @@ analyze_task_llm = myChatOpenAI(
 
 solve_task_llm = myChatOpenAI(
     temperature= 0.5
-).bind_tools([file_parser, web_search, open_url, run_python, submit_final_answer, think_tool])
+).bind_tools([file_parser, web_search, open_url, run_python, wikipedia_search, submit_final_answer, think_tool])
+
+research_memory_llm = myChatOpenAI(
+    temperature=0.0
+).bind_tools([think_tool], tool_choice='think_tool')
 
 review_answer_llm = myChatOpenAI(
     temperature= 0.3
@@ -971,7 +1198,149 @@ format_output_llm = myChatOpenAI(
 
 
 ''' Helpful Functions '''
+def get_message_tool_calls(message: BaseMessage) -> list[dict]:
+    """
+    Return normalized tool calls from an AIMessage.
+    """
+    direct_tool_calls = getattr(message, 'tool_calls', None)
 
+    if direct_tool_calls:
+        return list(direct_tool_calls)
+
+    additional_kwargs = getattr(message, 'additional_kwargs', {})
+
+    if not isinstance(additional_kwargs, dict):
+        return []
+
+    return additional_kwargs.get('tool_calls', []) or []
+
+
+def get_tool_call_name(tool_call: dict) -> Optional[str]:
+    """
+    Extract a tool name from LangChain or OpenAI-compatible tool-call data.
+    """
+    if 'name' in tool_call:
+        return tool_call.get('name')
+
+    function_data = tool_call.get('function')
+
+    if isinstance(function_data, dict):
+        return function_data.get('name')
+
+    return None
+
+
+def get_tool_call_id(tool_call: dict) -> Optional[str]:
+    """
+    Extract the tool-call identifier.
+    """
+    return tool_call.get('id')
+
+
+def is_research_memory(message: BaseMessage) -> bool:
+    """
+    Return True for a think_tool result containing cumulative research memory.
+    """
+    if not isinstance(message, ToolMessage):
+        return False
+
+    if message.name != 'think_tool':
+        return False
+
+    return str(message.content).lstrip().startswith('[RESEARCH MEMORY]')
+
+
+def count_context_tokens(messages: List[BaseMessage]) -> int:
+    """
+    Count the tokens in the context about to be sent to the solver.
+
+    The model tokenizer is used when available. A character-based
+    approximation is used when the configured model identifier is
+    not supported by the local tokenizer.
+    """
+    # try:
+    #     token_count = myChatOpenAI().get_num_tokens_from_messages(messages)
+
+    #     if isinstance(token_count, int) and token_count >= 0:
+    #         return token_count
+
+    # except Exception as e:
+    #     pass
+    #     # print(f'{BLUE}[TOKEN COUNT] [INFO] {RESET} Using approximate count: {type(e).__name__}: {e}') if DEBUG else None
+
+    serialized_messages = json.dumps(
+        [{
+            'type': getattr(message, 'type', type(message).__name__),
+            'content': getattr(message, 'content', ''),
+            'tool_calls': get_message_tool_calls(messages),
+        } for message in messages],
+        ensure_ascii= False,
+        default= str
+    )
+
+    return max(1, (len(serialized_messages) + 3) // 4)
+
+def build_compressed_messages(messages: List[BaseMessage]) -> List[BaseMessage]:
+    """
+    Build the temporary message history sent to the LLM.
+
+    The complete original history remains unchanged in LangGraph state.
+
+    Once a cumulative [RESEARCH MEMORY] exists, completed web_search and
+    open_url call/result pairs before that memory are omitted. Older research
+    memories are also omitted, while the latest cumulative memory is retained
+    as a normal AIMessage.
+
+    Research results produced after the latest memory remain visible so the
+    solver can incorporate them into the next cumulative memory.
+    """
+    latest_memory_index: Optional[int] = None
+
+    for index, message in enumerate(messages):
+        if is_research_memory(message):
+            latest_memory_index = index
+
+    if latest_memory_index is None:
+        return list(messages)
+
+    research_tools = {'web_search', 'open_url'}
+
+    compressed: List[BaseMessage] = []
+    index = 0
+
+    while index < len(messages):
+        message = messages[index]
+
+        if isinstance(message, AIMessage)and index + 1 < len(messages):
+            tool_calls = get_message_tool_calls(message)
+            next_message = messages[index + 1]
+
+            # The simple case: one AI tool call followed by its ToolMessage.
+            if len(tool_calls) == 1 and isinstance(next_message, ToolMessage):
+                tool_call = tool_calls[0]
+                tool_name = get_tool_call_name(tool_call)
+                tool_call_id = get_tool_call_id(tool_call)
+
+                matching_result = not tool_call_id or next_message.tool_call_id == tool_call_id
+                if matching_result:
+                    # Remove completed web research already represented by
+                    # the latest cumulative research memory.
+                    if tool_name in research_tools and index + 1 < latest_memory_index:
+                        index += 2
+                        continue
+
+                    # Collapse research-memory tool call/result pairs.
+                    if tool_name == 'think_tool' and is_research_memory(next_message):
+                        if index + 1 == latest_memory_index:
+                            compressed.append(AIMessage(content=str(next_message.content)))
+
+                        index += 2
+                        continue
+
+        compressed.append(message)
+        index += 1
+
+    return compressed
 # TODO: Add Helpful Functions (if needed)
 
 
@@ -1106,7 +1475,6 @@ def solve_task(state: AgentSchema) -> AgentSchema:
         attachments: List[str] = state.get('attachments', [])
         task_analysis: Union[str, dict] = state.get('task_analysis', '')
         review_feedback: Optional[str] = state.get('review_feedback')
-        review_count: int = state.get('review_count', 0)
 
         # Format the prompt with the plan, question, attachments, and prior feedback
         # Handle None review_feedback by using empty string
@@ -1127,8 +1495,20 @@ def solve_task(state: AgentSchema) -> AgentSchema:
 
         # Invoke the LLM with the system prompt and current messages
         # The LLM has tools bound: file_parser, web_search, open_url, run_python, submit_final_answer, think_tool
-        llm_messages = [SystemMessage(content=prompt)] + messages
-        result = safe_invoke(solve_task_llm, messages=llm_messages)
+        compressed_messages = build_compressed_messages(messages)
+        llm_messages = [SystemMessage(content= prompt), *compressed_messages]
+        context_token_count = count_context_tokens(llm_messages)
+
+        if context_token_count > RESEARCH_MEMORY_TOKEN_THRESHOLD:
+            compression_prompt = prompts.RESEARCH_MEMORY_PROMPT.format(
+                threshold= RESEARCH_MEMORY_TOKEN_THRESHOLD,
+                original_prompt= prompt
+            )
+            
+            result = safe_invoke(research_memory_llm, messages=[SystemMessage(content=compression_prompt), *compressed_messages])
+
+        else:
+            result = safe_invoke(solve_task_llm, messages=llm_messages)
 
         # Return the state update (LangGraph state is immutable; return a new dict)
         if result:
@@ -1179,7 +1559,7 @@ def review_answer(state: AgentSchema) -> AgentSchema:
     print_function_name()
     try:
         # 1. Read from state
-        messages = state['messages']
+        messages = build_compressed_messages(state['messages'])
         candidate_answer = state['candidate_answer']
         prior_feedback = state.get('review_feedback', "")
 
@@ -1189,6 +1569,7 @@ def review_answer(state: AgentSchema) -> AgentSchema:
 
         # 3. Format the prompt with candidate answer, messages string, and prior feedback
         prompt = prompts.REVIEW_ANSWER_PROMPT.format(
+            question=state['question'],
             candidate_answer=candidate_answer,
             messages=messages_str,
             prior_feedback=prior_feedback
@@ -1258,7 +1639,7 @@ def format_output(state: AgentSchema) -> AgentSchema:
     print_function_name()
     try:
         # Read required state fields
-        messages: List[BaseMessage] = state['messages']
+        messages: List[BaseMessage] = build_compressed_messages(state['messages'])
         candidate_answer: str = state['candidate_answer']
         review_decision: str = state['review_decision']
         review_feedback: str = state['review_feedback'] if state['review_feedback'] is not None else  ' '
@@ -1267,6 +1648,7 @@ def format_output(state: AgentSchema) -> AgentSchema:
         
         # Format the prompt with candidate answer, answer format, and review context
         prompt: str = prompts.FORMAT_OUTPUT_PROMPT.format(
+            question=state['question'],
             candidate_answer=candidate_answer,
             answer_format=answer_format,
             review_decision=review_decision,
@@ -1309,22 +1691,22 @@ def from_review_answer_to(state: AgentSchema) -> Literal["solve_task", "format_o
         return 'format_output'
     elif review_decision == 'revise' and review_count < 2:
         return 'solve_task'
-    else:
-        return 'format_output'
     
-def from_solve_task_to(state: AgentSchema) -> Literal["solve_task_tools_type_a", "solve_task_tools_submit_final_answer", "review_answer"]:
+    return 'format_output'
+    
+def from_solve_task_to(state: AgentSchema) -> Literal["solve_task_tools_type_a", "solve_task_tools_submit_final_answer", "solve_task"]:
     """ 
     Routes the workflow after solve_task based on the last AI message's tool calls.
     - If the last AI message contains tool calls for submit_final_answer, route to 'solve_task_tools_submit_final_answer'.
     - If the last AI message contains tool calls for other tools (file_parser, web_search, open_url, run_python, think_tool), route to 'solve_task_tools_type_a'.
-    - If the last AI message does NOT contain any tool calls, route to 'review_answer'.
+    - If the last AI message does NOT contain any tool calls, route to 'solve_task'.
     """
     print_function_name() if DEBUG else None
 
     # Guard against empty messages list
     messages: List[BaseMessage] = state.get('messages', [])
     if not messages:
-        return "review_answer"
+        return "solve_task"
 
     last_message: BaseMessage = messages[-1]
 
@@ -1352,10 +1734,10 @@ def from_solve_task_to(state: AgentSchema) -> Literal["solve_task_tools_type_a",
     if "submit_final_answer" in tool_names:
         return "solve_task_tools_submit_final_answer"
     # Check for other tools
-    elif any(name in ["file_parser", "web_search", "open_url", "run_python", "think_tool"] for name in tool_names):
+    elif any(name in ["file_parser", "web_search", "wikipedia_search", "open_url", "run_python", "think_tool"] for name in tool_names):
         return "solve_task_tools_type_a"
     else:
-        return "review_answer"
+        return "solve_task"
 
 
 
@@ -1521,7 +1903,7 @@ gaia_task_solver_graph.add_node("analyze_task", analyze_task)
 gaia_task_solver_graph.add_node("solve_task", solve_task)
 gaia_task_solver_graph.add_node("review_answer", review_answer)
 gaia_task_solver_graph.add_node("format_output", format_output)
-gaia_task_solver_graph.add_node("solve_task_tools_type_a", ToolNode([file_parser, web_search, open_url, run_python, think_tool]))
+gaia_task_solver_graph.add_node("solve_task_tools_type_a", ToolNode([file_parser, web_search, open_url, run_python, wikipedia_search, think_tool]))
 gaia_task_solver_graph.add_node("solve_task_tools_submit_final_answer", solve_task_tools_submit_final_answer)
 
 gaia_task_solver_graph.add_edge(START, "analyze_task")
@@ -1532,12 +1914,19 @@ gaia_task_solver_graph.add_conditional_edges(
     {   # Not needed just for clarity
         "solve_task_tools_type_a": "solve_task_tools_type_a",
         "solve_task_tools_submit_final_answer": "solve_task_tools_submit_final_answer",
-        "review_answer": "review_answer",
+        "solve_task": "solve_task",
     }
 )
 gaia_task_solver_graph.add_edge("solve_task_tools_type_a", "solve_task")
 gaia_task_solver_graph.add_edge("solve_task_tools_submit_final_answer", "review_answer")
-gaia_task_solver_graph.add_edge("review_answer", "format_output")
+gaia_task_solver_graph.add_conditional_edges(
+    "review_answer",
+    from_review_answer_to,
+    {
+        "solve_task": "solve_task",
+        "format_output": "format_output"
+    }
+)
 gaia_task_solver_graph.add_edge("format_output", END)
 
 

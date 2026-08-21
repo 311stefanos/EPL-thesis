@@ -189,35 +189,6 @@ def main(user_request: str, orchestrator: bool= True, prompt_review_mode: Litera
 
 
 if __name__ == '__main__':
-    # def test(model):
-    #     from utils.utils import safe_invoke, myChatOpenAI
-    #     from langchain.schema import SystemMessage
-    #     from typing import TypedDict, Tuple
-    #     def tool(arg1: str, arg2: int) -> str:
-    #         '''`tool` is a function that takes two arguments and returns a string.'''
-    #         return f'{arg1} {arg2}'
-    #     class SubSchema(TypedDict):
-    #         arg1: str
-    #         arg2: int
-    #         arg3: Tuple[str, str]
-            
-    #     class Schema(TypedDict):
-    #         name: str
-    #         age: int
-    #         subSchema: SubSchema
-
-    #     llm = myChatOpenAI(
-    #         model= model
-    #     ).bind_tools([tool])
-    #     print(safe_invoke(llm, messages= [SystemMessage(content= 'Call the provided tool with random values')]))
-
-    #     llm = myChatOpenAI(
-    #         model= model
-    #     ).with_structured_output(Schema)
-    #     print(safe_invoke(llm, messages= [SystemMessage(content= 'Return the provided schema with random values')]))
-
-
-    # test("deepseek/deepseek-v4-flash-0731")
 
     user_request: str = (
         '''Create a simple LangGraph-based AI agent that solves tasks from the GAIA benchmark.
