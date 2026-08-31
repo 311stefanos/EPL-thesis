@@ -1,4 +1,4 @@
-# Automated Construction of Custom AI Agents via LLM Collaboration and Prompt Engineering
+# From Natural Language Requests to Runnable AI Agents:<br>A Multi-Agent Builder for Custom AI Agents (MABCA)
 
 ## Table of contents
 1. [Project Summary](#project-summary)
