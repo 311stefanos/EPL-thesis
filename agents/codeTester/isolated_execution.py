@@ -25,57 +25,65 @@ def _normalise_import_statement(import_statement: str) -> str:
 
     return ast.unparse(node).strip()
 
+def _find_qualified_function_node(parsed_source: ast.Module, function_name: str) -> ast.AST:
+    '''Finds one top-level function or qualified class method.'''
+    parts: List[str] = function_name.split('.')
+    body = parsed_source.body
 
-def _replace_function_in_source(
-    *,
-    function_name: str,
-    source_code: str,
-    implementation: str,
-) -> str:
-    '''Replaces one top-level function with the candidate implementation.'''
+    for class_name in parts[:-1]:
+        matching_classes = [node for node in body if isinstance(node, ast.ClassDef) and node.name == class_name]
+
+        if len(matching_classes) != 1:
+            raise ValueError(f'Expected exactly one class named {class_name!r} while resolving {function_name!r}, but found {len(matching_classes)}.')
+
+        body = matching_classes[0].body
+
+    code_function_name: str = parts[-1]
+    matching_functions = [node for node in body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == code_function_name]
+
+    if len(matching_functions) != 1:
+        raise ValueError(f'Expected exactly one function or method named {function_name!r}, but found {len(matching_functions)}.')
+
+    return matching_functions[0]
+
+def _replace_function_in_source(*, function_name: str, source_code: str, implementation: str) -> str:
+    '''Replaces exactly one top-level function or qualified class method with the candidate implementation.'''
     try:
         parsed_source = ast.parse(source_code)
         parsed_implementation = ast.parse(implementation)
     except SyntaxError as exc:
         raise ValueError(f'Unable to parse the source or candidate implementation: {exc}') from exc
 
-    source_functions = [
-        node
-        for node in parsed_source.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == function_name
-    ]
+    target_function = _find_qualified_function_node(parsed_source, function_name)
+    code_function_name: str = function_name.split('.')[-1]
 
-    if len(source_functions) != 1:
-        raise ValueError(
-            f'Expected exactly one top-level function named {function_name!r}, '
-            f'but found {len(source_functions)}.'
-        )
-
-    implementation_functions = [
-        node
-        for node in parsed_implementation.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    implementation_functions = [node for node in parsed_implementation.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
 
     if len(implementation_functions) != 1:
-        raise ValueError('The candidate implementation must contain exactly one top-level function.')
+        raise ValueError('The candidate implementation must contain exactly one function or method definition.')
 
-    if implementation_functions[0].name != function_name:
-        raise ValueError(
-            f'The candidate implements {implementation_functions[0].name!r}, '
-            f'but the expected function is {function_name!r}.'
-        )
+    if implementation_functions[0].name != code_function_name:
+        raise ValueError(f'The candidate implements {implementation_functions[0].name!r}, but the expected function or method is {function_name!r}.')
 
-    target_function = source_functions[0]
+    source_lines = source_code.splitlines(keepends=True)
     decorator_lines = [decorator.lineno for decorator in target_function.decorator_list]
     start_line = min([target_function.lineno, *decorator_lines]) - 1
     end_line = target_function.end_lineno
 
-    source_lines = source_code.splitlines(keepends= True)
-    candidate = implementation.strip('\n') + '\n'
+    definition_line = source_lines[target_function.lineno - 1]
+    indentation = definition_line[:len(definition_line) - len(definition_line.lstrip())]
 
-    return ''.join(source_lines[:start_line]) + candidate + ''.join(source_lines[end_line:])
+    candidate_lines = implementation.strip('\n').splitlines()
+    candidate = '\n'.join([f'{indentation}{line}' if line.strip() else line for line in candidate_lines]) + '\n'
+
+    updated_source = ''.join(source_lines[:start_line]) + candidate + ''.join(source_lines[end_line:])
+
+    try:
+        ast.parse(updated_source)
+    except SyntaxError as exc:
+        raise ValueError(f'Replacing {function_name!r} would make the candidate module invalid: {exc}') from exc
+
+    return updated_source
 
 def _insert_additional_imports(
     *,
@@ -140,6 +148,36 @@ def _insert_additional_imports(
         + ''.join(source_lines[insertion_line:])
     )
 
+def _find_tool_description_errors(source_code: str) -> List[str]:
+    '''Returns module-level and class @tool functions that have neither a docstring nor an explicit description.'''
+    parsed_source = ast.parse(source_code)
+    invalid_tools: List[str] = []
+
+    def inspect_body(body: List[ast.stmt], prefix: str = '') -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                inspect_body(node.body, f'{prefix}{node.name}.')
+                continue
+
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+
+            for decorator in node.decorator_list:
+                decorator_target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                decorator_name = ast.unparse(decorator_target).strip()
+
+                if decorator_name != 'tool' and not decorator_name.endswith('.tool'):
+                    continue
+
+                has_description = isinstance(decorator, ast.Call) and any(keyword.arg == 'description' for keyword in decorator.keywords)
+                has_docstring = ast.get_docstring(node) is not None
+
+                if not has_description and not has_docstring:
+                    invalid_tools.append(f'{prefix}{node.name}')
+
+    inspect_body(parsed_source.body)
+    return invalid_tools
+
 def _build_candidate_code(
     *,
     function_name: str,
@@ -195,13 +233,11 @@ original_stdout_fd = os.dup(1)
 
 
 def emit(payload):
-    # Emit the final result through the original stdout file descriptor.
-    data = json.dumps(payload, ensure_ascii= False)
+    data = json.dumps(payload, ensure_ascii=False)
     os.write(original_stdout_fd, data.encode('utf-8') + b'\n')
 
 
 def json_safe(value):
-    # Convert common Python values into JSON-compatible values.
     if value is None or isinstance(value, (bool, int, str)):
         return value
 
@@ -209,7 +245,7 @@ def json_safe(value):
         return value if math.isfinite(value) else repr(value)
 
     if isinstance(value, bytes):
-        return value.decode('utf-8', errors= 'replace')
+        return value.decode('utf-8', errors='replace')
 
     if isinstance(value, dict):
         return {str(key): json_safe(item) for key, item in value.items()}
@@ -218,6 +254,7 @@ def json_safe(value):
         return [json_safe(item) for item in value]
 
     model_dump = getattr(value, 'model_dump', None)
+
     if callable(model_dump):
         try:
             return json_safe(model_dump())
@@ -227,12 +264,58 @@ def json_safe(value):
     return repr(value)
 
 
+def resolve_target(namespace, function_name, kwargs):
+    parts = function_name.split('.')
+    call_kwargs = dict(kwargs)
+
+    if len(parts) == 1:
+        target = namespace.get(function_name)
+
+        if target is None:
+            raise ValueError(f'Function {function_name!r} was not found after executing the implementation.')
+
+        return target, call_kwargs
+
+    owner = namespace.get(parts[0])
+
+    if owner is None:
+        raise ValueError(f'Class or object {parts[0]!r} was not found while resolving {function_name!r}.')
+
+    for part in parts[1:-1]:
+        owner = getattr(owner, part)
+
+    method_name = parts[-1]
+
+    try:
+        descriptor = inspect.getattr_static(owner, method_name)
+    except AttributeError as exc:
+        raise ValueError(f'Method {function_name!r} was not found after executing the implementation.') from exc
+
+    if isinstance(descriptor, staticmethod):
+        return getattr(owner, method_name), call_kwargs
+
+    if isinstance(descriptor, classmethod):
+        return getattr(owner, method_name), call_kwargs
+
+    instance_kwargs = call_kwargs.pop('__instance__', None)
+
+    if not isinstance(instance_kwargs, dict):
+        raise ValueError(f'Instance method {function_name!r} requires a JSON-compatible "__instance__" dictionary containing constructor arguments for {parts[-2]!r}.')
+
+    try:
+        instance = owner(**instance_kwargs)
+    except Exception as exc:
+        raise ValueError(f'Could not construct an instance for {function_name!r} using __instance__: {exc}') from exc
+
+    return getattr(instance, method_name), call_kwargs
+
+
 try:
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
     os.dup2(devnull_fd, 1)
     os.dup2(devnull_fd, 2)
 
-    with open('/sandbox/payload.json', 'r', encoding= 'utf-8') as file:
+    with open('/sandbox/payload.json', 'r', encoding='utf-8') as file:
         payload = json.load(file)
 
     function_name = payload['function_name']
@@ -244,12 +327,9 @@ try:
     try:
         compiled_code = compile(candidate_code, '/sandbox/submitted_solution.py', 'exec')
         exec(compiled_code, namespace)
-        target_function = namespace.get(function_name)
-
-        if target_function is None:
-            raise ValueError(f'Function {function_name!r} was not found after executing the implementation.')
-
+        target_function, call_kwargs = resolve_target(namespace, function_name, kwargs)
         invoke_method = getattr(target_function, 'invoke', None)
+
         if not callable(target_function) and not callable(invoke_method):
             raise TypeError(f'Object {function_name!r} is not callable.')
 
@@ -271,15 +351,16 @@ try:
     try:
         invoke_method = getattr(target_function, 'invoke', None)
 
-        if callable(invoke_method) and not inspect.isfunction(target_function):
-            output = invoke_method(kwargs)
+        if callable(invoke_method) and not inspect.isfunction(target_function) and not inspect.ismethod(target_function):
+            output = invoke_method(call_kwargs)
         else:
-            output = target_function(**kwargs)
+            output = target_function(**call_kwargs)
 
         if inspect.isawaitable(output):
             output = asyncio.run(output)
 
         elapsed = time.perf_counter() - started_at
+
         emit({
             'kwargs': kwargs,
             'completed': True,
@@ -293,6 +374,7 @@ try:
 
     except BaseException as exc:
         elapsed = time.perf_counter() - started_at
+
         emit({
             'kwargs': kwargs,
             'completed': False,
@@ -527,66 +609,49 @@ def run_in_isolated_env(
 
     else:
         raise ValueError('The source file must be located inside the agents, creations, or utils directory.')
-    
+
     try:
-        image_check = subprocess.run(
-            ['docker', 'image', 'inspect', docker_image],
-            stdout= subprocess.DEVNULL,
-            stderr= subprocess.DEVNULL,
-            check= False,
-            timeout= 10,
-        )
+        image_check = subprocess.run(['docker', 'image', 'inspect', docker_image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=10)
+
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f'Docker did not respond while checking the image: {docker_image}.') from exc
+
     except Exception as exc:
         raise RuntimeError(f'Failed to inspect Docker image {docker_image}: {exc}') from exc
 
     if image_check.returncode != 0:
         raise RuntimeError(f'Docker image not found: {docker_image}. Build the Code Tester image before running.')
 
-    candidate_code = _build_candidate_code(
-        function_name= function_name,
-        source_code= source_code,
-        additional_imports= imports,
-        implementation= implementation,
-    )
+    candidate_code = _build_candidate_code(function_name=function_name, source_code=source_code, additional_imports=imports, implementation=implementation)
+
+    invalid_tools: List[str] = _find_tool_description_errors(candidate_code)
+
+    if invalid_tools:
+        target_name = function_name
+        target_leaf_name = function_name.split('.')[-1]
+        target_is_invalid = target_name in invalid_tools or ('.' not in target_name and target_leaf_name in invalid_tools)
+
+        if target_is_invalid:
+            error_type = 'TargetToolDescriptionError'
+            error_message = f'Target implementation defect: tool {function_name!r} has neither a function docstring nor an explicit @tool(description=...) value.'
+        else:
+            error_type = 'ModuleToolDescriptionError'
+            error_message = f'The candidate module cannot be imported because unrelated tools have neither a function docstring nor an explicit @tool(description=...) value: {invalid_tools}.'
+
+        results = [_failed_result(function_input, error_type=error_type, error_message=error_message) for function_input in function_inputs]
+        return {'function_name': function_name, 'total_inputs': len(function_inputs), 'completed_executions': 0, 'failed_executions': len(results), 'results': results}
 
     results: List[Dict[str, Any]] = []
 
     for function_input in function_inputs:
         if not isinstance(function_input, dict):
-            results.append(
-                _failed_result(
-                    {},
-                    error_type= 'InvalidInputError',
-                    error_message= 'Every generated function input must be a dictionary containing keyword arguments.',
-                )
-            )
+            results.append(_failed_result({}, error_type='InvalidInputError', error_message='Every generated function input must be a dictionary containing keyword arguments.'))
             continue
 
-        result = _run_single_input(
-            function_name= function_name,
-            candidate_code= candidate_code,
-            source_file= container_source_file,
-            kwargs= function_input,
-            utils_path= resolved_utils_path,
-            agents_path= resolved_agents_path,
-            creations_path= resolved_creations_path,
-            timeout_seconds= timeout_seconds,
-            memory_limit= memory_limit,
-            cpus= cpus,
-            pids_limit= pids_limit,
-            docker_image= docker_image,
-        )
+        result = _run_single_input(function_name=function_name, candidate_code=candidate_code, source_file=container_source_file, kwargs=function_input, utils_path=resolved_utils_path, agents_path=resolved_agents_path, creations_path=resolved_creations_path, timeout_seconds=timeout_seconds, memory_limit=memory_limit, cpus=cpus, pids_limit=pids_limit, docker_image=docker_image)
         results.append(result)
 
     completed_executions = sum(1 for result in results if result['completed'])
     failed_executions = len(results) - completed_executions
 
-    return {
-        'function_name': function_name,
-        'total_inputs': len(function_inputs),
-        'completed_executions': completed_executions,
-        'failed_executions': failed_executions,
-        'results': results,
-    }
+    return {'function_name': function_name, 'total_inputs': len(function_inputs), 'completed_executions': completed_executions, 'failed_executions': failed_executions, 'results': results}

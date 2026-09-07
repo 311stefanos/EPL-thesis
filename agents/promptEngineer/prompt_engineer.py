@@ -192,7 +192,7 @@ prompt_reviewer = myChatOpenAI(
 
 formater = myChatOpenAI(
     temperature= 0.8
-).with_structured_output(Format)
+).with_structured_output(Format)#, method='function_calling')
 
 tester = myChatOpenAI(
     temperature= 0.7
@@ -220,7 +220,7 @@ def get_prompt_names(file_path: str) -> List[str]:
     # * = prompts.* # Can be in multiple lines.
     pattern = re.compile(r'^\s*\w+:?\s*\w+?\s*=\s*prompts\.([A-Z][A-Z0-9_]*)\b', re.MULTILINE)
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Extract the prompt names
@@ -584,7 +584,7 @@ def paste_prompts(state: InputSchema) -> InputSchema:
         prompts_str: str = '\n\n\n'.join([f'{prompt.prompt_name} = """\n{prompt.suggested_prompt}\n"""' for prompt in state['prompt_list']])
         
         prompt_file_path: str = state['file_path'].replace('.py', '_prompts.py')
-        with open(prompt_file_path, 'w', encoding='utf-8') as f:
+        with open(prompt_file_path, 'w', encoding= 'utf-8') as f:
             f.write(prompts_str)
 
         # Make the code changes
@@ -593,7 +593,7 @@ def paste_prompts(state: InputSchema) -> InputSchema:
             for (old, new) in prompt.necessary_code_changes:
                 code = code.replace(old, new)
             
-        with open(state['file_path'], 'w', encoding='utf-8') as f:
+        with open(state['file_path'], 'w', encoding= 'utf-8') as f:
             f.write(code)
         
         return state

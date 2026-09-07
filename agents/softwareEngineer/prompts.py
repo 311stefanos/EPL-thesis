@@ -1,6 +1,6 @@
 TOOL_SECTION_ADDER_PROMPT = '''
 You are the first programmer to modify the code.
-Your job is to modify the code as minimally as possible to make the code tool friendly and tool-correct.
+Your job is to make the smallest possible code changes required to make tool-enabled LLM nodes tool-correct.
 
 # Inputs
 ## Code
@@ -9,163 +9,66 @@ Your job is to modify the code as minimally as possible to make the code tool fr
 </CODE>
 
 # Goal
-For each LLM that has access to tools via `.bind_tools()`, you must ensure the graph correctly handles tool calls.
+For every LLM configured with `.bind_tools(...)`, ensure that the existing LangGraph correctly routes and executes its tool calls.
 
-# Core rule
-You must NOT implement any business logic.
-You must only add the missing tool-handling plumbing:
-- tool nodes (either ToolNode or a custom handler node)
-- conditional routing
-- custom tool handler stubs (ONLY when required)
+# Scope
+You may only propose changes related to tool handling, including ToolNode definitions, custom tool-handler stubs, conditional routing functions, and tool-related graph edges.
 
-If you add any new function bodies, they must remain as stubs (detailed docstring and function signature. For function body use comments and/or ...).
+# Hard Rules
+1) Do not implement business logic.
+2) Do not rewrite or reformat unrelated code.
+3) Do not replace large sections when a smaller exact replacement is possible.
+4) Every `old_code` must be copied exactly from the supplied code and must be sufficiently specific to occur exactly once.
+5) Every change must be independent and non-overlapping with the other changes.
+6) Do not modify existing node implementations or their docstrings unless the change is strictly necessary for tool routing.
+7) Type A tools must use ToolNode and must not receive custom handler functions.
+8) Type B tools must use custom tool-handler nodes and must not use ToolNode.
+9) A tool is Type B when it controls flow, is terminal, updates non-message state, requires custom conversion into state, or has meaningful Outside-the-Tool Work / Caller Responsibilities.
+10) Intent tools and terminal tools are always Type B.
+11) Standard tools whose results only become ToolMessages are Type A.
+12) Do not add graph paths unrelated to tool handling.
+13) Do not create accidental self-loops unless the existing graph explicitly requires that path.
+14) Preserve existing function names, node names, schemas, and graph structure wherever possible.
+15) If no changes are necessary, return an empty `changes` list.
 
----
+# Type A: Standard ToolNode
+Use ToolNode when the tool executes normally, only produces a ToolMessage, does not update other state fields, does not control routing, and is not terminal.
 
-# HARD RULES (MANDATORY)
-1) Do NOT edit, rewrite, or reformat any existing function definitions or their docstrings.
-2) Do NOT paste any prompt text into code comments/docstrings.
-   - All new stub docstrings must be short: max 8 lines.
-3) Do NOT add new edges unless the edge already exists in the input code.
-4) If a tool is Type B, you MUST NOT use ToolNode for it. You MUST add a custom handler node.
-5) Use the tool docstring heading "Outside-the-Tool Work (Caller Responsibilities):"
-   - If it is non-empty, the tool is probably Type B.
-   - If it is empty, missing or None, the tool is Type A unless other rules force Type B.
-6) Intent tools and terminal tools are always Type B.
-7) Routing functions MUST NOT return the same node (no self-loop), unless that self-loop edge already exists in the input code.
+# Type B: Custom Tool Handler
+Use a custom handler when the tool call controls flow, is terminal, updates non-message state, converts tool output into other state fields, or requires caller-side responsibilities.
 
----
+# Custom Tool Handler Requirements
+A newly proposed custom handler must remain an implementation stub.
+A custom handler stub should extract tool calls, identify the relevant tool, invoke the tool, append ToolMessage results where required, update documented state fields, and return a state-update dictionary.
+Do not implement the handler body beyond TODO comments and `...`.
 
-# Default behavior
-The most common case is to use a standard ToolNode for tool execution. (Type A)
-Use a custom tool handler (Type B) when the tool call must:
-- update non-message state keys, or
-- control the flow (intent tool), or
-- require custom conversion of observations into state updates, or
-- is terminal (finalizer).
+# Conditional Routing
+If an LLM node has tool access, its routing must distinguish normal completion from calls to each required ToolNode or custom handler.
+Any routing function you add must remain an implementation stub.
+Return Literals must correspond to nodes that exist after the proposed changes.
 
----
+# Graph Changes
+Only add or replace graph nodes and edges required for tool handling.
+A Type A ToolNode usually returns to the calling LLM node unless the existing workflow requires another destination.
+A terminal Type B handler should route to the existing terminal path.
+A non-terminal Type B handler should route according to the existing workflow.
 
-## Tool Handling Node Types (choose the right one)
-You may split tools into multiple tool nodes based on type.
-Naming convention:
-- tools node name: "[node_name]_tools_[tool_group_name]"
+# Required Output
+Return a `ToolSectionChanges` object.
 
-### Type A: Standard ToolNode
-Use ToolNode(tools) when ALL are true:
-- The tool should execute normally.
-- The observation should be appended as ToolMessage(s).
-- No state keys need changes beyond "messages" with the tool result wrapped in a ToolMessage.
-- The tool is NOT intent and NOT terminal.
+# Output Format
+ToolSectionChanges:
+- thinking_process: Optional[str]
+- changes: List[CodeChange]
 
-Add it like:
-```python
-[graph_name].add_node("[node_name]_tools_[tool_group_name]", ToolNode([tool1, tool2, ...]))
-```
+CodeChange:
+- old_code: str
+- new_code: str
 
-HARD RULE (Type A):
-- If you use ToolNode(...), you **MUST NOT** create any custom handler function stub for that tools node. All implementation is handled by ToolNode.
-- The tools node is the ToolNode itself. No extra `def chat_tools_*` function is allowed for Type A.
-- Not all Type A tools should be under the same ToolsNode. You can have multiple ToolsNodes, under different names if needed.
-    - Sometimes a tool is Type A, but needs to route to a different next node after invoking that the rest, so it can have a different ToolsNode, which then routes to the appropriate next node.
-
----
-
-### Type B: Custom tool handler node (required for intent tools, all tools that need to modify the state should have a custom handler node)
-Use a custom tool handler node instead of ToolNode when ANY are true:
-- The tool call is used to signal intent or control flow.
-- The tool is terminal.
-- The tool result must be converted into state updates (e.g., set state["latest"], set state["next_action"]).
-- The tool docstring has a non-empty "Outside-the-Tool Work (Caller Responsibilities):" block.
-
-In this case you must:
-1) Add a node named "[node_name]_tools_[tool(s)_name]" that calls a custom handler function, e.g.:
-```python
-[graph_name].add_node("[node_name]_tools_[tool_group_name]", [node_name]_tools_[tool_group_name])
-```
-
-2) Add a tool handler function skeleton near other routing/tool helpers, preserving code order. ONLY for Type B.
-It must:
-- Extract tool calls from the last message.
-- For each tool call:
-    - Invoke the tool and append a ToolMessage in the `messages` key of the state.
-    - Make any necessary state updates.
-- Return a state update dict that matches the graph state schema style used in the codebase.
-
-Docstring for this stub must be short (max 8 lines) and must NOT copy text from this prompt. You should not implement the function body.
-
----
-
-## Graph wiring requirements (MANDATORY)
-For each tool-enabled LLM node named "[node_name]":
-
-1) Add a tools node:
-- Always name it: "[node_name]_tools_[tool_group_name]"
-- Use ToolNode(tools) OR a custom handler node, per rules above.
-
-2) Replace simple edges with conditional routing if needed:
-- If there is a direct `.add_edge("[node_name]", "next")`, replace it with `.add_conditional_edge(...)` so tool calls can route to the tools node.
-- If there is already a conditional edge from "[node_name]", extend its condition map to include "[node_name]_tools_[tool(s)_name]".
-- Do NOT invent new edges other than tool related.
-
-3) Always add an edge from the tools node back into the graph, or "__end__":
-- Either back to the LLM node, back to the original next node, or towards the "__end__" node, depending on the intended flow.
-- If the tool is terminal (it produces the final user-visible output), route from tools node to "__end__".
-- You may not use `END`, if this is the intent use `__end__`.
-Usually:
-    - For Type A: tools node should usually return to the LLM node (LLM continues reasoning).
-    - For Type B terminal: tools node should route to "__end__".
-    - For Type B non-terminal: tools node should route to the appropriate next node (or back to the LLM node), based on the existing workflow and comments.
-
----
-
-## Conditional routing function requirements
-If you add or modify routing functions, use this skeleton and keep it unimplemented:
-IMPORTANT: The return Literal MUST NOT include new nodes unless it already existed in the input code.
-```python
-def from_[node_name]_to(state: AgentSchema) -> Literal["next_node1", "[node_name]_tools_[tool_group_name]", ..., "next_nodeN"]: # CAN include "__end__"
-    """ 
-    TODO: route to the correct tool node if the last AI message contains specific tool calls; otherwise route normally. 
-    Also add any necessary conditions to help the coders.
-    """
-    print_function_name() if DEBUG else None
-    # TODO: <conditions>
-```
-
----
-
-# Instructions
-1) Change ONLY what is required for tool correctness: nodes, routing/edges, and handler stubs.
-2) Do NOT implement business logic or tool execution logic in custom handlers.
-3) If you add any conditional functions or tool handler functions, keep them as TODO and unimplemented stubs like existing ones.
-4) Always preserve the correct order of definitions already used in the codebase.
-5) Keep code changes minimal and consistent with existing patterns.
-6) Do not refactor unrelated code.
-7) Decide Type A vs Type B using the `HARD RULES` above.
-8) Create a tool handler for each Type B tool. 
-9) **DO NOT** create a tool handler for Type A tools, ToolNode is sufficient.
-10) Do not add edges that do not exist and are unrelated to tools, especially when they are self-loops.
-
----
-
-# Thinking Process (ALLOWED)
-You MAY add a "thinking process" section before the code output to explain why you chose each type for each tool.
-You should include a todo list of what you need to do next, especially what functions you will define.
-If you do, it MUST be separated from the code by an exact heading line:
-`# Code`
-Rules:
-1) The thinking process must be plain text only.
-2) It must NOT include any code blocks or pseudo-code.
-3) It must NOT include prompt text copied into comments/docstrings.
-4) The code output must start immediately after the "# Code" heading.
-5) Under "# Code", output ONLY the modified code (no explanations, no tags).
-6) If no change is needed, output under the "# Code" heading exactly 'None'.
-
-# Output
-Output ONLY the optional "thinking process" and `# Code` heading, followed by the modified code.
-The code output must start immediately after the "# Code" heading.
-If you add any tool handler nodes, add a heading `\'\'\' Tool Handlers \'\'\'` before them.
-Tool Handlers must go after the `\'\'\' Conditional Functions \'\'\'` section.
+For each change, `old_code` must be an exact character-for-character substring of the supplied code.
+Use the smallest replacement that safely performs the required modification.
+Do not return the whole file.
+Do not return markdown.
 '''
 
 
@@ -280,14 +183,15 @@ You may call the tool `call_coder` multiple times within a single response to pa
 2. call_coder(function_name: str, special_instructions: str, file_path: str) -> Dict[str, CoderSchema]
     `call_coder` calls a specialized coder to implement or refactor a **single function**. It does not review code, only writes.
     Without the function definition (function name, inputs with type hints, return type hint), and the complete detailed docstring, the coder will not be able to implement the function.
-    This tool is specifically intended for implementing or refactoring **single existing functions**. 
+    This tool is specifically intended for implementing or refactoring **single existing functions**.
+    - Class methods may be referenced using their qualified name, for example `AgentSchema.__str__`.
 
     This is your **primary coding tool**. Use it for:
     - Implementing new functions.
     - Refactoring or rewriting existing functions.
 
     Args:
-        - function_name: name of the function to implement or refactor. It must match an unimplemented or existing function in the file.
+        - function_name: name of the function or qualified class method to implement or refactor, e.g. `chat` or `AgentSchema.__str__`. It must match an unimplemented or existing function in the file.
         - special_instructions: precise and detailed instructions (requirements, constraints, edge cases, style).
         - file_path: must match {file_path}.
 

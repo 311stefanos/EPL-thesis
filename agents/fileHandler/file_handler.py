@@ -218,7 +218,7 @@ def modify_file(file_path: str, file_changes: List[Tuple[str, str]]) -> str:
             return f'[ERROR] The file {after_creations} is immutable.'
         
         # Read the contents of the file
-        with open(target, 'r', encoding='utf-8') as f:
+        with open(target, 'r', encoding= 'utf-8') as f:
             contents = f.read()
 
         # Replace the old lines with the new lines
@@ -230,7 +230,7 @@ def modify_file(file_path: str, file_changes: List[Tuple[str, str]]) -> str:
             contents = contents.replace(old_lines, new_lines)
 
         # Write the modified contents to the file
-        with open(target, 'w', encoding='utf-8') as f:
+        with open(target, 'w', encoding= 'utf-8') as f:
             f.write(contents)
 
         print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Modified the file {after_creations} successfully.') if DEBUG else None
@@ -265,7 +265,7 @@ def read_file(file_path: str) -> str:
             return f'[ERROR] The file {file_path} must be a child of {project_dir}.'
         
         # Read the contents of the file and just return it
-        with open(target, 'r', encoding='utf-8') as f:
+        with open(target, 'r', encoding= 'utf-8') as f:
             contents = f.read()
 
         contents = contents.split("''' Constants '''")[1]
@@ -348,7 +348,7 @@ def format_contents(file_path: str, contents: Optional[str]= None) -> str:
     return contents or 'empty'
     # If the contents are not given, read the file
     if not contents:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding= 'utf-8') as f:
             contents = f.read()
     # Parse the contents into a string
     return f'File {file_path}:\n{contents}\n\n'
@@ -467,7 +467,7 @@ def file_handler_node(state: InputSchema) -> InputSchema:
         code_file: str = Path(state['file_path']).name
         prompt_file: str = code_file.replace('.py', '_prompts.py')
 
-        with open(state['file_path'].replace('.py', '_prompts.py'), 'r', encoding='utf-8') as f:
+        with open(state['file_path'].replace('.py', '_prompts.py'), 'r', encoding= 'utf-8') as f:
             prompt: str = f.read()
 
         prompt = prompts.FILE_HANDLER_PROMPT.format(

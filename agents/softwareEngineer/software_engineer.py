@@ -48,6 +48,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 import traceback
 import json
+import ast
 import os
 
 # My imports
@@ -81,6 +82,25 @@ print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Software Engineer') if DEBUG els
 
 """ Schemas """
 ''' General Schemas '''
+# Used by the tool section adder for minimal code changes
+class CodeChange(BaseModel):
+    old_code: str = Field(
+        description= 'The exact existing code snippet to replace. It must match the input code character-for-character.'
+    )
+    new_code: str = Field(description= 'The new code snippet that replaces old_code.')
+
+# Used by the tool section adder to output minimal code changes and the thinking process
+class ToolSectionChanges(BaseModel):
+    thinking_process: Optional[str] = Field(
+        description= 'Short explanation of the required tool-routing changes.', 
+        default= None
+    )
+    changes: List[CodeChange] = Field(
+        description= 'Minimal non-overlapping code replacements required to make tool handling correct.', 
+        default= []
+    )
+
+
 # A schema used to store the coders' outputs. Also keeps metadata such as whether the coder has approved or disapproved the code.
 class CoderSchema(CoderOutputSchema):
     approved: bool = Field(description= 'Whether the coder has approved the code.', default= False)
@@ -175,14 +195,14 @@ def replace_code(file_path: str, old_code: str, new_code: str) -> str:
             return f'[ERROR] The old code cannot be empty.'
 
         # Read the code from the file
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding= 'utf-8') as f:
             code = f.read()
 
         # Replace the old code with the new code
         code = code.replace(old_code, new_code)
 
         # Write the code to the file
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, 'w', encoding= 'utf-8') as f:
             f.write(code)
 
         print(f'{BLUE}[TOOL] [INFO] [OVERWRITE]{RESET} The file {file_path} was overwritten successfully.') if DEBUG else None
@@ -208,16 +228,18 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
     '''
     print_function_name(colour= MAGENTA) if DEBUG else None
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
-    
-    # Check if the function definition is in the file, otherwise the coder cannot complete the task -> return
-    if f'def {function_name}(' not in code:
+
+    try:
+        _find_qualified_function_node(ast.parse(code), function_name)
+
+    except Exception:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The definition of the function could not be found in the file hence a coder cannot complete the task. {function_name}') if DEBUG else None
         return {
             function_name: CoderSchema(
-                code= 'The definition of the function could not be found in the file hence a coder cannot complete the task. You should define the function first.', 
-                proposals= None, 
+                code= 'The definition of the function or qualified class method could not be found in the file hence a coder cannot complete the task. You should define the function first.',
+                proposals= None,
                 imports= None
             ),
         }
@@ -259,7 +281,7 @@ def call_coder(function_name: str, special_instructions: str, file_path: str) ->
 
     # Remove requested imports that are already imported
     if response['imports']:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding= 'utf-8') as f:
             import_section = f.read()
 
         start_idx = code.find("''' Imports '''")
@@ -307,75 +329,47 @@ def disapprove_and_comment_on_coder_code(function_name: str, comment: str) -> st
 @tool
 def approve_function_code(file_path: str, function_name: str) -> str:
     '''
-    `approve_coder_output` approves the coder's output code. Only use it when you think the coder's output is correct.
-    Should be used after `call_coder`, if the coder's output is correct and approved.
+    `approve_function_code` approves the Coder output and safely replaces exactly the requested function or qualified class method.
 
     `Args:`
-        file_path (str): The name of the file to overwrite.
-        function_name (str): The name of the function to approve.
+        file_path (str): The path of the file to modify.
+        function_name (str): Function name or qualified class method, for example chat or AgentSchema.set_confirmation.
 
     `Returns:`
-        (str) Either a success message or an error message
+        str: Success or error message.
     '''
-    print_function_name(colour= MAGENTA) if DEBUG else None
+    print_function_name(colour=MAGENTA) if DEBUG else None
     global coders, comments, imports
 
-    # Check if the coder exists
     all_keys = set(list(coders.keys()) + list(comments.keys()))
+
     if function_name not in all_keys:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not exist.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not exist.'
-    
-    # Check if the coder has an implementation
+
     previous_code: str = coders[function_name].code.strip()
+
     if not previous_code:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not have a coder implementation.') if DEBUG else None
         return f'[ERROR] The coder for function {function_name} does not have a previous implementation.'
-    
-    # Replace the code in the file
-    with open(file_path, 'r', encoding='utf-8') as f:
-        code = f.read()
-    
-    # Get the code sections from the function onwards
-    is_tool = ''
-    if '@tool' in previous_code:
-        is_tool = '@tool\n'
-    # Get only the function that was implemented, in order to update it
-    code_section: str = f'def {function_name}(' + f'def {function_name}('.join(code.split(f'{is_tool}def {function_name}(')[1:])
-    code_section = code_section.split("''' Conditional Functions '''")[0].split("''' Graph '''")[0].strip()
-    code_section = code_section.split('""" Conditional Functions """')[0].split('""" Graph """')[0].strip()
-    for line in code_section.split('\n')[1:]:
-        if (
-            (line.startswith('def ') and line.endswith(':')) or
-            '= myChatOpenAI(' in line or
-            line in [
-                '# TODO: Add Helpful Functions (if needed)',
-                '# TODO: Add Tools (if needed)',
-                "''' Nodes '''",
-                '@tool'
-            ]
-        ):
-            code_section = code_section.split(line)[0].strip()
-            break
 
-    # Check if the function has a code section
-    if not code_section:
-        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} The coder for function {function_name} does not have a code section in the file.') if DEBUG else None
-        return f'[ERROR] The coder for function {function_name} does not have a code section in the file.'
-    
-    # Replace the code
-    code = code.replace(code_section, previous_code)
-    if '@tool\n@tool' in code:
-        code = code.replace('@tool\n@tool', '@tool')
+    try:
+        with open(file_path, 'r', encoding= 'utf-8') as f:
+            code = f.read()
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write(code)
+        updated_code = _replace_qualified_function_in_source(function_name=function_name, source_code=code, implementation=previous_code)
 
-    # Add the imports to the set
+        with open(file_path, 'w', encoding= 'utf-8') as f:
+            f.write(updated_code)
+
+    except Exception as e:
+        print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} {e}') if DEBUG else None
+        traceback.print_exc() if DEBUG else None
+        return f'[ERROR] Could not approve {function_name}: {e}'
+
     if coders[function_name].imports:
         imports.update(coders[function_name].imports)
-        
-    # Approve the coder's implementation
+
     coders[function_name].approve()
 
     print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Approved the coder\'s output for function {function_name}') if DEBUG else None
@@ -405,13 +399,13 @@ def approve_function_proposals(approved_function_proposals: List[FunctionProposa
     proposed_functions = [str(function_proposal) for function_proposal in approved_function_proposals if function_proposal.function_type == 'helper_function']
 
     # Add the tools and helper functions to the file - as definitions
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     code = code.replace('# TODO: Add Tools (if needed)', '\n\n'.join(proposed_tools) + '\n\n# TODO: Add Tools (if needed)')
     code = code.replace('# TODO: Add Helpful Functions (if needed)', '\n\n'.join(proposed_functions) + '\n\n# TODO: Add Helpful Functions (if needed)')
     
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     print(f'{BLUE}[TOOL] [INFO] [SUCCESS]{RESET} Approved the coder\'s function proposals: {[afp.function_name for afp in approved_function_proposals]}') if DEBUG else None
@@ -435,7 +429,7 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
     global imports
     
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, 'r', encoding= 'utf-8') as f:
             code = f.read()
 
         start_marker = "''' Imports '''"
@@ -489,7 +483,7 @@ def add_imports(new_imports: List[str], file_path: str) -> str:
         new_import_block = '\n'.join(lines) + '\n'
         new_code = code[:start_idx] + new_import_block + code[end_idx:]
 
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, 'w', encoding= 'utf-8') as f:
             f.write(new_code)
 
         # update global imports set
@@ -576,10 +570,9 @@ tools_by_name = {tool.name: tool for tool in tools}
 
 
 ''' LLM '''
-# The agent that adds the tool sections
 tool_adder = myChatOpenAI(
     temperature= 0.4
-)
+).with_structured_output(ToolSectionChanges, method= 'function_calling')
 
 # The Software Engineer that orchestrates the tools
 software_engineer = myChatOpenAI(
@@ -589,11 +582,76 @@ software_engineer = myChatOpenAI(
 # The Quality Assurance team that validates the code and proposes code issues
 code_validator = myChatOpenAI(
     temperature= 0.6
-).with_structured_output(CodeIssues)
+).with_structured_output(CodeIssues)#, method='function_calling')
 
 
 
 ''' Helpful Functions '''
+def _find_qualified_function_node(parsed_source: ast.Module, function_name: str) -> ast.AST:
+    '''
+    Finds one top-level function or one method identified by a qualified name such as AgentSchema.set_confirmation.
+    '''
+    parts: List[str] = function_name.split('.')
+    body = parsed_source.body
+
+    for class_name in parts[:-1]:
+        matching_classes = [node for node in body if isinstance(node, ast.ClassDef) and node.name == class_name]
+
+        if len(matching_classes) != 1:
+            raise ValueError(f'Expected exactly one class named {class_name!r} while resolving {function_name!r}, but found {len(matching_classes)}.')
+
+        body = matching_classes[0].body
+
+    code_function_name: str = parts[-1]
+    matching_functions = [node for node in body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == code_function_name]
+
+    if len(matching_functions) != 1:
+        raise ValueError(f'Expected exactly one function or method named {function_name!r}, but found {len(matching_functions)}.')
+
+    return matching_functions[0]
+
+
+def _replace_qualified_function_in_source(function_name: str, source_code: str, implementation: str) -> str:
+    '''
+    Replaces exactly one top-level function or qualified class method without modifying surrounding code.
+    '''
+    try:
+        parsed_source = ast.parse(source_code)
+        parsed_implementation = ast.parse(implementation)
+    except SyntaxError as exc:
+        raise ValueError(f'Unable to parse the source or candidate implementation: {exc}') from exc
+
+    target_function = _find_qualified_function_node(parsed_source, function_name)
+    code_function_name: str = function_name.split('.')[-1]
+
+    implementation_functions = [node for node in parsed_implementation.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+    if len(implementation_functions) != 1:
+        raise ValueError('The Coder implementation must contain exactly one function or method definition.')
+
+    if implementation_functions[0].name != code_function_name:
+        raise ValueError(f'The Coder implemented {implementation_functions[0].name!r}, but the expected function or method is {function_name!r}.')
+
+    source_lines = source_code.splitlines(keepends=True)
+    decorator_lines = [decorator.lineno for decorator in target_function.decorator_list]
+    start_line = min([target_function.lineno, *decorator_lines]) - 1
+    end_line = target_function.end_lineno
+
+    definition_line = source_lines[target_function.lineno - 1]
+    indentation = definition_line[:len(definition_line) - len(definition_line.lstrip())]
+
+    candidate_lines = implementation.strip('\n').splitlines()
+    candidate = '\n'.join([f'{indentation}{line}' if line.strip() else line for line in candidate_lines]) + '\n'
+
+    updated_code = ''.join(source_lines[:start_line]) + candidate + ''.join(source_lines[end_line:])
+
+    try:
+        ast.parse(updated_code)
+    except SyntaxError as exc:
+        raise ValueError(f'Replacing {function_name!r} would make the Python file invalid: {exc}') from exc
+
+    return updated_code
+
 # Returns the schema type of the state
 def get_schema_type(state: InputSchema) -> Tuple[str, str]:
     '''
@@ -650,38 +708,50 @@ def add_imports_called(last_messages: List[BaseMessage]) -> bool:
 # This nodes is called first, and the agent tries to make the file tool compatible.
 def add_tool_sections(state: InputSchema) -> InputSchema:
     '''
-    Identifies which LLMs have access to tools and modifies the graph accordingly.
+    Identifies which LLMs have access to tools and applies only the minimal code changes required for correct tool handling.
     '''
     print_function_name() if DEBUG else None
 
     try:
-        # prompt
-        code = read_state_file(state)
+        code: str = read_state_file(state)
+        prompt: str = prompts.TOOL_SECTION_ADDER_PROMPT.format(code=code)
+        response: ToolSectionChanges = safe_invoke(tool_adder, messages=[SystemMessage(content=prompt)])
 
-        prompt = prompts.TOOL_SECTION_ADDER_PROMPT.format(code= code)
+        print(f'{BLUE}[NODE] [INFO] [THINK PROCESS]{RESET} {response.thinking_process}') if DEBUG else None
 
-        # call the LLM
-        response = safe_invoke(tool_adder, messages= [SystemMessage(content= prompt)]).content
-
-        # Split the response
-        think_process, code = response.split('# Code')
-        cleaned_code = clean_llm_output(code)
-
-        print(f'{BLUE}[NODE] [INFO] [THINK PROCESS]{RESET} {think_process}') if DEBUG else None
-
-        # Check if the code is empty
-        if len(cleaned_code) < 4 or cleaned_code.lower().strip() == 'none' or not cleaned_code.strip():
+        if not response.changes:
+            print(f'{BLUE}[NODE] [INFO] [NO CHANGES]{RESET} No tool-section changes required.') if DEBUG else None
             return state
 
-        # Write the code otherwise
-        with open(state['file_path'], 'w', encoding='utf-8') as f:
-            f.write(cleaned_code)
+        updated_code: str = code
+
+        for index, change in enumerate(response.changes, start=1):
+            old_code: str = clean_llm_output(change.old_code)
+            new_code: str = clean_llm_output(change.new_code)
+
+            if not old_code.strip():
+                raise ValueError(f'Change {index}: old_code is empty.')
+
+            occurrences: int = updated_code.count(old_code)
+
+            if occurrences == 0:
+                raise ValueError(f'Change {index}: old_code was not found in the current code.\n\nOLD CODE:\n{old_code}')
+
+            if occurrences > 1:
+                raise ValueError(f'Change {index}: old_code occurs {occurrences} times and is therefore ambiguous.\n\nOLD CODE:\n{old_code}')
+
+            updated_code = updated_code.replace(old_code, new_code, 1)
+
+            print(f'{BLUE}[NODE] [INFO] [CHANGE {index}]{RESET}\nOLD:\n{old_code}\n\nNEW:\n{new_code}') if DEBUG else None
+
+        with open(state['file_path'], 'w', encoding= 'utf-8') as f:
+            f.write(updated_code)
 
         return state
+
     except Exception as e:
         print(f'{RED}[NODE] [ERR]{RESET}', e) if DEBUG else None
-        traceback.print_exc()
-
+        traceback.print_exc() if DEBUG else None
         return state
 
 # The Software Engineer node where the Software Engineer is prompted to call the tools

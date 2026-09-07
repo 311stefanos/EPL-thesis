@@ -254,23 +254,23 @@ class InputSchema(MessagesState):
 ''' LLM '''
 docstring_generator = myChatOpenAI(
     temperature= 0.5
-).with_structured_output(Docstrings)
+).with_structured_output(Docstrings)#, method='function_calling')
 
 schema_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(Schemas)
+).with_structured_output(Schemas)#, method='function_calling')
 
 helpful_function_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(HelpfulFunctions)
+).with_structured_output(HelpfulFunctions)#, method='function_calling')
 
 tool_function_generator = myChatOpenAI(
     temperature= 0.2
-).with_structured_output(ToolFunctions)
+).with_structured_output(ToolFunctions)#, method='function_calling')
 
 tool_or_output_generator = myChatOpenAI(
     temperature= 0.8
-).with_structured_output(LLMProposalList)
+).with_structured_output(LLMProposalList)#, method='function_calling')
 
 
 
@@ -364,7 +364,7 @@ def update_docstrings(state: InputSchema) -> InputSchema:
     docstrings = state['step_changes'].model_dump()['docstrings']
 
     # Read the code
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Get the section of the code which contains the nodes (between ''' Nodes ''' and ''' Conditional Functions ''' or ''' Graph ''' when conditional functions don't exist)
@@ -406,7 +406,7 @@ def update_docstrings(state: InputSchema) -> InputSchema:
     code = code.replace(nodes, new_nodes)
 
     # Update the file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     # Remove all messages and step changes
@@ -462,7 +462,7 @@ def update_schemas(state: InputSchema) -> InputSchema:
     schemas = state['step_changes'].schemas
 
     # Read the code
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Get the section of the code which contains the schemas
@@ -478,7 +478,7 @@ def update_schemas(state: InputSchema) -> InputSchema:
     code = code.replace(old_schemas, new_schemas)
 
     # Update the file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     # Remove all messages and step changes
@@ -535,7 +535,7 @@ def update_helpful_functions(state: InputSchema) -> InputSchema:
     helpful_functions = state['step_changes'].helpful_functions
 
     # Read the code
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Parse and relace the helpful function section
@@ -544,7 +544,7 @@ def update_helpful_functions(state: InputSchema) -> InputSchema:
     code = code.replace("''' Helpful Functions '''", f"''' Helpful Functions '''\n{new_functions}")
 
     # Update the file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     # Remove all messages and step changes
@@ -601,7 +601,7 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     tool_functions = state['step_changes'].tool_functions
 
     # Read the code
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Parse and relace the tool function section
@@ -610,7 +610,7 @@ def update_tool_functions(state: InputSchema) -> InputSchema:
     code = code.replace("''' Tools '''", f"''' Tools '''\n{new_functions}")
 
     # Update the file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     # Remove all messages and step changes
@@ -714,7 +714,7 @@ def update_llm_modifiers(state: InputSchema) -> InputSchema:
     proposed_llm_definitions = state['step_changes'].to_code()
 
     # Read the code
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r', encoding= 'utf-8') as f:
         code = f.read()
 
     # Parse and relace the tool function section
@@ -722,7 +722,7 @@ def update_llm_modifiers(state: InputSchema) -> InputSchema:
     code = code.replace(old_code, proposed_llm_definitions)
 
     # Update the file
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(file_path, 'w', encoding= 'utf-8') as f:
         f.write(code)
 
     # Remove all messages and step changes

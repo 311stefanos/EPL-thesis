@@ -22,7 +22,7 @@ import os
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, parse_tool_arguments, clean_llm_output
-from creations.gaia_task_solver import gaia_task_solver_prompts as prompts
+from Clone.experiments.benchmarks.gaia_task_solver import gaia_task_solver_prompts as prompts
 
 import requests
 import time

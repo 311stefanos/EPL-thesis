@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import ast
 import gzip
 import importlib
 import json
+import multiprocessing as mp
 import os
 import re
 import shutil
@@ -12,6 +14,7 @@ import subprocess
 import sys
 import time
 import traceback
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -26,6 +29,7 @@ DEFAULT_AGENT_MODULE = (
 DEFAULT_AGENT_OBJECT = "problem_solution_pipeline_app"
 DEFAULT_DOCKER_IMAGE = "ganler/evalplus:latest"
 DEFAULT_SANDBOX_IMAGE = "python:3.11-slim"
+DEFAULT_TASK_TIMEOUT_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,112 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
                 )
             rows.append(value)
     return rows
+
+
+def write_jsonl_rows(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
+    """Rewrite a JSONL file without concurrent worker writes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+
+    with temporary_path.open("w", encoding="utf-8") as file:
+        for row in rows:
+            file.write(json.dumps(row, ensure_ascii=False) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
+
+    os.replace(temporary_path, path)
+
+
+def solution_raises_not_implemented(code: str) -> bool:
+    """
+    Return True when a solution is empty or explicitly raises
+    NotImplementedError.
+
+    These represent incomplete agent/harness outcomes and are retried by
+    --resume rather than counted as completed benchmark submissions.
+    """
+    if not code or not code.strip():
+        return True
+
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        # Syntax-invalid generated Python is still a benchmark answer. Only
+        # treat it as incomplete when the NotImplementedError marker is clear.
+        return "NotImplementedError" in code
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+
+        exc = node.exc
+
+        if isinstance(exc, ast.Name) and exc.id == "NotImplementedError":
+            return True
+
+        if isinstance(exc, ast.Call):
+            function = exc.func
+
+            if (
+                isinstance(function, ast.Name)
+                and function.id == "NotImplementedError"
+            ):
+                return True
+
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr == "NotImplementedError"
+            ):
+                return True
+
+    return False
+
+
+def clean_resume_samples(
+    samples_path: Path,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """
+    Remove empty/NotImplementedError rows before a resumed run.
+
+    If a task appears more than once, the latest row is authoritative. This
+    avoids leaving an old placeholder beside a newly generated completion.
+    """
+    rows = read_jsonl(samples_path)
+    latest_by_task: dict[str, dict[str, Any] | None] = {}
+
+    for row in rows:
+        task_id_value = row.get("task_id")
+        if task_id_value is None:
+            continue
+
+        task_id = str(task_id_value)
+        solution = str(row.get("solution") or "")
+
+        if solution_raises_not_implemented(solution):
+            latest_by_task[task_id] = None
+        else:
+            latest_by_task[task_id] = row
+
+    valid_rows = [
+        row for row in latest_by_task.values() if row is not None
+    ]
+    valid_rows.sort(
+        key=lambda row: task_sort_key(str(row["task_id"]))
+    )
+
+    retry_task_ids = {
+        task_id
+        for task_id, row in latest_by_task.items()
+        if row is None
+    }
+
+    if rows != valid_rows:
+        write_jsonl_rows(samples_path, valid_rows)
+
+    return valid_rows, retry_task_ids
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -630,6 +740,326 @@ def invoke_agent(
     return response
 
 
+def generate_one_mbpp_task(
+    *,
+    agent: Any,
+    task_id: str,
+    plus_problem: Mapping[str, Any],
+    original_problem: Mapping[str, Any] | None,
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+) -> tuple[GenerationRecord, dict[str, str] | None]:
+    """Generate one MBPP solution without writing benchmark files."""
+    task_started = time.perf_counter()
+    response: Mapping[str, Any] = {}
+    spec: ProblemSpec | None = None
+    status = "agent_error"
+    error: str | None = None
+    solution = ""
+
+    try:
+        spec = parse_mbpp_problem(
+            task_id,
+            plus_problem,
+            original_problem,
+            visible_tests_mode=visible_tests_mode,
+            max_visible_tests=max_visible_tests,
+        )
+
+        response = invoke_agent(
+            agent,
+            spec,
+            recursion_limit=recursion_limit,
+            run_id=run_id,
+        )
+
+        generated = str(response.get("final_solution") or "")
+        solution = build_self_contained_solution(spec, generated)
+
+        if solution_raises_not_implemented(solution):
+            status = "agent_error"
+            error = (
+                "Generated solution raises NotImplementedError or is empty; "
+                "the task remains incomplete and will be retried by --resume."
+            )
+        elif syntax_is_valid(solution):
+            status = "ok"
+        else:
+            # Invalid Python is a genuine generated benchmark answer. Keep it
+            # rather than silently improving the score by retrying it.
+            status = "invalid_python"
+
+    except Exception as exc:
+        status = "agent_error"
+        error = f"{type(exc).__name__}: {exc}"
+        response = {}
+
+    syntax_valid = bool(solution) and syntax_is_valid(solution)
+
+    record = GenerationRecord(
+        task_id=task_id,
+        task_index=absolute_index,
+        status=status,
+        elapsed_seconds=round(time.perf_counter() - task_started, 3),
+        visible_test_count=len(spec.public_tests) if spec is not None else 0,
+        test_import_count=len(spec.test_imports) if spec is not None else 0,
+        final_solution_present=bool(response.get("final_solution")),
+        syntax_valid=syntax_valid,
+        internal_total_passed=_optional_int(response.get("total_passed")),
+        internal_total_failed=_optional_int(response.get("total_failed")),
+        internal_repair_round=_optional_int(response.get("repair_round")),
+        internal_generation_attempt=_optional_int(
+            response.get("generation_attempt")
+        ),
+        internal_valid_samples=_optional_len(response.get("valid_samples")),
+        internal_invalid_samples=_optional_len(
+            response.get("invalid_samples")
+        ),
+        error=error,
+    )
+
+    sample_row: dict[str, str] | None = None
+
+    if status != "agent_error":
+        sample_row = {
+            "task_id": task_id,
+            "solution": solution,
+        }
+
+    return record, sample_row
+
+
+def _task_process_entry(
+    result_path: str,
+    *,
+    agent_module: str,
+    agent_object: str,
+    task_id: str,
+    plus_problem: Mapping[str, Any],
+    original_problem: Mapping[str, Any] | None,
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+) -> None:
+    """Run one MBPP task in its own killable process."""
+    try:
+        agent = load_agent(agent_module, agent_object)
+
+        record, sample_row = generate_one_mbpp_task(
+            agent=agent,
+            task_id=task_id,
+            plus_problem=plus_problem,
+            original_problem=original_problem,
+            absolute_index=absolute_index,
+            visible_tests_mode=visible_tests_mode,
+            max_visible_tests=max_visible_tests,
+            recursion_limit=recursion_limit,
+            run_id=run_id,
+        )
+
+        payload: dict[str, Any] = {
+            "record": asdict(record),
+            "sample_row": sample_row,
+        }
+
+    except BaseException as exc:
+        payload = {
+            "worker_error": f"{type(exc).__name__}: {exc}",
+            "traceback": traceback.format_exc(),
+        }
+
+    Path(result_path).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def generate_one_task_with_timeout(
+    *,
+    agent_module: str,
+    agent_object: str,
+    task_id: str,
+    plus_problem: Mapping[str, Any],
+    original_problem: Mapping[str, Any] | None,
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+    task_timeout_seconds: int,
+) -> tuple[GenerationRecord, dict[str, str] | None]:
+    """
+    Run one MBPP task with a hard wall-clock timeout.
+
+    A timed-out process is terminated and no sample is returned, so --resume
+    retries the task on the next run.
+    """
+    started = time.perf_counter()
+    context = mp.get_context("spawn")
+
+    with tempfile.TemporaryDirectory(
+        prefix=f"mbpp-{task_id.replace('/', '-')}-"
+    ) as temporary_directory:
+        result_path = Path(temporary_directory) / "result.json"
+
+        process = context.Process(
+            target=_task_process_entry,
+            kwargs={
+                "result_path": str(result_path),
+                "agent_module": agent_module,
+                "agent_object": agent_object,
+                "task_id": task_id,
+                "plus_problem": dict(plus_problem),
+                "original_problem": (
+                    dict(original_problem)
+                    if original_problem is not None
+                    else None
+                ),
+                "absolute_index": absolute_index,
+                "visible_tests_mode": visible_tests_mode,
+                "max_visible_tests": max_visible_tests,
+                "recursion_limit": recursion_limit,
+                "run_id": run_id,
+            },
+            name=f"mbpp-{task_id.replace('/', '-')}",
+        )
+
+        process.start()
+        process.join(timeout=task_timeout_seconds)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
+            elapsed = round(time.perf_counter() - started, 3)
+
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    test_import_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Task exceeded the wall-clock limit of "
+                        f"{task_timeout_seconds} seconds "
+                        f"({task_timeout_seconds / 60:.1f} minutes). "
+                        "The task was terminated and will be retried by "
+                        "--resume."
+                    ),
+                ),
+                None,
+            )
+
+        if not result_path.exists():
+            elapsed = round(time.perf_counter() - started, 3)
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    test_import_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Task worker exited without returning a result "
+                        f"(exit code {process.exitcode}). The task will be "
+                        "retried by --resume."
+                    ),
+                ),
+                None,
+            )
+
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            elapsed = round(time.perf_counter() - started, 3)
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    test_import_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Could not read task-worker result: "
+                        f"{type(exc).__name__}: {exc}. The task will be "
+                        "retried by --resume."
+                    ),
+                ),
+                None,
+            )
+
+    worker_error = payload.get("worker_error")
+
+    if worker_error:
+        elapsed = round(time.perf_counter() - started, 3)
+        return (
+            GenerationRecord(
+                task_id=task_id,
+                task_index=absolute_index,
+                status="agent_error",
+                elapsed_seconds=elapsed,
+                visible_test_count=0,
+                test_import_count=0,
+                final_solution_present=False,
+                syntax_valid=False,
+                error=(
+                    f"Task worker failed: {worker_error}. "
+                    "The task will be retried by --resume."
+                ),
+            ),
+            None,
+        )
+
+    record_data = payload.get("record")
+
+    if not isinstance(record_data, dict):
+        elapsed = round(time.perf_counter() - started, 3)
+        return (
+            GenerationRecord(
+                task_id=task_id,
+                task_index=absolute_index,
+                status="agent_error",
+                elapsed_seconds=elapsed,
+                visible_test_count=0,
+                test_import_count=0,
+                final_solution_present=False,
+                syntax_valid=False,
+                error=(
+                    "Task worker returned an invalid result payload. "
+                    "The task will be retried by --resume."
+                ),
+            ),
+            None,
+        )
+
+    record = GenerationRecord(**record_data)
+    sample_row = payload.get("sample_row")
+
+    if sample_row is not None and not isinstance(sample_row, dict):
+        sample_row = None
+
+    return record, sample_row
+
+
 def choose_tasks(
     dataset: Mapping[str, Mapping[str, Any]],
     *,
@@ -1079,7 +1509,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Skip task IDs already present in samples.jsonl.",
+        help=(
+            "Resume the run. Valid samples are skipped; empty or "
+            "NotImplementedError samples are removed and retried."
+        ),
     )
     parser.add_argument(
         "--start-index",
@@ -1125,6 +1558,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=100,
         help="LangGraph recursion limit for each task.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help=(
+            "Number of MBPP tasks generated concurrently. Default: 2. "
+            "This is separate from --parallel, which controls EvalPlus "
+            "evaluation workers."
+        ),
+    )
+    parser.add_argument(
+        "--task-timeout-seconds",
+        type=int,
+        default=DEFAULT_TASK_TIMEOUT_SECONDS,
+        help=(
+            "Hard wall-clock limit for one generation task. Default: 900 "
+            "seconds (15 minutes). Timed-out tasks are terminated, not "
+            "saved to samples.jsonl, and retried by --resume."
+        ),
     )
     parser.add_argument(
         "--stop-on-error",
@@ -1211,6 +1664,12 @@ def main() -> int:
     if args.max_visible_tests < 0:
         raise ValueError("--max-visible-tests must be at least 0.")
 
+    if args.workers <= 0:
+        raise ValueError("--workers must be greater than 0.")
+
+    if args.task_timeout_seconds <= 0:
+        raise ValueError("--task-timeout-seconds must be greater than 0.")
+
     try:
         # EvalPlus 0.3.1 exports get_mbpp_plus from evalplus.data, while
         # get_mbpp and mbpp_serialize_inputs remain in evalplus.data.mbpp.
@@ -1296,25 +1755,35 @@ def main() -> int:
         "visible_tests": args.visible_tests,
         "max_visible_tests": args.max_visible_tests,
         "recursion_limit": args.recursion_limit,
+        "workers": args.workers,
+        "task_timeout_seconds": args.task_timeout_seconds,
         "start_index": args.start_index,
         "limit": args.limit,
         "selected_task_ids": args.task_id,
         "evaluation_mode": args.evaluation_mode,
         "base_only": args.base_only,
         "methodology_note": (
-            "The agent receives the curated MBPP task description, EvalPlus's "
-            "standardized function signature, and optionally the original "
-            "public MBPP test_list. It never receives canonical_solution, "
-            "base_input, plus_input, contracts, or evaluator outputs. EvalPlus "
-            "reports Base for the original MBPP tests on the curated task set "
-            "and Base + Extra for MBPP+."
+            "The agent receives the curated MBPP task description, a derived "
+            "public function signature, and optionally the original public "
+            "MBPP test_list. It never receives canonical_solution, base_input, "
+            "plus_input, contracts, or evaluator outputs. Generation uses "
+            f"{args.workers} concurrent task workers with a hard per-task "
+            f"timeout of {args.task_timeout_seconds} seconds. Agent errors, "
+            "timeouts, empty outputs, and NotImplementedError placeholders are "
+            "not saved as completed samples and are retried by --resume."
         ),
     }
     write_json(config_path, run_config)
 
-    existing_rows = read_jsonl(samples_path) if args.resume else []
+    retry_task_ids: set[str] = set()
+
+    if args.resume:
+        existing_rows, retry_task_ids = clean_resume_samples(samples_path)
+    else:
+        existing_rows = []
+
     completed_task_ids = {
-        str(row.get("task_id"))
+        str(row["task_id"])
         for row in existing_rows
         if row.get("task_id") is not None
     }
@@ -1323,12 +1792,24 @@ def main() -> int:
         item for item in tasks if item[0] not in completed_task_ids
     ]
 
+    matching_retry_ids = sorted(
+        retry_task_ids.intersection(selected_task_ids),
+        key=task_sort_key,
+    )
+    if matching_retry_ids:
+        print(
+            "Resume will retry "
+            f"{len(matching_retry_ids)} incomplete task(s): "
+            + ", ".join(matching_retry_ids)
+        )
+
     print(
         f"Selected {len(tasks)} task(s); "
-        f"{len(pending_tasks)} remain after resume."
+        f"{len(pending_tasks)} remain after resume. "
+        f"Generation workers: {args.workers}. "
+        f"Per-task timeout: {args.task_timeout_seconds}s."
     )
 
-    agent = load_agent(args.agent_module, args.agent_object)
     sorted_dataset_ids = sorted(plus_dataset.keys(), key=task_sort_key)
     dataset_indices = {
         task_id: index for index, task_id in enumerate(sorted_dataset_ids)
@@ -1338,134 +1819,139 @@ def main() -> int:
     generation_records: list[GenerationRecord] = []
     agent_errors = 0
 
-    for position, (task_id, plus_problem) in enumerate(
-        pending_tasks,
-        start=1,
-    ):
-        absolute_index = dataset_indices[task_id]
+    if pending_tasks:
         print(
-            f"[{position}/{len(pending_tasks)}] {task_id} "
-            f"(curated index {absolute_index})"
+            f"Generating {len(pending_tasks)} task(s) with up to "
+            f"{args.workers} concurrent task(s)."
         )
 
-        task_started = time.perf_counter()
-        original_problem = original_mbpp.get(task_numeric_id(task_id))
+        future_to_task: dict[Any, str] = {}
 
-        try:
-            spec = parse_mbpp_problem(
-                task_id,
-                plus_problem,
-                original_problem,
-                visible_tests_mode=args.visible_tests,
-                max_visible_tests=args.max_visible_tests,
-            )
+        with ThreadPoolExecutor(
+            max_workers=args.workers,
+            thread_name_prefix="mbpp",
+        ) as executor:
+            for task_id, plus_problem in pending_tasks:
+                absolute_index = dataset_indices[task_id]
+                original_problem = original_mbpp.get(task_numeric_id(task_id))
 
-            response = invoke_agent(
-                agent,
-                spec,
-                recursion_limit=args.recursion_limit,
-                run_id=run_id,
-            )
+                # Only pass generation-relevant EvalPlus fields to the child
+                # process. Hidden base_input/plus_input never enter the agent
+                # generation process.
+                generation_problem = {
+                    "entry_point": plus_problem.get("entry_point"),
+                    "prompt": plus_problem.get("prompt"),
+                }
 
-            generated = str(response.get("final_solution") or "")
-            solution = build_self_contained_solution(spec, generated)
-            status = "ok"
-            error = None
-
-        except Exception as exc:
-            agent_errors += 1
-            error = f"{type(exc).__name__}: {exc}"
-            status = "agent_error"
-            response = {}
-            traceback.print_exc()
-
-            try:
-                fallback_spec = parse_mbpp_problem(
-                    task_id,
-                    plus_problem,
-                    original_problem,
-                    visible_tests_mode="none",
-                    max_visible_tests=0,
-                )
-                solution = make_failure_solution(fallback_spec, error)
-                spec = fallback_spec
-            except Exception:
-                solution = (
-                    "def mbpp_generation_failure(*args, **kwargs):\n"
-                    f"    raise NotImplementedError({error!r})\n"
-                )
-                spec = ProblemSpec(
-                    task_id=str(task_id),
-                    entry_point=str(plus_problem.get("entry_point", "")),
-                    evalplus_prompt=str(plus_problem.get("prompt", "")),
-                    function_signature="",
-                    docstring="",
-                    preamble="",
-                    public_tests=(),
-                    internal_tests=(),
-                    test_imports=(),
+                print(
+                    f"[submit] {task_id} "
+                    f"(curated index {absolute_index})"
                 )
 
-        syntax_valid = syntax_is_valid(solution)
+                future = executor.submit(
+                    generate_one_task_with_timeout,
+                    agent_module=args.agent_module,
+                    agent_object=args.agent_object,
+                    task_id=task_id,
+                    plus_problem=generation_problem,
+                    original_problem=original_problem,
+                    absolute_index=absolute_index,
+                    visible_tests_mode=args.visible_tests,
+                    max_visible_tests=args.max_visible_tests,
+                    recursion_limit=args.recursion_limit,
+                    run_id=run_id,
+                    task_timeout_seconds=args.task_timeout_seconds,
+                )
 
-        if not syntax_valid and status == "ok":
-            status = "invalid_python"
+                future_to_task[future] = task_id
 
-        append_jsonl(
-            samples_path,
-            {
-                "task_id": task_id,
-                "solution": solution,
-            },
-        )
+            stop_requested = False
+            completed_count = 0
 
-        record = GenerationRecord(
-            task_id=task_id,
-            task_index=absolute_index,
-            status=status,
-            elapsed_seconds=round(
-                time.perf_counter() - task_started,
-                3,
-            ),
-            visible_test_count=len(spec.public_tests),
-            test_import_count=len(spec.test_imports),
-            final_solution_present=bool(response.get("final_solution")),
-            syntax_valid=syntax_valid,
-            internal_total_passed=_optional_int(
-                response.get("total_passed")
-            ),
-            internal_total_failed=_optional_int(
-                response.get("total_failed")
-            ),
-            internal_repair_round=_optional_int(
-                response.get("repair_round")
-            ),
-            internal_generation_attempt=_optional_int(
-                response.get("generation_attempt")
-            ),
-            internal_valid_samples=_optional_len(
-                response.get("valid_samples")
-            ),
-            internal_invalid_samples=_optional_len(
-                response.get("invalid_samples")
-            ),
-            error=error,
-        )
+            for future in as_completed(future_to_task):
+                task_id = future_to_task[future]
 
-        generation_records.append(record)
-        append_jsonl(log_path, asdict(record))
+                if future.cancelled():
+                    continue
 
-        print(
-            f"    status={status}, "
-            f"visible_tests={record.visible_test_count}, "
-            f"elapsed={record.elapsed_seconds:.3f}s"
-        )
+                completed_count += 1
 
-        if error and args.stop_on_error:
-            break
+                try:
+                    record, sample_row = future.result()
+                except Exception as exc:
+                    record = GenerationRecord(
+                        task_id=task_id,
+                        task_index=dataset_indices[task_id],
+                        status="agent_error",
+                        elapsed_seconds=0.0,
+                        visible_test_count=0,
+                        test_import_count=0,
+                        final_solution_present=False,
+                        syntax_valid=False,
+                        error=(
+                            "Worker crashed: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
+                    sample_row = None
+
+                generation_records.append(record)
+                append_jsonl(log_path, asdict(record))
+
+                if record.status == "agent_error":
+                    agent_errors += 1
+
+                if sample_row is not None:
+                    append_jsonl(samples_path, sample_row)
+
+                print(
+                    f"[{completed_count}/{len(pending_tasks)}] "
+                    f"{record.task_id}: status={record.status}, "
+                    f"visible_tests={record.visible_test_count}, "
+                    f"elapsed={record.elapsed_seconds:.3f}s"
+                )
+
+                if record.error:
+                    print(f"    error={record.error}")
+
+                if (
+                    record.status == "agent_error"
+                    and args.stop_on_error
+                    and not stop_requested
+                ):
+                    stop_requested = True
+                    print(
+                        "Stopping after agent error; cancelling tasks that "
+                        "have not started yet."
+                    )
+                    for pending_future in future_to_task:
+                        if not pending_future.done():
+                            pending_future.cancel()
+
+    # Normalize the concurrent output to one non-placeholder row per task.
+    raw_sample_rows = read_jsonl(samples_path)
+    latest_sample_by_task: dict[str, dict[str, Any]] = {}
+
+    for row in raw_sample_rows:
+        task_id_value = row.get("task_id")
+        if task_id_value is None:
+            continue
+
+        task_id = str(task_id_value)
+        solution = str(row.get("solution") or "")
+
+        if solution_raises_not_implemented(solution):
+            continue
+
+        latest_sample_by_task[task_id] = row
+
+    all_sample_rows = sorted(
+        latest_sample_by_task.values(),
+        key=lambda row: task_sort_key(str(row["task_id"])),
+    )
+    write_jsonl_rows(samples_path, all_sample_rows)
 
     all_log_rows = read_jsonl(log_path)
-    all_sample_rows = read_jsonl(samples_path)
     elapsed_total = round(time.perf_counter() - started, 3)
 
     sample_task_ids = [
@@ -1480,39 +1966,66 @@ def main() -> int:
     )
     if unknown_sample_ids:
         raise ValueError(
-            f"samples.jsonl contains unknown MBPP task IDs: "
+            "samples.jsonl contains unknown MBPP task IDs: "
             f"{sorted(unknown_sample_ids)}"
         )
+
+    selected_tasks_complete = selected_task_ids.issubset(
+        unique_sample_task_ids
+    )
+    incomplete_selected_task_ids = sorted(
+        selected_task_ids.difference(unique_sample_task_ids),
+        key=task_sort_key,
+    )
 
     full_dataset_complete = unique_sample_task_ids == set(
         plus_dataset.keys()
     )
 
     override_used = False
+    evaluation_skipped_reason: str | None = None
 
-    if args.evaluation_mode != "none" and not full_dataset_complete:
-        if not unique_sample_task_ids:
-            raise RuntimeError("No generated MBPP samples are available to evaluate.")
-
-        write_mbpp_subset_override(
-            subset_override_path,
-            sorted(unique_sample_task_ids, key=task_sort_key),
-            plus_dataset,
-            mbpp_serialize_inputs,
-        )
-        override_used = True
+    if args.evaluation_mode != "none":
+        if not selected_tasks_complete:
+            evaluation_skipped_reason = (
+                "Evaluation was skipped because "
+                f"{len(incomplete_selected_task_ids)} selected task(s) are "
+                "still incomplete after agent errors/timeouts. Run again "
+                "with --resume to retry them."
+            )
+        elif not full_dataset_complete:
+            if not unique_sample_task_ids:
+                evaluation_skipped_reason = (
+                    "Evaluation was skipped because no generated MBPP samples "
+                    "are available."
+                )
+            else:
+                write_mbpp_subset_override(
+                    subset_override_path,
+                    sorted(unique_sample_task_ids, key=task_sort_key),
+                    plus_dataset,
+                    mbpp_serialize_inputs,
+                )
+                override_used = True
 
     summary = {
         "finished_at": utc_now_iso(),
         "dataset": "MBPP / MBPP+",
         "dataset_task_count": dataset_task_count,
         "selected_tasks": len(tasks),
+        "workers": args.workers,
+        "task_timeout_seconds": args.task_timeout_seconds,
         "previously_completed_tasks": len(
             completed_task_ids.intersection(selected_task_ids)
+        ),
+        "retried_incomplete_tasks": len(
+            retry_task_ids.intersection(selected_task_ids)
         ),
         "generated_this_run": len(generation_records),
         "samples_in_file": len(all_sample_rows),
         "unique_tasks_in_samples": len(unique_sample_task_ids),
+        "selected_tasks_complete": selected_tasks_complete,
+        "incomplete_selected_tasks": incomplete_selected_task_ids,
         "full_dataset_complete": full_dataset_complete,
         "subset_override_used": override_used,
         "subset_override_path": (
@@ -1520,7 +2033,9 @@ def main() -> int:
         ),
         "agent_errors_this_run": agent_errors,
         "syntax_invalid_this_run": sum(
-            1 for record in generation_records if not record.syntax_valid
+            1
+            for record in generation_records
+            if record.status == "invalid_python"
         ),
         "elapsed_seconds_this_run": elapsed_total,
         "status_counts_all_logs": _count_values(
@@ -1530,6 +2045,7 @@ def main() -> int:
         "samples_path": str(samples_path),
         "evaluation_requested": args.evaluation_mode != "none",
         "evaluation_performed": False,
+        "evaluation_skipped_reason": evaluation_skipped_reason,
         "reported_scores": (
             ["Base"] if args.base_only else ["Base", "Base + Extra"]
         ),
@@ -1537,9 +2053,22 @@ def main() -> int:
 
     print(f"\nGeneration complete. Samples: {samples_path}")
 
+    if agent_errors:
+        print(
+            f"{agent_errors} agent-error/timeout task(s) were left "
+            "incomplete. Run again with --resume to retry them."
+        )
+
     if args.evaluation_mode == "none":
         write_json(summary_path, summary)
         print(f"Generation summary: {summary_path}")
+        return 0
+
+    if evaluation_skipped_reason is not None:
+        write_json(summary_path, summary)
+        print(f"Generation summary: {summary_path}")
+        print("\nEvalPlus evaluation skipped.")
+        print(evaluation_skipped_reason)
         return 0
 
     evaluation_code = run_evalplus_evaluation(
@@ -1572,6 +2101,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     raise SystemExit(main())
 
 
@@ -1594,6 +2124,14 @@ if __name__ == "__main__":
 
 # Resume:
 # python .\run_mbpp_plus_benchmark.py `
-#     --output-dir .\benchmark_results\mbpp\mbpp_plus_full `
+#     --output-dir .\benchmark_results\mbpp\mbpp_plus_full_deepseek `
+#     --resume `
+#     --evaluation-mode docker
+
+
+# python .\run_mbpp_plus_benchmark.py `
+#     --output-dir .\benchmark_results\mbpp\mbpp_plus_full_deepseek `
+#     --workers 2 `
+#     --task-timeout-seconds 900 `
 #     --resume `
 #     --evaluation-mode docker

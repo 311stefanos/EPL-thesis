@@ -121,7 +121,7 @@ class OutputSchema(TypedDict):
 ''' LLM '''
 coordinator = myChatOpenAI(
     temperature= 0
-).with_structured_output(CoordinatorSchema)
+).with_structured_output(CoordinatorSchema)#, method='function_calling')
 
 
 

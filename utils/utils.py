@@ -172,7 +172,7 @@ def read_state_file(state) -> str:
 
     return file_path.read_text(encoding= 'utf-8')
 
-    # with open(state['file_path'], 'r', encoding='utf-8') as f:
+    # with open(state['file_path'], 'r', encoding= 'utf-8') as f:
     #     code = f.read()
     # return code
 

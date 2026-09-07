@@ -214,7 +214,7 @@ clarifier = myChatOpenAI(
 
 workflow_engineer = myChatOpenAI(
     temperature= 0.7
-).with_structured_output(WorkflowBundle)
+).with_structured_output(WorkflowBundle)#, method='function_calling')
 
 
 

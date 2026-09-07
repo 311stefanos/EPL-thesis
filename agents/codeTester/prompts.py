@@ -34,10 +34,13 @@ You must generate test inputs for the function named: {function_name}
 # Hard Instructions
 1. Fully understand the target function, its signature, docstring, type hints, implementation, and Software Engineer instructions before generating inputs.
 2. Generate inputs only for the function named `{function_name}`.
-3. Every generated input must be a dictionary of keyword arguments.
-4. Use the exact parameter names defined in the target function signature.
+3. Every generated input must be a dictionary of keyword arguments; for a qualified instance method such as PydanticBase.method, the reserved "__instance__" key may additionally contain the JSON-compatible constructor arguments required to create the class instance.
+4. Use the exact parameter names defined in the target function signature; never include self or cls as ordinary keyword arguments, and use "__instance__" only for constructing the owner object of a qualified instance method.
 5. Do not add arguments that are not present in the function signature.
 6. Do not omit required arguments.
+6a. If the target is a qualified instance method such as PydanticBase.method, include "__instance__" with enough valid JSON-compatible constructor fields to create an instance of ReceiptData, and place any explicit method parameters beside "__instance__" as normal keyword arguments.
+6b. If the target is a @staticmethod or @classmethod, do not include "__instance__".
+6c. The "__instance__" key is Code Tester metadata and is not passed to the target method itself.
 7. Use only JSON-compatible values:
     - strings
     - integers
@@ -71,7 +74,7 @@ You must generate test inputs for the function named: {function_name}
     - boundary value
     - alternative valid value
 16. Do not generate meaningless variations that test the same execution path repeatedly.
-17. For a function that accepts no arguments, return exactly one test input as an empty dictionary: [{{}}].
+17. For a top-level function, @staticmethod, or @classmethod that accepts no arguments, return exactly one test input as an empty dictionary: [{{}}]; for a no-argument instance method, still provide "__instance__" because an owner object must be constructed before the method can be called.
 18. An empty dictionary inside the list means that the function should be called without arguments.
 19. Return an empty list only when no valid JSON-compatible input can reasonably be generated.
 20. Follow the structured output schema exactly.
@@ -203,19 +206,16 @@ Your job is to:
 19. Use the isolated execution report as evidence, but do not assume that a completed execution proves the implementation is fully correct.
 20. Review every execution input, output, output type, error, error message, and traceback.
 21. For every failed execution, identify the most likely cause.
-22. Distinguish between:
-    - an implementation defect
-    - an unsuitable generated input
-    - a missing dependency
-    - a missing project module
-    - unavailable module-level context
-    - an isolated-environment limitation
-    - a Docker or infrastructure failure
-23. Do not request a Coder revision when the failure is clearly unrelated to the implementation.
-24. If the execution report is empty or unavailable, perform the strongest possible static review.
-25. Do not invent defects that are not supported by the code or execution report.
-26. Report no more than 5 issues.
-27. Select only the most important issues that require correction.
+22. Distinguish between an implementation defect, an unsuitable generated input, a missing dependency, a missing project module, unavailable module-level context, an isolated-environment limitation, and a Docker or infrastructure failure.
+23. Do not request a Coder revision when the failure is clearly unrelated to the target implementation.
+24. If the module fails before the target function is invoked, determine whether the failure comes from the target implementation or from unrelated surrounding module code.
+25. A TargetToolDescriptionError means the target implementation is decorated with @tool but provides neither a non-empty function docstring nor an explicit @tool(description='...') value; this is a target implementation defect and requires correction.
+26. A ModuleToolDescriptionError means another @tool function in the surrounding module prevents the module from importing; do not request revision of the target function solely because of this error.
+27. If the target function uses @tool, verify that it provides either a non-empty function docstring or an explicit @tool(description='...') value.
+28. If the execution report is empty or unavailable, perform the strongest possible static review.
+29. Do not invent defects that are not supported by the code or execution report.
+30. Report no more than 5 issues.
+31. Select only the most important issues that require correction.
 
 # Approval Rules
 Approve the implementation only when:
@@ -227,6 +227,8 @@ Approve the implementation only when:
 - it has no material security or performance issue;
 - no isolated execution exposes an implementation defect;
 - no material static-review defect requires revision.
+
+A failure caused solely by unrelated surrounding module code is not by itself a reason to reject the target implementation.
 
 # Output Rules - Strict
 Return either:

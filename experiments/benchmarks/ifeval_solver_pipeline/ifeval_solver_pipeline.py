@@ -27,7 +27,7 @@ import os
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS, read_state_file, clean_llm_output
-from creations.ifeval_solver_pipeline import ifeval_solver_pipeline_prompts as prompts
+from Clone.experiments.benchmarks.ifeval_solver_pipeline import ifeval_solver_pipeline_prompts as prompts
 
 import requests
 import re

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing as mp
+import tempfile
 import ast
 import doctest
 import importlib
@@ -27,6 +30,7 @@ DEFAULT_AGENT_MODULE = (
 )
 DEFAULT_AGENT_OBJECT = "problem_solution_pipeline_app"
 DEFAULT_DOCKER_IMAGE = "ganler/evalplus:latest"
+DEFAULT_TASK_TIMEOUT_SECONDS = 15 * 60
 
 
 @dataclass(frozen=True)
@@ -842,6 +846,495 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+
+def write_jsonl_rows(
+    path: Path,
+    rows: Sequence[Mapping[str, Any]],
+) -> None:
+    """
+    Rewrite a JSONL file atomically enough for benchmark bookkeeping.
+
+    Generation workers never write directly to samples.jsonl; the main thread
+    serializes results, so concurrent task execution cannot corrupt the file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+
+    with temporary_path.open("w", encoding="utf-8") as file:
+        for row in rows:
+            file.write(json.dumps(row, ensure_ascii=False) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
+
+    os.replace(temporary_path, path)
+
+
+def solution_raises_not_implemented(code: str) -> bool:
+    """
+    Return True when a submitted solution explicitly raises
+    NotImplementedError.
+
+    These rows represent agent/infrastructure failures in this benchmark
+    harness and are deliberately treated as incomplete so --resume retries
+    them instead of permanently counting them as completed tasks.
+    """
+    if not code or not code.strip():
+        return True
+
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError):
+        # A syntax-invalid model answer is still a benchmark answer and should
+        # not automatically be retried. Only use the textual fallback for the
+        # specific NotImplementedError marker.
+        return "NotImplementedError" in code
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Raise) or node.exc is None:
+            continue
+
+        exc = node.exc
+
+        if isinstance(exc, ast.Name):
+            if exc.id == "NotImplementedError":
+                return True
+
+        elif isinstance(exc, ast.Call):
+            function = exc.func
+
+            if (
+                isinstance(function, ast.Name)
+                and function.id == "NotImplementedError"
+            ):
+                return True
+
+            if (
+                isinstance(function, ast.Attribute)
+                and function.attr == "NotImplementedError"
+            ):
+                return True
+
+    return False
+
+
+def clean_resume_samples(
+    samples_path: Path,
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """
+    Remove incomplete sample rows before a resumed run.
+
+    A row is incomplete when its solution is empty or explicitly raises
+    NotImplementedError. If a task appears more than once, the latest row is
+    authoritative. This prevents an old placeholder plus a newly generated
+    answer from becoming two completions for the same benchmark task.
+
+    Returns:
+        (valid_rows, retry_task_ids)
+    """
+    rows = read_jsonl(samples_path)
+    latest_by_task: dict[str, dict[str, Any] | None] = {}
+
+    for row in rows:
+        task_id_value = row.get("task_id")
+
+        if task_id_value is None:
+            continue
+
+        task_id = str(task_id_value)
+        solution = str(row.get("solution") or "")
+
+        if solution_raises_not_implemented(solution):
+            latest_by_task[task_id] = None
+        else:
+            latest_by_task[task_id] = row
+
+    valid_rows = [
+        row
+        for row in latest_by_task.values()
+        if row is not None
+    ]
+
+    valid_rows.sort(
+        key=lambda row: task_sort_key(str(row["task_id"]))
+    )
+
+    retry_task_ids = {
+        task_id
+        for task_id, row in latest_by_task.items()
+        if row is None
+    }
+
+    if rows != valid_rows:
+        write_jsonl_rows(samples_path, valid_rows)
+
+    return valid_rows, retry_task_ids
+
+
+def generate_one_task(
+    *,
+    agent: Any,
+    task_id: str,
+    problem: Mapping[str, Any],
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+) -> tuple[GenerationRecord, dict[str, str] | None]:
+    """
+    Generate one HumanEval solution.
+
+    This function is safe to submit to a ThreadPoolExecutor because every
+    LangGraph invocation receives a unique thread_id. It performs no writes to
+    benchmark JSONL files; the main thread persists returned results.
+    """
+    task_started = time.perf_counter()
+    visible_tests: list[str] = []
+    response: Mapping[str, Any] = {}
+    status = "agent_error"
+    error: str | None = None
+    solution = ""
+
+    try:
+        spec = parse_problem(task_id, problem)
+
+        if visible_tests_mode == "doctest":
+            visible_tests = extract_visible_doctest_asserts(
+                spec.docstring,
+                max_tests=max_visible_tests,
+            )
+
+        response = invoke_agent(
+            agent,
+            spec,
+            visible_tests,
+            recursion_limit=recursion_limit,
+            run_id=run_id,
+        )
+
+        generated = str(
+            response.get("final_solution") or ""
+        )
+
+        solution = build_self_contained_solution(
+            spec,
+            generated,
+        )
+
+        if solution_raises_not_implemented(solution):
+            status = "agent_error"
+            error = (
+                "Generated solution raises NotImplementedError; "
+                "task remains incomplete and will be retried by --resume."
+            )
+        elif syntax_is_valid(solution):
+            status = "ok"
+        else:
+            # Invalid Python is a genuine generated answer, not an
+            # infrastructure failure. Keep it so EvalPlus can count it as a
+            # failed completion rather than silently retrying it.
+            status = "invalid_python"
+
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        status = "agent_error"
+        response = {}
+
+    syntax_valid = bool(solution) and syntax_is_valid(solution)
+
+    record = GenerationRecord(
+        task_id=task_id,
+        task_index=absolute_index,
+        status=status,
+        elapsed_seconds=round(
+            time.perf_counter() - task_started,
+            3,
+        ),
+        visible_test_count=len(visible_tests),
+        final_solution_present=bool(
+            response.get("final_solution")
+        ),
+        syntax_valid=syntax_valid,
+        internal_total_passed=_optional_int(
+            response.get("total_passed")
+        ),
+        internal_total_failed=_optional_int(
+            response.get("total_failed")
+        ),
+        internal_repair_round=_optional_int(
+            response.get("repair_round")
+        ),
+        internal_generation_attempt=_optional_int(
+            response.get("generation_attempt")
+        ),
+        internal_valid_samples=_optional_len(
+            response.get("valid_samples")
+        ),
+        internal_invalid_samples=_optional_len(
+            response.get("invalid_samples")
+        ),
+        error=error,
+    )
+
+    sample_row: dict[str, str] | None = None
+
+    if status != "agent_error":
+        sample_row = {
+            "task_id": task_id,
+            "solution": solution,
+        }
+
+    return record, sample_row
+
+
+def _task_process_entry(
+    result_path: str,
+    *,
+    agent_module: str,
+    agent_object: str,
+    task_id: str,
+    problem: Mapping[str, Any],
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+) -> None:
+    """
+    Run one benchmark task in its own process and persist the result to a
+    temporary JSON file.
+
+    A separate process is required for a hard wall-clock timeout on Windows:
+    Python cannot safely terminate a stuck worker thread.
+    """
+    try:
+        agent = load_agent(
+            agent_module,
+            agent_object,
+        )
+
+        record, sample_row = generate_one_task(
+            agent=agent,
+            task_id=task_id,
+            problem=problem,
+            absolute_index=absolute_index,
+            visible_tests_mode=visible_tests_mode,
+            max_visible_tests=max_visible_tests,
+            recursion_limit=recursion_limit,
+            run_id=run_id,
+        )
+
+        payload: dict[str, Any] = {
+            "record": asdict(record),
+            "sample_row": sample_row,
+        }
+
+    except BaseException as exc:
+        payload = {
+            "worker_error": (
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "traceback": traceback.format_exc(),
+        }
+
+    Path(result_path).write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def generate_one_task_with_timeout(
+    *,
+    agent_module: str,
+    agent_object: str,
+    task_id: str,
+    problem: Mapping[str, Any],
+    absolute_index: int,
+    visible_tests_mode: str,
+    max_visible_tests: int,
+    recursion_limit: int,
+    run_id: str,
+    task_timeout_seconds: int,
+) -> tuple[GenerationRecord, dict[str, str] | None]:
+    """
+    Run one benchmark task with a hard wall-clock timeout.
+
+    If the task exceeds task_timeout_seconds, its child process is terminated.
+    The returned status is agent_error and no sample row is returned, so the
+    task remains pending and --resume retries it on the next run.
+    """
+    started = time.perf_counter()
+    context = mp.get_context("spawn")
+
+    with tempfile.TemporaryDirectory(
+        prefix=f"humaneval-{task_id.replace('/', '-')}-"
+    ) as temporary_directory:
+        result_path = Path(temporary_directory) / "result.json"
+
+        process = context.Process(
+            target=_task_process_entry,
+            kwargs={
+                "result_path": str(result_path),
+                "agent_module": agent_module,
+                "agent_object": agent_object,
+                "task_id": task_id,
+                "problem": problem,
+                "absolute_index": absolute_index,
+                "visible_tests_mode": visible_tests_mode,
+                "max_visible_tests": max_visible_tests,
+                "recursion_limit": recursion_limit,
+                "run_id": run_id,
+            },
+            name=f"humaneval-{task_id.replace('/', '-')}",
+        )
+
+        process.start()
+        process.join(timeout=task_timeout_seconds)
+
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=5)
+
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=5)
+
+            elapsed = round(
+                time.perf_counter() - started,
+                3,
+            )
+
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Task exceeded the wall-clock limit of "
+                        f"{task_timeout_seconds} seconds "
+                        f"({task_timeout_seconds / 60:.1f} minutes). "
+                        "The task was terminated and will be retried "
+                        "by --resume."
+                    ),
+                ),
+                None,
+            )
+
+        if not result_path.exists():
+            elapsed = round(
+                time.perf_counter() - started,
+                3,
+            )
+
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Task worker exited without returning a result "
+                        f"(exit code {process.exitcode}). "
+                        "The task will be retried by --resume."
+                    ),
+                ),
+                None,
+            )
+
+        try:
+            payload = json.loads(
+                result_path.read_text(encoding="utf-8")
+            )
+        except Exception as exc:
+            elapsed = round(
+                time.perf_counter() - started,
+                3,
+            )
+
+            return (
+                GenerationRecord(
+                    task_id=task_id,
+                    task_index=absolute_index,
+                    status="agent_error",
+                    elapsed_seconds=elapsed,
+                    visible_test_count=0,
+                    final_solution_present=False,
+                    syntax_valid=False,
+                    error=(
+                        "Could not read task-worker result: "
+                        f"{type(exc).__name__}: {exc}. "
+                        "The task will be retried by --resume."
+                    ),
+                ),
+                None,
+            )
+
+    worker_error = payload.get("worker_error")
+
+    if worker_error:
+        elapsed = round(
+            time.perf_counter() - started,
+            3,
+        )
+
+        return (
+            GenerationRecord(
+                task_id=task_id,
+                task_index=absolute_index,
+                status="agent_error",
+                elapsed_seconds=elapsed,
+                visible_test_count=0,
+                final_solution_present=False,
+                syntax_valid=False,
+                error=(
+                    f"Task worker failed: {worker_error}. "
+                    "The task will be retried by --resume."
+                ),
+            ),
+            None,
+        )
+
+    record_data = payload.get("record")
+
+    if not isinstance(record_data, dict):
+        elapsed = round(
+            time.perf_counter() - started,
+            3,
+        )
+
+        return (
+            GenerationRecord(
+                task_id=task_id,
+                task_index=absolute_index,
+                status="agent_error",
+                elapsed_seconds=elapsed,
+                visible_test_count=0,
+                final_solution_present=False,
+                syntax_valid=False,
+                error=(
+                    "Task worker returned an invalid result payload. "
+                    "The task will be retried by --resume."
+                ),
+            ),
+            None,
+        )
+
+    record = GenerationRecord(**record_data)
+    sample_row = payload.get("sample_row")
+
+    if sample_row is not None and not isinstance(sample_row, dict):
+        sample_row = None
+
+    return record, sample_row
+
+
 def load_agent(module_name: str, object_name: str) -> Any:
     module = importlib.import_module(module_name)
     try:
@@ -1351,6 +1844,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="LangGraph recursion limit for each task invocation.",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help=(
+            "Number of benchmark tasks generated concurrently. "
+            "Default: 2. This is separate from --parallel, which controls "
+            "EvalPlus evaluation workers."
+        ),
+    )
+    parser.add_argument(
+        "--task-timeout-seconds",
+        type=int,
+        default=DEFAULT_TASK_TIMEOUT_SECONDS,
+        help=(
+            "Hard wall-clock limit for one benchmark task. "
+            "Default: 900 seconds (15 minutes). Timed-out tasks are "
+            "terminated, not saved to samples.jsonl, and retried by --resume."
+        ),
+    )
+    parser.add_argument(
         "--stop-on-error",
         action="store_true",
         help="Stop generation after the first agent error.",
@@ -1402,6 +1915,12 @@ def main() -> int:
     if args.max_visible_tests < 0:
         raise ValueError("--max-visible-tests must be at least 0.")
 
+    if args.workers <= 0:
+        raise ValueError("--workers must be greater than 0.")
+
+    if args.task_timeout_seconds <= 0:
+        raise ValueError("--task-timeout-seconds must be greater than 0.")
+
     try:
         from evalplus.data import get_human_eval_plus
     except ImportError as exc:
@@ -1416,7 +1935,7 @@ def main() -> int:
 
     output_dir = args.output_dir or Path(
         "benchmark_results",
-        f"humaneval_plus_{timestamp}"
+        f"humaneval_plus_{timestamp}",
     )
 
     output_dir = output_dir.resolve()
@@ -1456,7 +1975,10 @@ def main() -> int:
     selected_task_count = len(tasks)
     is_full_dataset_run = (
         selected_task_count == dataset_task_count
-        and {task_id for task_id, _ in tasks} == set(dataset.keys())
+        and {
+            task_id
+            for task_id, _ in tasks
+        } == set(dataset.keys())
     )
 
     run_config = {
@@ -1471,6 +1993,8 @@ def main() -> int:
         "visible_tests": args.visible_tests,
         "max_visible_tests": args.max_visible_tests,
         "recursion_limit": args.recursion_limit,
+        "workers": args.workers,
+        "task_timeout_seconds": args.task_timeout_seconds,
         "start_index": args.start_index,
         "limit": args.limit,
         "selected_task_ids": args.task_id,
@@ -1480,20 +2004,26 @@ def main() -> int:
             "The agent receives the published HumanEval prompt and "
             "optional doctest examples extracted from that prompt. "
             "It never receives base_input, plus_input, "
-            "canonical_solution, or evaluator outputs."
+            "canonical_solution, or evaluator outputs. "
+            "Agent-error, NotImplementedError, and per-task timeout failures "
+            "are not written as completed samples and are retried by "
+            "--resume."
         ),
     }
 
     write_json(config_path, run_config)
 
-    existing_rows = (
-        read_jsonl(samples_path)
-        if args.resume
-        else []
-    )
+    retry_task_ids: set[str] = set()
+
+    if args.resume:
+        existing_rows, retry_task_ids = clean_resume_samples(
+            samples_path
+        )
+    else:
+        existing_rows = []
 
     completed_task_ids = {
-        str(row.get("task_id"))
+        str(row["task_id"])
         for row in existing_rows
         if row.get("task_id") is not None
     }
@@ -1504,14 +2034,25 @@ def main() -> int:
         if item[0] not in completed_task_ids
     ]
 
+    if retry_task_ids:
+        matching_retry_ids = sorted(
+            retry_task_ids.intersection(
+                task_id
+                for task_id, _ in tasks
+            ),
+            key=task_sort_key,
+        )
+        if matching_retry_ids:
+            print(
+                "Resume will retry "
+                f"{len(matching_retry_ids)} incomplete task(s): "
+                + ", ".join(matching_retry_ids)
+            )
+
     print(
         f"Selected {len(tasks)} task(s); "
-        f"{len(pending_tasks)} remain after resume."
-    )
-
-    agent = load_agent(
-        args.agent_module,
-        args.agent_object
+        f"{len(pending_tasks)} remain after resume. "
+        f"Generation workers: {args.workers}."
     )
 
     started = time.perf_counter()
@@ -1520,7 +2061,7 @@ def main() -> int:
 
     sorted_dataset_ids = sorted(
         dataset.keys(),
-        key=task_sort_key
+        key=task_sort_key,
     )
 
     dataset_indices = {
@@ -1528,130 +2069,156 @@ def main() -> int:
         for index, task_id in enumerate(sorted_dataset_ids)
     }
 
-    for position, (task_id, problem) in enumerate(
-        pending_tasks,
-        start=1
-    ):
-        absolute_index = dataset_indices[task_id]
-
+    if pending_tasks:
         print(
-            f"[{position}/{len(pending_tasks)}] "
-            f"{task_id} "
-            f"(dataset index {absolute_index})"
+            f"Generating {len(pending_tasks)} task(s) "
+            f"with up to {args.workers} concurrent task(s); "
+            f"per-task timeout: {args.task_timeout_seconds}s."
         )
 
-        task_started = time.perf_counter()
-        spec = parse_problem(task_id, problem)
+        future_to_task: dict[Any, str] = {}
 
-        if args.visible_tests == "doctest":
-            visible_tests = extract_visible_doctest_asserts(
-                spec.docstring,
-                max_tests=args.max_visible_tests,
-            )
-        else:
-            visible_tests = []
+        with ThreadPoolExecutor(
+            max_workers=args.workers,
+            thread_name_prefix="humaneval",
+        ) as executor:
+            for task_id, problem in pending_tasks:
+                absolute_index = dataset_indices[task_id]
 
-        try:
-            response = invoke_agent(
-                agent,
-                spec,
-                visible_tests,
-                recursion_limit=args.recursion_limit,
-                run_id=run_id,
-            )
+                print(
+                    f"[submit] {task_id} "
+                    f"(dataset index {absolute_index})"
+                )
 
-            generated = str(
-                response.get("final_solution") or ""
-            )
+                future = executor.submit(
+                    generate_one_task_with_timeout,
+                    agent_module=args.agent_module,
+                    agent_object=args.agent_object,
+                    task_id=task_id,
+                    problem=problem,
+                    absolute_index=absolute_index,
+                    visible_tests_mode=args.visible_tests,
+                    max_visible_tests=args.max_visible_tests,
+                    recursion_limit=args.recursion_limit,
+                    run_id=run_id,
+                    task_timeout_seconds=args.task_timeout_seconds,
+                )
 
-            solution = build_self_contained_solution(
-                spec,
-                generated
-            )
+                future_to_task[future] = task_id
 
-            status = "ok"
-            error = None
+            stop_requested = False
+            completed_count = 0
 
-        except Exception as exc:
-            agent_errors += 1
-            error = f"{type(exc).__name__}: {exc}"
-            status = "agent_error"
-            response = {}
+            for future in as_completed(future_to_task):
+                task_id = future_to_task[future]
 
-            solution = make_failure_solution(
-                spec,
-                error
-            )
+                if future.cancelled():
+                    continue
 
-            traceback.print_exc()
+                completed_count += 1
 
-        syntax_valid = syntax_is_valid(solution)
+                try:
+                    record, sample_row = future.result()
+                except Exception as exc:
+                    # generate_one_task already catches task-level failures.
+                    # This is only a final guard for unexpected worker crashes.
+                    record = GenerationRecord(
+                        task_id=task_id,
+                        task_index=dataset_indices[task_id],
+                        status="agent_error",
+                        elapsed_seconds=0.0,
+                        visible_test_count=0,
+                        final_solution_present=False,
+                        syntax_valid=False,
+                        error=(
+                            "Worker crashed: "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    )
+                    sample_row = None
 
-        if not syntax_valid and status == "ok":
-            status = "invalid_python"
+                generation_records.append(record)
+                append_jsonl(
+                    log_path,
+                    asdict(record),
+                )
 
-        append_jsonl(
-            samples_path,
-            {
-                "task_id": task_id,
-                "solution": solution,
-            },
-        )
+                if record.status == "agent_error":
+                    agent_errors += 1
 
-        record = GenerationRecord(
-            task_id=task_id,
-            task_index=absolute_index,
-            status=status,
-            elapsed_seconds=round(
-                time.perf_counter() - task_started,
-                3
-            ),
-            visible_test_count=len(visible_tests),
-            final_solution_present=bool(
-                response.get("final_solution")
-            ),
-            syntax_valid=syntax_valid,
-            internal_total_passed=_optional_int(
-                response.get("total_passed")
-            ),
-            internal_total_failed=_optional_int(
-                response.get("total_failed")
-            ),
-            internal_repair_round=_optional_int(
-                response.get("repair_round")
-            ),
-            internal_generation_attempt=_optional_int(
-                response.get("generation_attempt")
-            ),
-            internal_valid_samples=_optional_len(
-                response.get("valid_samples")
-            ),
-            internal_invalid_samples=_optional_len(
-                response.get("invalid_samples")
-            ),
-            error=error,
-        )
+                # Only persist genuine benchmark answers. Agent errors and
+                # NotImplementedError placeholders remain absent so --resume
+                # retries those task IDs.
+                if sample_row is not None:
+                    append_jsonl(
+                        samples_path,
+                        sample_row,
+                    )
 
-        generation_records.append(record)
-        append_jsonl(log_path, asdict(record))
+                print(
+                    f"[{completed_count}/{len(pending_tasks)}] "
+                    f"{record.task_id}: "
+                    f"status={record.status}, "
+                    f"visible_tests={record.visible_test_count}, "
+                    f"elapsed={record.elapsed_seconds:.3f}s"
+                )
 
-        print(
-            f"    status={status}, "
-            f"visible_tests={len(visible_tests)}, "
-            f"elapsed={record.elapsed_seconds:.3f}s"
-        )
+                if record.error:
+                    print(
+                        f"    error={record.error}"
+                    )
 
-        if error and args.stop_on_error:
-            break
+                if (
+                    record.status == "agent_error"
+                    and args.stop_on_error
+                    and not stop_requested
+                ):
+                    stop_requested = True
+                    print(
+                        "Stopping after agent error; cancelling tasks "
+                        "that have not started yet."
+                    )
+
+                    for pending_future in future_to_task:
+                        if not pending_future.done():
+                            pending_future.cancel()
+
+    # Concurrency finishes tasks in nondeterministic order. Normalize the
+    # samples file to one row per task, sorted by task ID.
+    raw_sample_rows = read_jsonl(samples_path)
+    latest_sample_by_task: dict[str, dict[str, Any]] = {}
+
+    for row in raw_sample_rows:
+        task_id_value = row.get("task_id")
+
+        if task_id_value is None:
+            continue
+
+        task_id = str(task_id_value)
+        solution = str(row.get("solution") or "")
+
+        if solution_raises_not_implemented(solution):
+            # Defensive cleanup for legacy rows.
+            continue
+
+        latest_sample_by_task[task_id] = row
+
+    all_sample_rows = sorted(
+        latest_sample_by_task.values(),
+        key=lambda row: task_sort_key(str(row["task_id"])),
+    )
+
+    write_jsonl_rows(
+        samples_path,
+        all_sample_rows,
+    )
 
     all_log_rows = read_jsonl(log_path)
 
     elapsed_total = round(
         time.perf_counter() - started,
-        3
+        3,
     )
-
-    all_sample_rows = read_jsonl(samples_path)
 
     generated_task_ids = {
         str(row.get("task_id"))
@@ -1669,33 +2236,53 @@ def main() -> int:
         args.evaluation_mode != "none"
         and not complete_full_dataset
     ):
+        missing_count = (
+            dataset_task_count
+            - len(generated_task_ids)
+        )
+
         evaluation_skipped_reason = (
             "EvalPlus evaluation was skipped because samples.jsonl "
             f"contains {len(generated_task_ids)} of "
-            f"{dataset_task_count} HumanEval tasks. The standard "
-            "EvalPlus evaluator requires at least one solution for "
-            "every task in the selected dataset."
+            f"{dataset_task_count} HumanEval tasks "
+            f"({missing_count} incomplete). Agent-error and "
+            "NotImplementedError tasks remain pending and can be retried "
+            "with --resume."
         )
 
     summary = {
         "finished_at": utc_now_iso(),
         "dataset_task_count": dataset_task_count,
         "selected_tasks": len(tasks),
+        "workers": args.workers,
+        "task_timeout_seconds": args.task_timeout_seconds,
         "previously_completed_tasks": len(
             completed_task_ids.intersection(
                 task_id
                 for task_id, _ in tasks
             )
         ),
-        "generated_this_run": len(generation_records),
-        "samples_in_file": len(all_sample_rows),
-        "unique_tasks_in_samples": len(generated_task_ids),
+        "retried_incomplete_tasks": len(
+            retry_task_ids.intersection(
+                task_id
+                for task_id, _ in tasks
+            )
+        ),
+        "generated_this_run": len(
+            generation_records
+        ),
+        "samples_in_file": len(
+            all_sample_rows
+        ),
+        "unique_tasks_in_samples": len(
+            generated_task_ids
+        ),
         "full_dataset_complete": complete_full_dataset,
         "agent_errors_this_run": agent_errors,
         "syntax_invalid_this_run": sum(
             1
             for record in generation_records
-            if not record.syntax_valid
+            if record.status == "invalid_python"
         ),
         "elapsed_seconds_this_run": elapsed_total,
         "status_counts_all_logs": _count_values(
@@ -1716,8 +2303,17 @@ def main() -> int:
         f"\nGeneration complete. Samples: {samples_path}"
     )
 
+    if agent_errors:
+        print(
+            f"{agent_errors} agent-error task(s) were left incomplete. "
+            "Run again with --resume to retry them."
+        )
+
     if args.evaluation_mode == "none":
-        write_json(summary_path, summary)
+        write_json(
+            summary_path,
+            summary,
+        )
 
         print(
             f"Generation summary: {summary_path}"
@@ -1726,7 +2322,10 @@ def main() -> int:
         return 0
 
     if not complete_full_dataset:
-        write_json(summary_path, summary)
+        write_json(
+            summary_path,
+            summary,
+        )
 
         print(
             f"Generation summary: {summary_path}"
@@ -1738,12 +2337,6 @@ def main() -> int:
 
         print(
             evaluation_skipped_reason
-        )
-
-        print(
-            "\nUse --evaluation-mode none for partial generation "
-            "tests, or generate all 164 HumanEval tasks for an "
-            "official HumanEval/HumanEval+ score."
         )
 
         return 0
@@ -1760,7 +2353,11 @@ def main() -> int:
 
     summary["evaluation_performed"] = True
     summary["evaluation_exit_code"] = evaluation_code
-    write_json(summary_path, summary)
+
+    write_json(
+        summary_path,
+        summary,
+    )
 
     print(
         f"Generation summary: {summary_path}"
@@ -2048,6 +2645,8 @@ def prepare_docker_runtime(
         print("Docker runtime warm-up completed.")
 
 if __name__ == "__main__":
+    mp.freeze_support()
+
     prepare_docker_runtime(
         images=(
             "python:3.11-slim",
@@ -2076,3 +2675,12 @@ if __name__ == "__main__":
     # --output-dir .\benchmark_results\humaneval\humaneval_plus_full `
     # --resume `
     # --evaluation-mode docker
+
+
+
+    # python .\run_humaneval_plus_benchmark.py `
+    # --output-dir ".\benchmark_results\humaneval(+)\humaneval_plus_full_deepseek" `
+    # --workers 2 `
+    # --task-timeout-seconds 900 `
+    # --evaluation-mode docker `
+    # --resume

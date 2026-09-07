@@ -203,7 +203,7 @@ class CodeTesterOutput(BaseModel):
 ''' LLM '''
 input_generator = myChatOpenAI(
     temperature= 0.7
-).with_structured_output(FunctionInputs)
+).with_structured_output(FunctionInputs)#, method='function_calling')
 
 reviewer = myChatOpenAI(
     temperature= 0.3
