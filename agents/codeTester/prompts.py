@@ -83,17 +83,42 @@ You must generate test inputs for the function named: {function_name}
 If a function parameter is a state, such as `state: AgentSchema`, the input **MUST** be a dictionary with the `state` key. The fields within the state field's dictionary must adhere to the schema.
 e.g., {{"state": {{ ... }} }}
 
+# Required Python Packages
+You must also identify external Python packages required for the complete source module and candidate implementation to execute.
+
+Rules:
+1. Return the PyPI distribution names that should be passed to `pip install`.
+2. Include only packages that are not part of the Python standard library.
+3. Do not include project-local modules such as `agents`, `creations`, or `utils`.
+4. Use the PyPI package name, which may differ from the Python import name.
+   Examples:
+   - `import pandas` -> `pandas`
+   - `import cv2` -> `opencv-python`
+   - `from PIL import Image` -> `Pillow`
+   - `import sklearn` -> `scikit-learn`
+5. Return package names only.
+6. Do not return pip commands.
+7. Do not return command-line flags.
+8. Do not return URLs, Git repositories, file paths, or requirements files.
+9. Do not include a package when it is already clearly part of the project's normal installed dependencies.
+10. If no additional package is required, return an empty list.
+
+The `pip_packages` field must contain the required PyPI package names.
+
 # Output Schema
 Return a `FunctionInputs` object containing:
 
 - `kwargs`: a list of dictionaries.
-- Each dictionary represents one separate function execution.
-- Each dictionary will be passed to the function using `target_function(**kwargs)`.
+    - Each dictionary represents one separate function execution.
+    - Each dictionary will be passed to the function using `target_function(**kwargs)`.
+- `pip_packages`: a list of PyPI package names required to execute the source code.
 
 # Output Examples
 
 Function:
 ```python
+from PIL import Image
+
 def add_numbers(a: int, b: int) -> int:
     return a + b
 ```
@@ -105,7 +130,8 @@ Valid conceptual output:
         {{'a': 1, 'b': 2}},
         {{'a': 0, 'b': 0}},
         {{'a': -5, 'b': 5}}
-    ]
+    ],
+    'pip_packages': ['Pillow']
 }}
 ```
 
@@ -120,7 +146,8 @@ Valid conceptual output:
 {{
     'kwargs': [
         {{}}
-    ]
+    ],
+    'pip_packages': []
 }}
 ```
 

@@ -99,6 +99,10 @@ class FunctionInputs(BaseModel):
         description= 'A list of test inputs, in kwargs format.',
         default_factory= list
     )
+    pip_packages: List[str] = Field(
+        description= 'External PyPI packages required to execute the source code.',
+        default_factory= list
+    )
 
 class FunctionExecutionResult(BaseModel):
     kwargs: Dict[str, Any] = Field(default_factory=dict)
@@ -268,6 +272,7 @@ def run_code(state: CodeTesterIntermediate) -> CodeTesterIntermediate:
             implementation= state.implementation,
             imports= state.imports,
             function_inputs= state.function_inputs.kwargs,
+            pip_packages= state.function_inputs.pip_packages,
             utils_path= str(UTILS_PATH),
             agents_path= str(AGENTS_PATH),
             creations_path= str(CREATIONS_PATH),

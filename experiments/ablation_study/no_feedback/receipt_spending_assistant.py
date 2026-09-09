@@ -24,7 +24,7 @@ import json
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS, read_state_file, clean_llm_output
-from creations.receipt_spending_assistant import receipt_spending_assistant_prompts as prompts
+from Clone.experiments.ablation_study.no_feedback import receipt_spending_assistant_prompts as prompts
 
 import base64
 import io

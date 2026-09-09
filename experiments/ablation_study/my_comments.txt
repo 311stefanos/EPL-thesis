@@ -1,0 +1,30 @@
+No Feedback:
+
+/
+
+
+---
+
+No Requirement Engineering:
+
+Had to add edges to the END node in file personal_receipt_agent.py
+
+Overengineering to have 2 files.
+
+
+file: personal_receipt_agent
+- classify_intent should not be an LLM node.
+
+
+
+Overengineered the subgraph with unecessary nodes.
+
+
+
+
+
+
+
+
+
+

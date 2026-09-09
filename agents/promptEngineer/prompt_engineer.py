@@ -445,7 +445,8 @@ def review_prompt(state: InputSchema) -> InputSchema:
             print(f'{BLUE}[NODE] [INFO] [PROMPT REVIEW]{RESET} {get_active_prompt(state).prompt_name}:\n{llm_answer}') if DEBUG else None
 
             # Add the comments of the LLM
-            if llm_answer.split('# Issues')[-1].strip():
+            llm_answer = llm_answer.split('# Issues')[-1].strip()
+            if llm_answer:
                 comments += f'Review by Expert Reviewer: {llm_answer}\n\n'
 
             # Increase the prompt review counter
@@ -487,9 +488,10 @@ def get_response(state: InputSchema) -> InputSchema:
         to_format: Format = safe_invoke(formater, messages= [SystemMessage(content= prompt)])
         get_active_prompt(state).set_format(to_format)
         print(f'{GREEN}[NODE] [INFO] [FORMAT]{RESET} {get_active_prompt(state).prompt_name}:\n{json.dumps(to_format.format_dict, indent= 4)}')
+        print(f'{GREEN}[NODE] [INFO] [MESSAGES]{RESET} {get_active_prompt(state).prompt_name}:\n{to_format.non_format_messages_list}')
 
         # Format the suggested prompt and invoke a response
-        llm_prompt: str = get_active_prompt(state).suggested_prompt.format(**to_format.format_dict)
+        llm_prompt: str = get_active_prompt(state).suggested_prompt.format(**to_format.format_dict) + '\n\n'.join([m.pretty_repr() for m in to_format.non_format_messages_list])
         llm_prompt += prompts.TESTER_PROMPT
         llm_response: str = safe_invoke(tester, messages= [SystemMessage(content= llm_prompt)]).content
 
@@ -523,7 +525,8 @@ def review_response(state: InputSchema) -> InputSchema:
             prompt = prompts.REVIEW_RESPONSE_PROMPT.format(
                 code= read_state_file(state),
                 prompt= get_active_prompt(state).suggested_prompt,
-                format= '\n'.join([f'- {k}: {v}'for k, v in get_active_prompt(state).format.format_dict.items()]),
+                format= '\n'.join([f'- {k}: {v}'for k, v in get_active_prompt(state).format.format_dict.items()]) + \
+                        'Messages History:' + '\n'.join([f'{m.pretty_repr()}' for m in get_active_prompt(state).format.non_format_messages_list]),
                 llm_response= get_active_prompt(state).latest_response,
             )
             # Ask the LLM to give a sample input for the prompt
@@ -531,7 +534,8 @@ def review_response(state: InputSchema) -> InputSchema:
             print(f'{BLUE}[NODE] [INFO] [RESPONSE REVIEW]{RESET} {get_active_prompt(state).prompt_name}:\n{llm_answer}') if DEBUG else None
         
             # Add the comments
-            if llm_answer.split('# Issues')[-1].strip():
+            llm_answer = llm_answer.split('# Issues')[-1].strip()
+            if llm_answer:
                 comments += f'Review by Expert Reviewer: {llm_answer}\n\n'
 
             # Increase the response review counter
@@ -665,7 +669,14 @@ prompt_engineer_graph.add_node('next_prompt', next_prompt)
 prompt_engineer_graph.add_node('paste_prompts', paste_prompts)
 
 prompt_engineer_graph.add_edge(START, 'extract_prompts')
-prompt_engineer_graph.add_edge('extract_prompts', 'generate_prompt')
+prompt_engineer_graph.add_conditional_edges(
+    'extract_prompts', 
+    lambda state: END if len(state['prompt_list']) == 0 else 'generate_prompt',
+    {   # Not needed, just for clarity
+        'generate_prompt': 'generate_prompt',
+        '__end__': END
+    }
+)
 prompt_engineer_graph.add_conditional_edges(
     'generate_prompt',
     generate_prompt_successfully,

@@ -3,7 +3,7 @@ from langchain_core.messages import BaseMessage
 from langsmith import Client
 
 # General imports
-from typing import List, Literal, Dict, Callable
+from typing import Literal, Dict, Callable
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
@@ -12,8 +12,7 @@ import uuid
 import os
 
 # My imports (ordered by call order)
-from agents.inputRefiner.input_refiner import input_refiner_app
-from agents.workflowRefiner.workflow_refiner import workflow_refiner_app
+from agents.workflowRefiner.ablate_workflow_refiner import workflow_refiner_app
 from utils.build_code import create_file
 from agents.codeAnnotator.code_annotator import code_annotator_app
 from agents.softwareEngineer.software_engineer import software_engineer_app
@@ -126,59 +125,52 @@ def main(user_request: str, orchestrator: bool=True, prompt_review_mode: Literal
     os.environ['LANGSMITH_PROJECT'] = 'main_workflow'
     client = Client()
 
-    # Initial Request
-    print_to_file('initial_request', {'initial_request': user_request}, run_name)
+    # # Initial Request
+    # print_to_file('initial_request', {'initial_request': user_request}, run_name)
 
-    # Input Refiner
-    print_agent('Input Refiner (internal: Clarification Orchestrator)')
-    input_refiner_response = input_refiner_app.invoke({
-        'orchestrator': orchestrator, 
-        'user_input': user_request
-    }, config= config('input_refiner'))
-    print_to_file('input_refiner', input_refiner_response, run_name)
-    clarified_user_input = input_refiner_response['refined_text']
-
-    # Workflow Refiner
-    print_agent('Workflow Refiner (internal: Clarification Orchestrator)')
-    workflow_refiner_response = workflow_refiner_app.invoke({
-        'messages': [], 
-        'orchestrator': orchestrator, 
-        'clarified_user_input': clarified_user_input
-    }, config= config('workflow_refiner'))
-    print_to_file('workflow_refiner', workflow_refiner_response, run_name)
-    workflow_bundle = workflow_refiner_response['workflow']
-
-    # Create code structures
-    files: List[str] = create_file(workflow_bundle)
-    for file_index, file in enumerate(files, start=1):
+    # # Workflow Refiner
+    # print_agent('Workflow Refiner (internal: Clarification Orchestrator)')
+    # workflow_refiner_response = workflow_refiner_app.invoke({
+    #     'messages': [], 
+    #     'orchestrator': orchestrator, 
+    #     'clarified_user_input': user_request
+    # }, config= config('workflow_refiner'))
+    # print_to_file('workflow_refiner', workflow_refiner_response, run_name)
+    # workflow_bundle = workflow_refiner_response['workflow']
+    
+    # # Create code structures
+    # files: List[str] = create_file(workflow_bundle)
+    files = [r'..\creations\personal_receipt_agent\process_receipt_subgraph.py']
+    print_to_file('files', {'files': files}, run_name)
+    for file_index, file in enumerate(files, start=2):#TODO: 1
         agent_name: str = Path(file).stem
         file_id: str = f'{file_index}_{agent_name}'
 
-        # Save initial code structure
-        copy_file(f'{file_id}_code_structure', file, run_name)
+        # # Save initial code structure
+        # copy_file(f'{file_id}_code_structure', file, run_name)
 
-        # Code Annotator
-        print_agent(f'Code Annotator (file: {file})')
-        code_annotator_response = code_annotator_app.invoke({
-            'messages': [], 
-            'file_path': file, 
-            'clarified_user_input': clarified_user_input, 
-            'workflow': workflow_bundle
-        }, config= config(f'code_annotator:{agent_name}'))
-        print_to_file(f'{file_id}_code_annotator', code_annotator_response, run_name)
-        copy_file(f'{file_id}_code_annotator', file, run_name)
+        # # Code Annotator
+        # print_agent(f'Code Annotator (file: {file})')
+        # code_annotator_response = code_annotator_app.invoke({
+        #     'messages': [], 
+        #     'file_path': file, 
+        #     'clarified_user_input': user_request, 
+        #     'workflow': workflow_bundle
+        # }, config= config(f'code_annotator:{agent_name}'))
+        # print_to_file(f'{file_id}_code_annotator', code_annotator_response, run_name)
+        # copy_file(f'{file_id}_code_annotator', file, run_name)
 
-        # Software Engineer
-        print_agent(f'Software Engineer (file: {file}) (internal: Coder)')
-        software_engineer_response = software_engineer_app.invoke({
-            'messages': [], 
-            'file_path': file, 
-            'times_reviewed': 0, 
-            'skip_tool_sections': False, 
-            'coder_run_code': coder_run_code
-        }, config= config(f'software_engineer:{agent_name}'))
-        print_to_file(f'{file_id}_software_engineer', software_engineer_response, run_name)
-        copy_file(f'{file_id}_software_engineer', file, run_name)
+        # # Software Engineer
+        # print_agent(f'Software Engineer (file: {file}) (internal: Coder)')
+        # software_engineer_response = software_engineer_app.invoke({
+        #     'messages': [], 
+        #     'file_path': file, 
+        #     'times_reviewed': 0, 
+        #     'skip_tool_sections': False, 
+        #     'coder_run_code': coder_run_code
+        # }, config= config(f'software_engineer:{agent_name}'))
+        # print_to_file(f'{file_id}_software_engineer', software_engineer_response, run_name)
+        # copy_file(f'{file_id}_software_engineer', file, run_name)
 
         # Prompt Engineer
         print_agent(f'Prompt Engineer (file: {file})')
@@ -221,12 +213,12 @@ if __name__ == '__main__':
         ' For the WhatsApp API, consider it out-of-scope.'
     )
 
-    # python main.py <run_name>
+    # python main.py ablate_requirement_engineering
 
     main(
         user_request, 
         orchestrator= True, 
-        prompt_review_mode= 'llm', 
+        prompt_review_mode= 'both', 
         coder_run_code= True, 
 
         run_name= args.run_name

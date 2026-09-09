@@ -1,0 +1,24 @@
+# Secrets and local configuration
+.env
+*.env
+
+# Generated receipt ledgers
+*.xlsx
+*.xls
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# OS/editor files
+.DS_Store
+.vscode/
+.idea/

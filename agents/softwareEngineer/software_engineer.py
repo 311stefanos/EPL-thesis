@@ -362,6 +362,15 @@ def approve_function_code(file_path: str, function_name: str) -> str:
         with open(file_path, 'w', encoding= 'utf-8') as f:
             f.write(updated_code)
 
+    except SyntaxError as e:
+        error_message = f'[ERROR] Could not approve {function_name}: {e.msg}'
+
+        if e.lineno: error_message += f' at line {e.lineno}'
+        if e.offset: error_message += f', column {e.offset}'
+        if e.text:   error_message += f'\nCode: {e.text.strip()}'
+
+        return error_message
+
     except Exception as e:
         print(f'{RED}[TOOL] [ERROR] [APPROVE]{RESET} {e}') if DEBUG else None
         traceback.print_exc() if DEBUG else None
@@ -611,20 +620,39 @@ def _find_qualified_function_node(parsed_source: ast.Module, function_name: str)
     return matching_functions[0]
 
 
-def _replace_qualified_function_in_source(function_name: str, source_code: str, implementation: str) -> str:
+def _replace_qualified_function_in_source(
+    function_name: str,
+    source_code: str,
+    implementation: str
+) -> str:
     '''
-    Replaces exactly one top-level function or qualified class method without modifying surrounding code.
+    Replaces exactly one top-level function or qualified class method
+    without modifying surrounding code.
     '''
     try:
         parsed_source = ast.parse(source_code)
+    except SyntaxError as exc:
+        raise SyntaxError(
+            f'Existing source code cannot be parsed: {exc.msg}',
+            (exc.filename, exc.lineno, exc.offset, exc.text)
+        ) from exc
+
+    try:
         parsed_implementation = ast.parse(implementation)
     except SyntaxError as exc:
-        raise ValueError(f'Unable to parse the source or candidate implementation: {exc}') from exc
+        raise SyntaxError(
+            f'Coder implementation cannot be parsed: {exc.msg}',
+            (exc.filename, exc.lineno, exc.offset, exc.text)
+        ) from exc
 
     target_function = _find_qualified_function_node(parsed_source, function_name)
+
     code_function_name: str = function_name.split('.')[-1]
 
-    implementation_functions = [node for node in parsed_implementation.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    implementation_functions = [
+        node for node in parsed_implementation.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
 
     if len(implementation_functions) != 1:
         raise ValueError('The Coder implementation must contain exactly one function or method definition.')
@@ -634,6 +662,7 @@ def _replace_qualified_function_in_source(function_name: str, source_code: str, 
 
     source_lines = source_code.splitlines(keepends=True)
     decorator_lines = [decorator.lineno for decorator in target_function.decorator_list]
+
     start_line = min([target_function.lineno, *decorator_lines]) - 1
     end_line = target_function.end_lineno
 
@@ -641,14 +670,21 @@ def _replace_qualified_function_in_source(function_name: str, source_code: str, 
     indentation = definition_line[:len(definition_line) - len(definition_line.lstrip())]
 
     candidate_lines = implementation.strip('\n').splitlines()
-    candidate = '\n'.join([f'{indentation}{line}' if line.strip() else line for line in candidate_lines]) + '\n'
+
+    candidate = '\n'.join([
+        f'{indentation}{line}' if line.strip() else line
+        for line in candidate_lines
+    ]) + '\n'
 
     updated_code = ''.join(source_lines[:start_line]) + candidate + ''.join(source_lines[end_line:])
 
     try:
         ast.parse(updated_code)
     except SyntaxError as exc:
-        raise ValueError(f'Replacing {function_name!r} would make the Python file invalid: {exc}') from exc
+        raise SyntaxError(
+            f'Replacing {function_name!r} produces invalid Python: {exc.msg}',
+            (exc.filename, exc.lineno, exc.offset, exc.text)
+        ) from exc
 
     return updated_code
 

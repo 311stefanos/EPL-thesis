@@ -277,6 +277,10 @@ Review the prompt template and report only the MOST IMPORTANT issues that could 
 # Output (STRICT)
 Output only:
 
+# Thinking Process
+Your thinking process.
+(This header and content are optional, if you include them, place them above the # Issues header.)
+
 # Issues
 either:
 - exactly `okay`
@@ -317,12 +321,13 @@ Your job is to provide a dictionary of key-value pairs that will be used to form
 6b) If the messages are not formatted into the prompt but are passed into the safe_invoke method, you should pass the messages list into the `non_format_messages_list` key of the output.
    	- You must generate the messages list. Always simulate a realistic scenario of messages, so we can test the prompt in a real context.   
 
-# Possible Messages Key
+# Possible Messages/History Key
 You should understand how the messages are created from the codebase, in order to simulate a realistic scenario.
 e.g., [HumanMessage(content="..."), AIMessage(content="...", tool_calls=[...]), ToolMessage(content="...", tool_name="..."), AIMessage(content="..."), HumanMessage(content="..."), ...].
 
 # Strict Rule
-**Always adhere to the prompt's placeholders**, not only by the codebase because the Prompt Engineer mught make changes to the code, according to the prompt. 
+**Always adhere to the prompt's placeholders**, not only by the codebase because the Prompt Engineer might make changes to the code, according to the prompt. 
+**Always include** possible messages/history in the non_format_messages_list key of your response, when the codebase requires it. It should simulate a realistic scenario.
 
 # Output
 You should return a dictionary of the form:
@@ -430,6 +435,10 @@ If the LLM does not act logically, you should report the issue.
 
 # Output (STRICT)
 Output only:
+
+# Thinking Process
+Your thinking process.
+(This header and content are optional, if you include them, place them above the # Issues header.)
 
 # Issues
 either:

@@ -179,6 +179,7 @@ Your job is to
 1. You may not import anything on the code you provide.
 2. You may not use the `tavily_search` tool more than once.
 3. You may not use the `tool.invoke` method outside of a tool handler node.
+4. You may not assume the prompts module is not complete. All prompts are there and are correct. Just format them how you see fit.
 
 ---
 
@@ -319,6 +320,7 @@ All provided functions/constants are included in the `utils/utils.py` file. You 
 All provided prompts are meant to be used with the `.format` method of python. You can format it however you see fit and the prompt engineering team will make the best prompt for you.
 If you deem that the prompt needs a dynamic extension (e.g. if condition1: prompt += prompt1 else: prompt += prompt2), you may use any prompt you want, just keep the naming convention consistent.
 Any used prompt must be included and accessed by the `prompts` file.
+You may not delete the `prompt = prompts.<FUNCTION_NAME>_PROMPT.format(...)` line. Just format it. 
 Before passing arguments to the prompt, you should make sure they are in a readable format.
 ### Careful Conditions
 Do not do both:

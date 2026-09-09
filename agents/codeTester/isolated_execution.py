@@ -2,10 +2,12 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 import subprocess
 import tempfile
+import hashlib
 import shutil
 import uuid
 import json
 import ast
+import re
 import os
 
 
@@ -24,6 +26,89 @@ def _normalise_import_statement(import_statement: str) -> str:
         raise ValueError(f'Expected an import statement, received: {import_statement!r}')
 
     return ast.unparse(node).strip()
+
+def _normalise_pip_packages(packages: List[str]) -> List[str]:
+    '''Validates and normalises PyPI distribution names.'''
+    package_pattern = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9,._-]+\])?$')
+
+    normalised_packages: List[str] = []
+
+    for package in packages:
+        package = package.strip()
+
+        if not package:
+            continue
+
+        if not package_pattern.fullmatch(package):
+            raise ValueError(f'Invalid pip package name: {package!r}')
+
+        if package not in normalised_packages:
+            normalised_packages.append(package)
+
+    return sorted(normalised_packages)
+
+
+def _ensure_dependency_image(
+    *,
+    base_image: str,
+    packages: List[str],
+) -> str:
+    '''Returns a cached Docker image containing the requested PyPI packages.'''
+    packages = _normalise_pip_packages(packages)
+
+    if not packages:
+        return base_image
+
+    dependency_string = f'{base_image}|{"|".join(packages)}'
+    dependency_hash = hashlib.sha256(dependency_string.encode('utf-8')).hexdigest()[:12]
+    dependency_image = f'thesis-code-tester:deps-{dependency_hash}'
+
+    image_check = subprocess.run(
+        ['docker', 'image', 'inspect', dependency_image],
+        stdout= subprocess.DEVNULL,
+        stderr= subprocess.DEVNULL,
+        check= False,
+        timeout= 10,
+    )
+
+    if image_check.returncode == 0:
+        return dependency_image
+
+    packages_string = ' '.join(packages)
+
+    dockerfile = (
+        '# syntax=docker/dockerfile:1.7\n'
+        f'FROM {base_image}\n\n'
+        'RUN --mount=type=cache,target=/root/.cache/pip '
+        f'python -m pip install --disable-pip-version-check {packages_string}\n'
+    )
+
+    with tempfile.TemporaryDirectory(prefix= 'code_tester_image_') as temp_dir:
+        temp_path = Path(temp_dir)
+        dockerfile_path = temp_path / 'Dockerfile'
+        dockerfile_path.write_text(dockerfile, encoding= 'utf-8')
+
+        build = subprocess.run(
+            [
+                'docker',
+                'build',
+                '-t',
+                dependency_image,
+                str(temp_path),
+            ],
+            stdout= subprocess.PIPE,
+            stderr= subprocess.PIPE,
+            text= True,
+            check= False,
+        )
+
+    if build.returncode != 0:
+        raise RuntimeError(
+            f'Failed to install required packages {packages}. '
+            f'Docker build error: {build.stderr[-3000:]}'
+        )
+
+    return dependency_image
 
 def _find_qualified_function_node(parsed_source: ast.Module, function_name: str) -> ast.AST:
     '''Finds one top-level function or qualified class method.'''
@@ -500,13 +585,13 @@ def _run_single_input(
             '-e',
             'PYTHONPATH=/project',
             '-e',
-            'PROVIDER="OPENROUTER"',
+            'PROVIDER=OPENROUTER',
             '-e',
-            'OPENROUTER_API_KEY="code-tester-dummy-key"',
+            'OPENROUTER_API_KEY=code-tester-dummy-key',
             '-e',
-            'OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"',
+            'OPENROUTER_BASE_URL=https://openrouter.ai/api/v1',
             '-e',
-            'MODEL_NAME="openrouter/free"',
+            'MODEL_NAME=openrouter/auto:free',
             docker_image,
             'python',
             '/sandbox/runner.py',
@@ -565,6 +650,7 @@ def run_in_isolated_env(
     implementation: str,
     imports: Optional[List[str]],
     function_inputs: List[Dict[str, Any]],
+    pip_packages: List[str],
     utils_path: str,
     agents_path: str,
     creations_path: str,
@@ -624,6 +710,8 @@ def run_in_isolated_env(
 
     candidate_code = _build_candidate_code(function_name=function_name, source_code=source_code, additional_imports=imports, implementation=implementation)
 
+    execution_image = _ensure_dependency_image(base_image=docker_image, packages=pip_packages)
+
     invalid_tools: List[str] = _find_tool_description_errors(candidate_code)
 
     if invalid_tools:
@@ -648,7 +736,7 @@ def run_in_isolated_env(
             results.append(_failed_result({}, error_type='InvalidInputError', error_message='Every generated function input must be a dictionary containing keyword arguments.'))
             continue
 
-        result = _run_single_input(function_name=function_name, candidate_code=candidate_code, source_file=container_source_file, kwargs=function_input, utils_path=resolved_utils_path, agents_path=resolved_agents_path, creations_path=resolved_creations_path, timeout_seconds=timeout_seconds, memory_limit=memory_limit, cpus=cpus, pids_limit=pids_limit, docker_image=docker_image)
+        result = _run_single_input(function_name=function_name, candidate_code=candidate_code, source_file=container_source_file, kwargs=function_input, utils_path=resolved_utils_path, agents_path=resolved_agents_path, creations_path=resolved_creations_path, timeout_seconds=timeout_seconds, memory_limit=memory_limit, cpus=cpus, pids_limit=pids_limit, docker_image=execution_image)
         results.append(result)
 
     completed_executions = sum(1 for result in results if result['completed'])
