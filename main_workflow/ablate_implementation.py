@@ -3,7 +3,7 @@ from langchain_core.messages import BaseMessage
 from langsmith import Client
 
 # General imports
-from typing import Literal, Dict, Callable, List
+from typing import List, Literal, Dict, Callable
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
@@ -12,10 +12,11 @@ import uuid
 import os
 
 # My imports (ordered by call order)
-from agents.workflowRefiner.ablate_workflow_refiner import workflow_refiner_app
+from agents.inputRefiner.input_refiner import input_refiner_app
+from agents.workflowRefiner.workflow_refiner import workflow_refiner_app
 from utils.build_code import create_file
 from agents.codeAnnotator.code_annotator import code_annotator_app
-from agents.softwareEngineer.software_engineer import software_engineer_app
+from agents.softwareEngineer.ablate_software_engineer import software_engineer_app
 from agents.promptEngineer.prompt_engineer import prompt_engineer_app
 from agents.fileHandler.file_handler import file_handler_app
 
@@ -128,20 +129,28 @@ def main(user_request: str, orchestrator: bool=True, prompt_review_mode: Literal
     # Initial Request
     print_to_file('initial_request', {'initial_request': user_request}, run_name)
 
+    # Input Refiner
+    print_agent('Input Refiner (internal: Clarification Orchestrator)')
+    input_refiner_response = input_refiner_app.invoke({
+        'orchestrator': orchestrator, 
+        'user_input': user_request
+    }, config= config('input_refiner'))
+    print_to_file('input_refiner', input_refiner_response, run_name)
+    clarified_user_input = input_refiner_response['refined_text']
+
     # Workflow Refiner
     print_agent('Workflow Refiner (internal: Clarification Orchestrator)')
     workflow_refiner_response = workflow_refiner_app.invoke({
         'messages': [], 
         'orchestrator': orchestrator, 
-        'clarified_user_input': user_request
+        'clarified_user_input': clarified_user_input
     }, config= config('workflow_refiner'))
     print_to_file('workflow_refiner', workflow_refiner_response, run_name)
     workflow_bundle = workflow_refiner_response['workflow']
-    
+
     # Create code structures
     files: List[str] = create_file(workflow_bundle)
-    print_to_file('files', {'files': files}, run_name)
-    for file_index, file in enumerate(files, start=2):#TODO: 1
+    for file_index, file in enumerate(files, start=1):
         agent_name: str = Path(file).stem
         file_id: str = f'{file_index}_{agent_name}'
 
@@ -153,7 +162,7 @@ def main(user_request: str, orchestrator: bool=True, prompt_review_mode: Literal
         code_annotator_response = code_annotator_app.invoke({
             'messages': [], 
             'file_path': file, 
-            'clarified_user_input': user_request, 
+            'clarified_user_input': clarified_user_input, 
             'workflow': workflow_bundle
         }, config= config(f'code_annotator:{agent_name}'))
         print_to_file(f'{file_id}_code_annotator', code_annotator_response, run_name)
@@ -212,13 +221,13 @@ if __name__ == '__main__':
         ' For the WhatsApp API, consider it out-of-scope.'
     )
 
-    # python main.py ablate_req_eng
+    # python main.py ablate_implementation
 
     main(
         user_request, 
         orchestrator= True, 
-        prompt_review_mode= 'both', 
-        coder_run_code= True, 
+        prompt_review_mode= 'llm', 
+        coder_run_code= False, 
 
         run_name= args.run_name
     )
