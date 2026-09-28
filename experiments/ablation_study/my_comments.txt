@@ -1,30 +1,52 @@
 No Feedback:
 
-/
+    /
+
+
+---
+
+One-shot generation:
+
+    _message_text is really unenecessary
+    finalize_answer_node redundunt
+
+    tools are really specific to the examples given
+
+    subgraph
+
+
+    ReceiptCategory is not a Literal
+    _normalize_category could allow all categories instead of Other
+    categorize_receipt_node the category could be assigned by the same llm
+    save_receipt_node no confirmation
+
+    no requirements.txt or .env
+
+
+    Good: Made a seperate code file for all excel functionality
 
 
 ---
 
 No Requirement Engineering:
 
-Had to add edges to the END node in file personal_receipt_agent.py
+    Had to add edges to the END node in file personal_receipt_agent.py
 
-Overengineering to have 2 files.
-
-
-file: personal_receipt_agent
-- classify_intent should not be an LLM node.
+    Overengineering to have 2 files.
 
 
-
-Overengineered the subgraph with unecessary nodes.
+    file: personal_receipt_agent
+    - classify_intent should not be an LLM node.
 
 
 
+    Overengineered the subgraph with unecessary nodes.
 
+---
 
+No design:
 
+    the one shot code annotation made a lot of unecessary helpful functions.
+    did not add correct out of tool work in tools and the Software Engineer made a custom handler for no reason for each tool.
 
-
-
-
+    More implementation errors risen by the reviewers

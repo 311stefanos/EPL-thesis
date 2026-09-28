@@ -542,7 +542,7 @@ def passed_review_node(state: InputSchema) -> Literal['output_node', 'coder_node
     print_function_name() if DEBUG else None
 
     # Passed review
-    if state['reviewer_comments'].lower().strip() in USER_APPROVALS:
+    if state['reviewer_comments'].replace('`', '').lower().strip() in USER_APPROVALS:
         return 'output_node'
     # Else, go to the coder node
     else:

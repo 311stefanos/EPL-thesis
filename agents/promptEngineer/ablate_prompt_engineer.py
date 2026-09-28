@@ -31,7 +31,7 @@ RED = '\033[91m' # ERR
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
 
-print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Prompt Engineer Ablation') if DEBUG else None
+print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} {RED}Ablated{RESET} Prompt Engineer Ablation') if DEBUG else None
 
 
 """ Schemas """

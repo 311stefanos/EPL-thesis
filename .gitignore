@@ -77,6 +77,6 @@ pyenv.cfg
 
 # Mine
 # creations/*
-git_hub_tool.py
-stackoverflow_tool.py
 logs/
+my_comments.txt
+comments-results/

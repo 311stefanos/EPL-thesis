@@ -146,6 +146,7 @@ class CodeIssues(BaseModel):
 ''' Input Schema '''
 # The input schema for the software engineer, only the file path is required
 class InputSchema(MessagesState):
+    user_request: str # The user request
     file_path: str # 'The path to the file.
     skip_tool_sections: bool # Whether to skip the tool sections.
     times_reviewed: int # The number of times the code has been reviewed.
@@ -856,6 +857,7 @@ def software_engineer_node(state: InputSchema) -> InputSchema:
         type_, how = get_schema_type(state)
         
         prompt = prompts.SOFTWARE_ENGINEER_PROMPT.format(
+            user_request= state['user_request'],
             file_path= state['file_path'],
             code= read_state_file(state),
             tool_messages= '\n\n'.join([message.pretty_repr() for message in state['messages'][-3:]]),

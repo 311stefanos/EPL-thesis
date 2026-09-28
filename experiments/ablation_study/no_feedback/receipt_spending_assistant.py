@@ -24,7 +24,7 @@ import json
 
 # My imports
 from utils.utils import myChatOpenAI, safe_invoke, print_function_name, will_tool_call, parse_tool_arguments, USER_APPROVALS, read_state_file, clean_llm_output
-from Clone.experiments.ablation_study.no_feedback import receipt_spending_assistant_prompts as prompts
+from experiments.ablation_study.no_feedback import receipt_spending_assistant_prompts as prompts
 
 import base64
 import io
@@ -1708,36 +1708,70 @@ receipt_spending_assistant_app = receipt_spending_assistant_graph.compile(checkp
 
 ''' Testing '''
 if __name__ == '__main__':
-    from IPython.display import Image as GraphImage
+    import uuid
 
-    # Visualize the graph
-    GraphImage(receipt_spending_assistant_app.get_graph().draw_mermaid_png(max_retries= 5, retry_delay= 2.0))
-    parent_dir = Path(__file__).resolve().parent
-    if not os.path.exists(parent_dir / 'graphs'):
-        os.makedirs(parent_dir / 'graphs')
-    with open(parent_dir / 'graphs/receipt_spending_assistant_app.png', 'wb') as f:
-        f.write(receipt_spending_assistant_app.get_graph().draw_mermaid_png())
-
-    
-    # Connect to langsmith
-    from langsmith import Client
-    os.environ['LANGCHAIN_PROJECT'] = 'receipt_spending_assistant'
-    os.environ['LANGSMITH_PROJECT'] = 'receipt_spending_assistant'
-    client = Client()
+    # Test-harness configuration only:
+    # allow the shared ablation receipt folder as an image source.
+    os.environ.setdefault(
+        'RECEIPT_IMAGE_DIR',
+        str((Path(__file__).resolve().parent.parent / 'receipts').resolve())
+    )
 
     config = {
         'recursion_limit': 100,
         'configurable': {
-            'user_id': 'receipt_spending_assistant',
-            'run_name': 'receipt_spending_assistant',
-            'thread_id': 'receipt_spending_assistant', 
+            'user_id': 'no_feedback_test',
+            'run_name': 'no_feedback_test',
+            'thread_id': f'no_feedback_test:{uuid.uuid4()}',
         }
     }
 
-    user = '' # TODO: add
-    response = receipt_spending_assistant_app.invoke(user, config= config)
+    print(
+        'Commands:\n'
+        '  re:<path>          Process a receipt image\n'
+        '  re:<path> | <text> Process a receipt image with accompanying text\n'
+        '  q                  Quit\n'
+        '  anything else is sent as a normal conversation message\n'
+    )
 
-    print(f'{BLUE}[MAIN] [INFO]{RESET} Response') if DEBUG else None
-    if DEBUG:
-        for key, value in response.items():
-            print(f'    {key}: {value}')
+    user_in = input(f'{GREEN}[USER INPUT]{RESET} > ')
+
+    while user_in.lower() != 'q':
+
+        if user_in.startswith('re:'):
+            receipt_input = user_in[3:].strip()
+
+            if '|' in receipt_input:
+                image_path, user_text = receipt_input.split('|', 1)
+
+                message = (
+                    f'Receipt image path: {image_path.strip()}\n'
+                    f'Accompanying text: {user_text.strip()}'
+                )
+            else:
+                message = receipt_input
+
+        else:
+            message = user_in
+
+        response = receipt_spending_assistant_app.invoke({
+			'messages': [HumanMessage(content=message)]
+		}, config= config)
+
+        messages = response.get('messages', [])
+
+        # Find the latest HumanMessage.
+        last_human_index = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                last_human_index = i
+                break
+
+        # Print everything generated during this turn.
+        for message in messages[last_human_index + 1:]:
+            if message.content:
+                print(f'\n{BLUE}[ANSWER]{RESET} {message.content}')
+            else:
+                print(f'\n{BLUE}[ANSWER]{RESET} {message}')
+
+        user_in = input(f'\n{GREEN}[USER INPUT]{RESET} > ')

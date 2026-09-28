@@ -36,7 +36,7 @@ RESET = '\033[0m'
 
 
 
-print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Coder') if DEBUG else None
+print(f'\n{BLUE}[AGENT] [INFO] [STARTUP]{RESET} {RED}Ablated{RESET} Coder') if DEBUG else None
 
 
 

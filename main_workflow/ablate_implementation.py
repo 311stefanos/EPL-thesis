@@ -3,12 +3,13 @@ from langchain_core.messages import BaseMessage
 from langsmith import Client
 
 # General imports
-from typing import List, Literal, Dict, Callable
+from typing import List, Literal, Dict, Callable, Any
 from dotenv import load_dotenv
 from datetime import datetime
 from pathlib import Path
 import argparse
 import uuid
+import json
 import os
 
 # My imports (ordered by call order)
@@ -52,7 +53,27 @@ def print_to_file(agent_name: str, result: dict, run_name: str) -> None:
     '''
     if not DEBUG:
         return
-    
+
+    def to_serializable(value: Any) -> Any:
+        # Pydantic v2
+        if hasattr(value, 'model_dump') and callable(value.model_dump):
+            return value.model_dump()
+
+        # Pydantic v1
+        if hasattr(value, 'dict') and callable(value.dict):
+            return value.dict()
+
+        if isinstance(value, dict):
+            return {
+                key: to_serializable(item)
+                for key, item in value.items()
+            }
+
+        if isinstance(value, (list, tuple)):
+            return [to_serializable(item) for item in value]
+
+        return value
+
     log_dir: Path = Path('./logs') / run_name
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -64,14 +85,20 @@ def print_to_file(agent_name: str, result: dict, run_name: str) -> None:
                     message: BaseMessage
                     f.write(f'{message.pretty_repr()}\n')
 
+                f.write('\n')
                 continue
 
             try:
-                f.write(f'{key}: {str(value)}\n\n')
-                f.write(f'{key}: {value}\n\n')
+                serializable_value = to_serializable(value)
+
+                if isinstance(serializable_value, (dict, list)):
+                    f.write(f'{key}:\n{json.dumps(serializable_value, indent=4, default=str)}\n\n')
+                else:
+                    f.write(f'{key}: {serializable_value}\n\n')
 
             except Exception as e:
-                f.write(str(e))
+                f.write(f'{key}: {str(value)}\n')
+                f.write(f'[Serialization error: {e}]\n\n')
 
 def copy_file(after_agent_name: str, file_path: str, run_name: str) -> None:
     '''
@@ -169,9 +196,10 @@ def main(user_request: str, orchestrator: bool=True, prompt_review_mode: Literal
         copy_file(f'{file_id}_code_annotator', file, run_name)
 
         # Software Engineer
-        print_agent(f'Software Engineer (file: {file}) (internal: Coder)')
+        print_agent(f'Ablate Software Engineer (file: {file})')
         software_engineer_response = software_engineer_app.invoke({
             'messages': [], 
+            'user_request': clarified_user_input,
             'file_path': file, 
             'times_reviewed': 0, 
             'skip_tool_sections': False, 
@@ -221,12 +249,12 @@ if __name__ == '__main__':
         ' For the WhatsApp API, consider it out-of-scope.'
     )
 
-    # python main.py ablate_implementation
+    # python ablate_implementation.py ablate_implementation
 
     main(
         user_request, 
         orchestrator= True, 
-        prompt_review_mode= 'llm', 
+        prompt_review_mode= 'both', 
         coder_run_code= False, 
 
         run_name= args.run_name

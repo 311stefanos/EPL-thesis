@@ -35,7 +35,7 @@ RED = '\033[91m' # ERR
 GREEN = '\033[92m' # REST
 RESET = '\033[0m'
 
-print(f'{BLUE}[AGENT] [INFO] [STARTUP]{RESET} Input Refiner') if DEBUG else None
+print(f'{BLUE}[AGENT] [INFO] [STARTUP]{RESET} {RED}Ablated{RESET} Input Refiner') if DEBUG else None
 
 
 

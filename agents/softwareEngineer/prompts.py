@@ -96,6 +96,11 @@ Your job is to:
 Functions must be done via `call_coder`.
 
 # Inputs as Sources of Truth
+## The initial user request is:
+<REQUEST_START>
+{user_request}
+</REQUEST_END>
+
 ## The file contents of {file_path} up to now are:
 <CODE_START>
 {code}
