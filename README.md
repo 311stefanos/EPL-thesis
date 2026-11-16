@@ -1,6 +1,13 @@
 # From Natural Language Requests to Runnable AI Agents:<br>A Multi-Agent Builder for Custom AI Agents (MABCA)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**MABCA** is a framework that automatically transforms a natural-language request into a runnable, (multi-)agent Python application. The system combines requirement refinement, workflow design, code scaffolding, structured code annotation, iterative implementation, isolated execution-based testing, prompt engineering, and file generation in one end-to-end pipeline.
+**MABCA (Multi-Agent Builder for Custom AI Agents)** is a human-supervised multi-agent framework that transforms natural-language requests into runnable and inspectable source-level AI agent packages.
+
+The framework combines requirement refinement, workflow design, deterministic code scaffolding, structured code annotation, function-level implementation, optional execution-based testing, prompt engineering, and supporting-file generation.
+
+Each construction stage produces explicit intermediate artifacts that can be inspected, reviewed, and revised.
+
+The resulting agents are independently executable LangGraph applications that can be modified and deployed without requiring the MABCA construction framework, once their dependencies and credentials have been configured.
 
 ---
 
@@ -18,13 +25,24 @@
 - [Generated output](#generated-output)
 - [Isolated code testing](#isolated-code-testing)
 - [Experiments and evaluation](#experiments-and-evaluation)
+  - [Models used in the experiments](#models-used-in-the-experiments)
+  - [Benchmark pipelines](#benchmark-pipelines)
 - [Benchmark results included in the repository](#benchmark-results-included-in-the-repository)
 - [Reproducing the benchmarks](#reproducing-the-benchmarks)
+  - [Benchmark-specific adaptations](#benchmark-specific-adaptations)
+  - [HumanEval / HumanEval+](#humaneval--humaneval)
+  - [MBPP / MBPP+](#mbpp--mbpp)
+  - [IFEval](#ifeval)
+  - [GAIA](#gaia)
 - [Ablation study](#ablation-study)
+  - [Experimental methodology](#experimental-methodology)
+  - [Main workflow ablations](#main-workflow-ablations)
+  - [Main findings](#main-findings)
+- [Construction cost and runtime](#construction-cost-and-runtime)
 - [Development](#development)
 - [Reproducibility notes and limitations](#reproducibility-notes-and-limitations)
-- [Citation](#citation)
 - [Author](#author)
+- [License](#license)
 
 ---
 
@@ -51,25 +69,7 @@ The system is designed around four goals:
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    U(User request) --> IR[Input Refiner]
-    IR --> WR[Workflow Refiner]
-    WR --> SC(Code Scaffolding)
-    SC --> CA[Code Annotator]
-    CA --> SE[Software Engineer]
-    SE --> C[Coder]
-    C --> CT{Runtime testing enabled?}
-    CT -->|Yes| T[Code Tester]
-    CT -->|No| SE
-    T --> SE
-    SE --> PE[Prompt Engineer]
-    PE --> FH[File Handler]
-    FH --> O(Runnable agent package)
-
-    CO[Clarification Orchestrator] -. supports .-> IR
-    CO -. supports .-> WR
-```
+![Top-level architecture of MABCA](docs/top_level_view.png)
 
 The main workflow is implemented in `main_workflow/main.py`. It invokes the major stages in sequence and passes structured state between them.
 
@@ -83,9 +83,9 @@ The main workflow is implemented in `main_workflow/main.py`. It invokes the majo
 | 2 | **Workflow Refiner** | Converts the refined request into a structured `WorkflowBundle` containing a root workflow graph and optional subgraphs. |
 | 3 | **Code Scaffolding** | Deterministically converts the workflow description into LangGraph-oriented Python skeletons and prompt modules under `creations/`. Each graph is converted into a single Python file. The following agents are invoked in sequence for each file. |
 | 4 | **Code Annotator** | Expands the scaffold with node documentation, schemas, helper-function stubs, tool stubs, and LLM configuration proposals. Adds design principles and implementation guidance. |
-| 5 | **Software Engineer** | Coordinates multiple Coder subagents to implement the file, and performs final code review. |
-| 6 | **Coder** | Implements individual functions and proposes required imports, helper functions, or tools. Uses the Code Tester to validate runtime behaviour. |
-| 7 | **Code Tester** | Executes proposed functions in isolated Docker containers and returns runtime evidence to the implementation loop. |
+| 5 | **Software Engineer** | Coordinates function-level implementation, reviews Coder proposals, applies approved changes, and performs final source-code review. |
+| 6 | **Coder** | Implements individual functions and proposes required imports, helper functions, or tools. |
+| 7 | **Code Tester (optional)** | Generates representative inputs, executes candidate implementations in isolated Docker containers, and provides execution-informed review. |
 | 8 | **Prompt Engineer** | Generates, reviews, formats, tests, and writes prompt templates used by LLM nodes. |
 | 9 | **File Handler** | Creates additional files and directories required by the generated application. |
 
@@ -455,6 +455,30 @@ The repository contains two main forms of evaluation:
 
 The benchmark directories include the generated benchmark agents, runners, run configurations, raw generations, evaluation outputs, and score summaries used for analysis.
 
+### Models used in the experiments
+
+The experimental evaluation distinguishes between the models
+used by the generated agents during benchmark execution and
+the backbone model used by MABCA during the controlled
+ablation study.
+
+| Experiment | Model |
+|---|---|
+| HumanEval / HumanEval+ | NVIDIA Nemotron 3 Ultra 550B A55B |
+| MBPP / MBPP+ | NVIDIA Nemotron 3 Ultra 550B A55B |
+| IFEval | NVIDIA Nemotron 3 Ultra 550B A55B |
+| GAIA | DeepSeek V4 Flash 0731 |
+| Ablation study (agent construction) | Z.ai GLM 5.3 |
+| Full-framework reference run | Z.ai GLM 5.3 |
+
+The benchmark agents used models with one-million-token
+context windows, which was one of the factors considered
+during model selection.
+
+MABCA is not restricted to these models. Other compatible
+models can be configured through the environment variables
+described in the Configuration section.
+
 ### Benchmark pipelines
 
 | Benchmark | Generated agent / runner | Purpose |
@@ -468,26 +492,47 @@ The benchmark directories include the generated benchmark agents, runners, run c
 
 ## Benchmark results included in the repository
 
-The following values are computed from the complete result artifacts currently stored in this repository snapshot.
+The following results were obtained by agents generated
+using MABCA.
 
-| Benchmark artifact | Result |
-|---|---:|
-| HumanEval, `humaneval_plus_full_final` | 161 / 164 = **98.17%** |
-| HumanEval+, `humaneval_plus_full_final` | 150 / 164 = **91.46%** |
-| MBPP | 376 / 378 = **99.47%** |
-| MBPP+ | 315 / 378 = **83.33%** |
-| IFEval strict prompt-level | 489 / 541 = **90.39%** |
-| IFEval strict instruction-level | 774 / 834 = **92.81%** |
-| IFEval loose prompt-level | 497 / 541 = **91.87%** |
-| IFEval loose instruction-level | 784 / 834 = **94.00%** |
-| GAIA validation | 133 / 165 = **80.61%** |
-| GAIA Level 1 | 47 / 53 = **88.68%** |
-| GAIA Level 2 | 67 / 86 = **77.91%** |
-| GAIA Level 3 | 19 / 26 = **73.08%** |
+| Benchmark | Model | Metric | Result |
+|---|---|---|---:|
+| HumanEval | Nemotron 3 Ultra 550B A55B | Pass@1 | 98.17% |
+| HumanEval+ | Nemotron 3 Ultra 550B A55B | Pass@1 | 91.46% |
+| MBPP | Nemotron 3 Ultra 550B A55B | Pass@1 | 99.47% |
+| MBPP+ | Nemotron 3 Ultra 550B A55B | Pass@1 | 83.33% |
+| IFEval | Nemotron 3 Ultra 550B A55B | Strict prompt-level | 90.39% |
+| IFEval | Nemotron 3 Ultra 550B A55B | Strict instruction-level | 92.81% |
+| IFEval | Nemotron 3 Ultra 550B A55B | Loose prompt-level | 91.87% |
+| IFEval | Nemotron 3 Ultra 550B A55B | Loose instruction-level | 94.00% |
+| GAIA | DeepSeek V4 Flash 0731 | Overall accuracy | 80.61% |
+| GAIA Level 1 | DeepSeek V4 Flash 0731 | Accuracy | 88.68% |
+| GAIA Level 2 | DeepSeek V4 Flash 0731 | Accuracy | 77.91% |
+| GAIA Level 3 | DeepSeek V4 Flash 0731 | Accuracy | 73.08% |
+
+For the code-generation benchmarks, pass@1 refers to the
+final submitted solution for each task. The generated agent
+may perform multiple internal model calls before submitting
+its solution.
 
 ---
 
 ## Reproducing the benchmarks
+
+### Benchmark-specific adaptations
+
+Before evaluation, limited non-task-specific adaptations
+were made to the execution tools of the generated agents:
+
+- Code-solving agent: Python execution was moved into an
+  isolated Docker environment.
+- GAIA agent: Python execution was moved into an isolated
+  Docker environment, and a MIME-handling issue in the
+  file-parsing tool was corrected to support multimodal inputs.
+- IFEval agent: No code modifications were required.
+
+No task-specific solution logic was manually added or modified
+during these adaptations.
 
 ### HumanEval / HumanEval+
 
@@ -592,6 +637,28 @@ All benchmark runners support additional options for subsets, task selection, re
 
 The repository includes ablated workflow variants used to isolate the contribution of major system stages.
 
+### Experimental methodology
+
+The ablation study evaluates the contribution of individual construction mechanisms by generating a receipt-management agent under six configurations.
+
+All configurations received the same initial natural-language request and used Z.ai GLM 5.3 as the common construction backbone model.
+
+| ID | Configuration | Modification |
+|---|---|---|
+| 1 | One-shot baseline | Replaces the staged process with a single model invocation. |
+| 2 | No Requirement Refinement | Bypasses the Input Refiner and Workflow Refiner, generating the WorkflowBundle through a single invocation. |
+| 3 | No Code Annotation | Replaces the Code Annotator with a single model invocation. |
+| 4 | No Implementation | Replaces the iterative implementation stage with a single model invocation. |
+| 5 | No User Feedback | Removes user feedback and approval while retaining automated construction and review mechanisms. |
+| 6 | Full Framework | Uses the complete MABCA construction process. |
+
+The generated agents were evaluated using the same five
+receipt images and a common set of conversational queries.
+
+Evaluation considered both runtime behavior and source-code
+quality, including workflow routing, tool execution, persistent
+data, readability, and maintainability.
+
 ### Main workflow ablations
 
 | Script | Main change |
@@ -614,6 +681,45 @@ experiments/ablation_study/
 ├── no_feedback/
 └── ablate_all/
 ```
+
+### Main findings
+
+- Requirement refinement primarily improved behavioral completeness and generalization.
+- Code annotation improved software structure, typing, and maintainability.
+- Iterative implementation helped identify interface and parsing defects.
+- Human feedback helped resolve undesirable but technically plausible design decisions.
+- The full framework produced the most coherent implementation and the broadest behavioral coverage in the evaluated task.
+
+All ablated configurations produced broadly functional agents.
+
+---
+
+## Construction cost and runtime
+
+The full-framework receipt-management agent construction
+was recorded as an end-to-end reference run.
+
+| Metric | Recorded value |
+|---|---:|
+| Backbone model | Z.ai GLM 5.3 |
+| Total runtime | 6,216.1 seconds |
+| User interaction time | 1,048 seconds |
+| Input tokens | 2.135 million |
+| Output tokens | 771,000 |
+| Model calls | 95 |
+| Estimated API cost (GLM 5.3) | $3.00 |
+
+The Software Engineer was the most computationally intensive
+stage, accounting for approximately 54% of the total runtime.
+
+Based on the recorded token workload and an assumed 30%
+input cache-hit rate, the estimated API cost ranged from
+$0.44 to $30.92 across the model-pricing scenarios considered
+in the paper.
+
+These estimates apply alternative model prices to the same
+recorded workload. They do not represent additional
+construction experiments using those models.
 
 ---
 
@@ -667,10 +773,30 @@ Docker-based execution reduces direct exposure of the host environment and provi
 
 MABCA produces executable code automatically. Generated applications can still contain logic errors, insecure operations, inappropriate dependencies, or incorrect assumptions. Review generated code before using it with sensitive data or deploying it outside an experimental environment.
 
+### Construction variability
+
+Generated agents may differ across repeated executions because of model behavior, provider configurations, user clarifications, and approval decisions.
+
+The benchmark results correspond to the particular generated agents included in this repository. Regenerating an agent from the same initial request does not guarantee an identical implementation or benchmark score.
+
+### Intervention during active construction
+
+Manual intervention during an active construction stage is limited. In particular, the Software Engineer cannot currently be paused, manually corrected, and resumed from the modified source-code state.
+
+Manual corrections should therefore be applied after the active construction stage has completed.
+
 ---
 
 ## Author
 
 **Stefanos Panteli**
 
-Repository: <https://github.com/stefanosPanteli/EPL-thesis>
+Repository: <https://github.com/311stefanos/EPL-thesis>
+
+## License
+
+The original MABCA source code is licensed under the MIT License.
+See [LICENSE](LICENSE) for details.
+
+Third-party dependencies, benchmark datasets, and external models
+are subject to their respective licenses and terms of use.
